@@ -5,7 +5,6 @@ project:
     - index.qmd
     - 2026/lectures/BIOS667_L*.qmd
     - 2026/homework/HW*.qmd
-    - 2026/quizzes/Quiz*.qmd
 
 website:
   title: "BIOS 667"

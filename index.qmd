@@ -18,30 +18,30 @@ RStudio (or any Quarto-aware editor). Install the R packages once with
 
 Lecture links open the rendered slides (RevealJS). Homework links open the rendered
 prompt to read; the **(qmd)** link next to each opens the source on GitHub - use the
-"Download raw file" button to get the `.qmd`, fill in your answers, and render it. Quiz
-links open the student version. Solution keys are distributed separately.
+"Download raw file" button to get the `.qmd`, fill in your answers, and render it.
+Quizzes are given in class on paper and are not posted here.
 
 | Module | Ch. | Lecture | HW | Quiz |
 |:--|:--|:--|:--|:--|
 | **1. Foundations** | 1 | [L01 Introduction to longitudinal data](2026/lectures/BIOS667_L01_Intro_ch1.html){target="_blank"} | | |
 | | 2 | [L02 Basic concepts](2026/lectures/BIOS667_L02_BasicConcepts_ch2.html){target="_blank"} | | |
-| | 3 | [L03 Overview of linear models](2026/lectures/BIOS667_L03_LinearModelsOverview_ch3.html){target="_blank"} | [HW1](2026/homework/HW1.html){target="_blank"} ([qmd](https://github.com/biodatascience/longitudinal/blob/main/2026/homework/HW1.qmd){target="_blank"}) | [Quiz 1](2026/quizzes/Quiz1.html){target="_blank"} |
+| | 3 | [L03 Overview of linear models](2026/lectures/BIOS667_L03_LinearModelsOverview_ch3.html){target="_blank"} | [HW1](2026/homework/HW1.html){target="_blank"} ([qmd](https://github.com/biodatascience/longitudinal/blob/main/2026/homework/HW1.qmd){target="_blank"}) | Quiz 1 (in class) |
 | **2. The mean model** | 4 | [L04 Estimation and inference](2026/lectures/BIOS667_L04_EstimationInference_ch4.html){target="_blank"} | | |
 | | 5 | [L05 Response profiles](2026/lectures/BIOS667_L05_ResponseProfiles_ch5.html){target="_blank"} | | |
-| | 6 | [L06 Parametric curves](2026/lectures/BIOS667_L06_ParametricCurves_ch6.html){target="_blank"} | [HW2](2026/homework/HW2.html){target="_blank"} ([qmd](https://github.com/biodatascience/longitudinal/blob/main/2026/homework/HW2.qmd){target="_blank"}) | [Quiz 2](2026/quizzes/Quiz2.html){target="_blank"} |
+| | 6 | [L06 Parametric curves](2026/lectures/BIOS667_L06_ParametricCurves_ch6.html){target="_blank"} | [HW2](2026/homework/HW2.html){target="_blank"} ([qmd](https://github.com/biodatascience/longitudinal/blob/main/2026/homework/HW2.qmd){target="_blank"}) | Quiz 2 (in class) |
 | **3. The covariance model** | 7 | [L07 Modeling the covariance](2026/lectures/BIOS667_L07_Covariance_ch7.html){target="_blank"} | | |
 | | 8 | [L08 Linear mixed-effects models](2026/lectures/BIOS667_L08_Covariance_ch8_LME.html){target="_blank"} | | |
-| | 9 | [L09 Fixed vs random effects](2026/lectures/BIOS667_L09_Covariance_ch9_FEvsRE.html){target="_blank"} | [HW3](2026/homework/HW3.html){target="_blank"} ([qmd](https://github.com/biodatascience/longitudinal/blob/main/2026/homework/HW3.qmd){target="_blank"}) | [Quiz 3](2026/quizzes/Quiz3.html){target="_blank"} |
+| | 9 | [L09 Fixed vs random effects](2026/lectures/BIOS667_L09_Covariance_ch9_FEvsRE.html){target="_blank"} | [HW3](2026/homework/HW3.html){target="_blank"} ([qmd](https://github.com/biodatascience/longitudinal/blob/main/2026/homework/HW3.qmd){target="_blank"}) | Quiz 3 (in class) |
 | **4. Discrete responses** | 10 | [L10 Residual analyses and diagnostics](2026/lectures/BIOS667_L10_Residual_Diagnostics.html){target="_blank"} | | |
 | | 11 | [L11 Generalized linear models](2026/lectures/BIOS667_L11_GLMs.html){target="_blank"} | | |
 | | 12 | [L12 Marginal models](2026/lectures/BIOS667_L12_Marginal.html){target="_blank"} | | |
-| | 13 | [L13 GEE extensions](2026/lectures/BIOS667_L13_GEE_Extensions_ch13.html){target="_blank"} | [HW4](2026/homework/HW4.html){target="_blank"} ([qmd](https://github.com/biodatascience/longitudinal/blob/main/2026/homework/HW4.qmd){target="_blank"}) | [Quiz 4](2026/quizzes/Quiz4.html){target="_blank"} |
+| | 13 | [L13 GEE extensions](2026/lectures/BIOS667_L13_GEE_Extensions_ch13.html){target="_blank"} | [HW4](2026/homework/HW4.html){target="_blank"} ([qmd](https://github.com/biodatascience/longitudinal/blob/main/2026/homework/HW4.qmd){target="_blank"}) | Quiz 4 (in class) |
 | **5. Mixed models for discrete data** | 14 | [L14 Generalized linear mixed models](2026/lectures/BIOS667_L14_GLMMs_ch14.html){target="_blank"} | | |
 | | 14 | [L15 GLMM random slopes](2026/lectures/BIOS667_L15_GLMM_RandomSlopes_ch14.html){target="_blank"} | | |
-| | 16 | [L16 Contrasting marginal and mixed models](2026/lectures/BIOS667_L16_ContrastingModels.html){target="_blank"} | [HW5](2026/homework/HW5.html){target="_blank"} ([qmd](https://github.com/biodatascience/longitudinal/blob/main/2026/homework/HW5.qmd){target="_blank"}) | [Quiz 5](2026/quizzes/Quiz5.html){target="_blank"} |
+| | 16 | [L16 Contrasting marginal and mixed models](2026/lectures/BIOS667_L16_ContrastingModels.html){target="_blank"} | [HW5](2026/homework/HW5.html){target="_blank"} ([qmd](https://github.com/biodatascience/longitudinal/blob/main/2026/homework/HW5.qmd){target="_blank"}) | Quiz 5 (in class) |
 | **6. Missing data and transitions** | 17 | [L17 Missing data and dropout](2026/lectures/BIOS667_L17_MissingData_ch17.html){target="_blank"} | | |
 | | 18 | [L18 Multiple imputation and weighting](2026/lectures/BIOS667_L18_MissingData_Advanced_ch18.html){target="_blank"} | | |
-| | * | [L19 Transition (Markov) models](2026/lectures/BIOS667_L19_TransitionModels.html){target="_blank"} | [HW6](2026/homework/HW6.html){target="_blank"} ([qmd](https://github.com/biodatascience/longitudinal/blob/main/2026/homework/HW6.qmd){target="_blank"}) | [Quiz 6](2026/quizzes/Quiz6.html){target="_blank"} |
+| | * | [L19 Transition (Markov) models](2026/lectures/BIOS667_L19_TransitionModels.html){target="_blank"} | [HW6](2026/homework/HW6.html){target="_blank"} ([qmd](https://github.com/biodatascience/longitudinal/blob/main/2026/homework/HW6.qmd){target="_blank"}) | Quiz 6 (in class) |
 
 : {tbl-colwidths="[26,6,46,11,11]"}
 

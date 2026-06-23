@@ -4,23 +4,22 @@ Course website and source for **BIOS 667** (UNC Gillings School of Global Public
 based on Fitzmaurice, Laird & Ware (2011), *Applied Longitudinal Analysis* (2nd ed.).
 
 - **Live site:** https://biodatascience.github.io/longitudinal
-- **Source (this repo, `main` branch):** Quarto `.qmd` for 19 lecture decks, 6 homeworks, 6 quizzes
+- **Source (this repo, `main` branch):** Quarto `.qmd` for 19 lecture decks and 6 homeworks
 - **Rendered site (`gh-pages` branch):** built by `quarto publish gh-pages`
 
-This repo is **student-facing**: it contains lectures, homework, and quiz prompts, but **no answer
-keys**. Solution keys (homework and quiz) live in the separate private repo
-**`biodatascience/longitudinal_key`**.
+This repo is **student-facing**: it contains lectures and homework prompts, but **no answer keys and no
+quizzes**. Quizzes are given in class on paper, so both the quiz prompts and all solution keys (homework
+and quiz) live in the separate private repo **`biodatascience/longitudinal_key`**.
 
 ---
 
 ## 1. Layout
 
 ```
-_quarto.yml                     website config (renders index + lectures + homework + quizzes)
+_quarto.yml                     website config (renders index + lectures + homework)
 index.qmd                       the schedule / landing page
 2026/lectures/   BIOS667_L01..L19_*.qmd   19 reference decks (RevealJS) + _notation_box includes
 2026/homework/   HW{1..6}.qmd              student homework (no solutions)
-2026/quizzes/    Quiz{1..6}.qmd            student quizzes (no answer keys)
 2026/handouts/                            supplementary handouts
 data/                                     all datasets the materials load (committed; no download needed)
 figs/ , unc-gillings.css                  render dependencies
@@ -75,13 +74,14 @@ This renders the site and pushes the result to `gh-pages` (Quarto manages that b
 stays on `main`; you never edit `gh-pages` by hand. In the repo's **Settings -> Pages**, set the source
 to the `gh-pages` branch (root) once.
 
-## 5. Solution keys (separate private repo)
+## 5. Quizzes and solution keys (separate private repo)
 
-Homework and quiz answer keys are **not** in this repo. They live in
-**`biodatascience/longitudinal_key`** (private), one file per assignment
-(`HW{N}_solution.qmd`, `Quiz{N}_solution.qmd`). Keep that repo private and out of anything shared with
-students. The student prompts here and the keys there share the same structure, so a key renders against
-the same `data/` copies.
+Quizzes and all answer keys are **not** in this repo. They live in
+**`biodatascience/longitudinal_key`** (private): the quiz prompts (`Quiz{N}.qmd`, given in class on
+paper), the quiz keys (`Quiz{N}_solution.qmd`), and the homework keys (`HW{N}_solution.qmd`). Keeping the
+blank quizzes private avoids exposing the questions before they are administered. Keep that repo private
+and out of anything shared with students. The homework prompts here and the keys there share the same
+structure, so a key renders against the same `data/` copies.
 
 ## 6. Before you teach
 
