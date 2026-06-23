@@ -43,3 +43,7 @@ __pycache__/
 *.pyo
 .pytest_cache/
 .ruff_cache/
+
+# Stray per-assignment data dirs created by loader fallbacks (canonical data is repo-root data/)
+2026/homework/data/
+2026/quizzes/data/
