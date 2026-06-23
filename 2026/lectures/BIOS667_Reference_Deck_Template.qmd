@@ -1,0 +1,216 @@
+---
+title: "BIOS 667 - Lecture N: [Topic] (Ch. N)"
+subtitle: "Fitzmaurice, Laird & Ware (2011) - Applied Longitudinal Data Analysis"
+author: "Naim Rashid"
+format:
+  revealjs:
+    theme: [default]
+    footer: "BIOS 667 - UNC Gillings - Lecture N (Ch.N)"
+    slide-number: true
+    hash: true
+    toc: false
+    code-overflow: wrap
+    code-line-numbers: false
+    math: mathjax
+    incremental: true
+    embed-resources: true
+    chalkboard: false
+    css: "../../unc-gillings.css"
+    scrollable: true
+execute:
+  warning: false
+  message: false
+---
+
+<!--
+================================================================================
+BIOS 667 REFERENCE DECK TEMPLATE (2026 traditional track). See 2026/REFERENCE_DECK_SPEC.md.
+Complete, book-faithful, lecture-only; may span 2-3 periods; NO in-class evaluation segments.
+DETAIL BAR: "teachable cold" by a substitute (David). The scaffolding below (instructor
+notes, timing, prerequisites/recap, notation, case study, pitfalls, datasets/packages,
+objectives->assessment, further reading) is what makes that possible.
+Per-slide instructor notes go in `::: {.notes}` blocks (presenter view, press S) and are
+EXPECTED on concept/example/diagnostic slides. Title style "BIOS 667 - Lecture N: Topic (Ch. N)";
+no em-dashes. Verify every formula/claim against FLW (textbook corpus + physical TOC).
+Replace every [BRACKETED] placeholder.
+
+WRITING VOICE (do not let slides read as AI-generated):
+- NO em-dashes (-) anywhere. Use a period, a comma, or parentheses instead.
+- NO semicolons unless genuinely joining two independent clauses; prefer two short sentences.
+- Avoid AI-tells: "delve", "leverage" (as a verb), "it's worth noting", "in today's world",
+  "a powerful tool", "the world of", hedge stacks ("it is important to note that..."), and
+  three-item lists padded for rhythm. Write the way you would say it to the class.
+- Short declarative sentences. Cut filler. One idea per bullet. Prefer concrete over abstract.
+================================================================================
+-->
+
+## Lecture Objectives
+
+By the end of this lecture, you will be able to:
+
+- [measurable objective 1]
+- [measurable objective 2]
+- [measurable objective 3]
+
+::: {.callout-note}
+**Reading.** FLW Ch. N (sections [a-b]). **Assessed by:** [HW#, the final-project skill this sets up].
+:::
+
+## Roadmap and pacing
+
+Classes are **75 minutes** (about 25-40 slides each). This lecture spans **[1-3] class periods**
+(per `LECTURE_TIMING_PLAN.md`); each Part below is one 75-minute block, split at a natural FLW seam.
+
+- **Part I (Day 1, ~75 min):** [theme]
+- **Part II (Day 2, ~75 min):** [theme]
+- **Part III (Day 3):** [only if warranted; delete this line otherwise]
+
+<!-- One period only? Delete the Part dividers and this multi-day list. If editing pushes the deck
+     past ~40 slides / 75 min, add a `# Part N (Day N): ...` divider and reflow, do not compress. -->
+
+## Prerequisites / recall
+
+Before this lecture, students should be able to:
+
+- [prior skill 1, from Ch. [X] / Lecture [N-1]]
+- [prior skill 2]
+
+::: {.notes}
+Instructor: confirm the recall items in one minute; if shaky, point to Lecture [N-1] rather than
+re-teaching. [What students most often forget here.]
+:::
+
+<!-- Notation: include the shared canonical slide. Do NOT paste a per-deck table.
+     Source of truth: 2026/NOTATION_REFERENCE.md. Add lecture-specific symbols on a
+     small slide AFTER this include, not by editing the shared partial.
+     NO-COLLISION RULE: never reuse a reserved canonical symbol for something else.
+     X_i / beta = fixed design and coefficients; Z_i / b_i = random-effect design and
+     random effects ONLY (e.g. do not write a fixed covariate as z_{ij}). -->
+{{< include _notation_box.qmd >}}
+
+# Part I (Day 1): [Theme] {.center background-color="#13294B"}
+
+## Motivation
+
+[Why this topic; the problem it solves; connection to prior lectures ("recall Ch. X ...").]
+
+::: {.notes}
+Instructor: [the one-sentence hook]; [why students should care]; transition to the model.
+:::
+
+## [Concept / model]
+
+$$
+[\text{display the model / key equation, standard notation}]
+$$
+
+- [interpretation point]
+- [assumption]
+
+::: {.notes}
+Instructor: derive [step] on the board; emphasize [the key idea]; the common error is [X]. Tie
+back to the notation slide. [Anticipated question + answer.]
+:::
+
+## Setup (data and packages)
+
+```{r}
+#| label: setup
+#| include: false
+# Packages used in this lecture: [list, e.g. nlme, lme4, ggplot2, emmeans].
+# Load the FLW dataset with a download-fallback path (see CLAUDE.md), so it runs cold.
+```
+
+## Case study: [FLW dataset]
+
+[Data description: source, design, variables, research question. This is the formal worked
+example on real FLW data, matching the chapter's "Case Studies" section.]
+
+```{r}
+#| label: case-fit
+#| echo: true
+#| output-location: slide
+# Model specification on the real FLW dataset.
+```
+
+**Interpretation:** [plain-language reading of the estimates, in context, with units].
+
+::: {.notes}
+Instructor: walk the output line by line; the number to highlight is [X]; what "good" looks like;
+[what students misread here].
+:::
+
+## The same model in SAS
+
+R is the course's runnable language (shown above and used in homework). For students who use SAS,
+here is the equivalent, shown for reference only (not executed). Mirrors FLW's "Computing" section.
+
+```sas
+/* Not run here. SAS PROC equivalent of the R model above. */
+PROC MIXED DATA=[dataset] METHOD=REML;
+  CLASS id;
+  MODEL [y] = [fixed effects] / SOLUTION;
+  RANDOM [random effects] / SUBJECT=id TYPE=[UN|VC] G;
+RUN;
+```
+
+::: {.notes}
+Instructor: point out the R-to-SAS mapping (RANDOM/SUBJECT = the `(... | id)` term; METHOD=REML =
+the default). Do not run it; it is for SAS users' reference.
+:::
+
+::: {.callout-note collapse="true"}
+## Check Your Understanding
+[1-2 conceptual questions with answers. NON-graded pedagogy.]
+:::
+
+# Part II (Day 2): [Theme] {.center background-color="#13294B"}
+
+## Recap of Part I
+
+- [the model and what we concluded last period, in 2-3 bullets]
+
+## [Extension / estimation]
+
+[Continue the chapter; second coherent teaching block.]
+
+## Diagnostics
+
+[Show and ANNOTATE diagnostic plots: what "good" vs "problematic" looks like, with reference
+lines and what they mean.]
+
+::: {.notes}
+Instructor: [which plot to read first]; the pattern that signals [problem]; the fix is [Y].
+:::
+
+## [Testing / model selection]
+
+[LRT/Wald/score contexts; boundary/mixture caveat for variance-component tests; AIC/REML notes.]
+
+## Common pitfalls and misconceptions
+
+- [mistake 1 and why it is wrong]
+- [mistake 2]
+
+# Wrap-up {.center background-color="#13294B"}
+
+## Summary / Takeaways
+
+- [key point 1]
+- [key point 2]
+- [key point 3]
+
+## Recipe card: [workflow]
+
+1. [step]
+2. [step]
+3. [step]
+
+## Reporting checklist
+
+- [ ] [estimates with 95% CI, variance components, diagnostics, software/method, ...]
+
+## Further reading and for next time
+
+- FLW Ch. N "Further Reading"; [key citations].
+- Next: FLW Ch. [N+1]; [forward pointer].

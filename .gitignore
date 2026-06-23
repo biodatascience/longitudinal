@@ -10,7 +10,25 @@ _site/
 /index.html
 /site_libs/
 
+# Candid internal review records stay private (per migration decision: tooling public, audits private)
+**/*_reference_audit.md
+**/*_note.md
+
+# Copyrighted source material - NEVER publish (textbook PDFs, FLW authors' BIO 226 slides)
+book/
+author_slides/
+
+# RAG index is large (~117M) and fully rebuildable from the local corpus; code is tracked, data is not
+rag/data/
+rag/.venv/
+.venv/
+
+# Instructor-bundle export artifacts
+bios667_2026_traditional*/
+bios667_2026_traditional*.zip
+
 # R / RStudio
+local_R_lib/
 .Rproj.user/
 .Rhistory
 .RData
@@ -18,3 +36,10 @@ _site/
 
 # OS / editor
 .DS_Store
+
+# Python bytecode / caches
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.ruff_cache/

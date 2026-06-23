@@ -1,0 +1,40 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "bios667-rag"
+version = "0.1.0"
+description = "RAG system with knowledge graph for BIOS 667 textbook"
+requires-python = ">=3.10"
+dependencies = [
+    "pymupdf>=1.24.0",
+    "chromadb>=0.5.0",
+    "sentence-transformers>=3.0.0",
+    "mcp>=1.0.0",
+    "torch>=2.0.0",
+    "python-docx>=1.1.0",
+    "python-pptx>=0.6.23",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytesseract>=0.3.10",
+]
+
+[project.scripts]
+bios667-index = "bios667_rag.scripts.index_textbook:main"
+bios667-index-corpus = "bios667_rag.corpus_index:main"
+bios667-mcp = "bios667_rag.mcp_server:main"
+bios667-corpus = "bios667_rag.corpus_mcp_server:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/bios667_rag"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+markers = [
+    "golden: real-corpus golden-retrieval regression tests (need rag/data/chroma)",
+]
