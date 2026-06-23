@@ -1,0 +1,1388 @@
+---
+title: "BIOS 667 - Lecture 11: Generalized Linear Models (Ch. 11)"
+subtitle: "Fitzmaurice, Laird & Ware (2011) - Applied Longitudinal Data Analysis"
+author: "Naim Rashid"
+format:
+  revealjs:
+    theme: [default]
+    footer: BIOS 667 · UNC Gillings - Lecture 11 (Ch.11)
+    slide-number: true
+    hash: true
+    toc: false
+    code-overflow: wrap
+    code-line-numbers: false
+    math: mathjax
+    incremental: true
+    embed-resources: true
+    chalkboard: false
+    css: "../../unc-gillings.css"
+    scrollable: true
+execute:
+  warning: false
+  message: false
+---
+
+```{r}
+#| label: setup
+#| include: false
+# Consolidated package loading and data prep for the whole deck.
+required_pkgs <- c("dplyr", "tidyr", "ggplot2", "broom", "MASS", "nnet",
+                   "pROC", "ResourceSelection", "car", "pscl", "sandwich", "lmtest")
+missing_pkgs <- required_pkgs[!vapply(required_pkgs, requireNamespace,
+                                      logical(1), quietly = TRUE)]
+if (length(missing_pkgs) > 0) {
+  message("Missing packages (install for full deck): ",
+          paste(missing_pkgs, collapse = ", "))
+}
+suppressPackageStartupMessages({
+  library(dplyr); library(tidyr); library(ggplot2); library(broom); library(MASS)
+})
+set.seed(667)
+
+## ---- Real FLW data: download-with-fallback loaders --------------------------
+
+# TLC lead-exposure trial (FLW Ch. 5/6 canonical dataset). Wide format, one row
+# per child: ID, treatment, blood-lead at weeks 0/1/4/6.
+load_tlc <- function() {
+  local_csv <- "../../data/tlc.csv"
+  url <- "https://content.sph.harvard.edu/fitzmaur/ala2e/tlc-data.txt"
+  if (file.exists(local_csv)) {
+    tlc <- utils::read.csv(local_csv, check.names = FALSE)
+    names(tlc) <- c("id", "trt", "w0", "w1", "w4", "w6")
+    tlc$trt <- factor(trimws(tlc$trt), levels = c("P", "A"),
+                      labels = c("Placebo", "Succimer"))
+  } else {
+    dest <- file.path(tempdir(), "tlc.txt")
+    if (!file.exists(dest)) utils::download.file(url, dest, quiet = TRUE)
+    tlc <- utils::read.table(dest, header = FALSE)
+    names(tlc) <- c("id", "trt", "w0", "w1", "w4", "w6")
+    tlc$trt <- factor(tlc$trt, levels = c("P", "A"),
+                      labels = c("Placebo", "Succimer"))
+  }
+  tlc
+}
+
+# Epilepsy seizure-count trial (Thall & Vail 1990; FLW Ch. 11/13/14 canonical).
+# The shipped .txt has a long comment header; data rows are 8 whitespace-
+# separated integers. Inspect-then-parse rather than read.table(header=TRUE).
+load_epilepsy <- function() {
+  local_txt <- "../../data/epilepsy.txt"
+  url <- "https://content.sph.harvard.edu/fitzmaur/ala2e/epilepsy.txt"
+  path <- if (file.exists(local_txt)) local_txt else {
+    dest <- file.path(tempdir(), "epilepsy.txt")
+    if (!file.exists(dest)) utils::download.file(url, dest, quiet = TRUE)
+    dest
+  }
+  lines <- readLines(path)
+  datlines <- grep("^ *[0-9]+ +[0-9]", lines, value = TRUE)
+  ep <- utils::read.table(text = datlines, header = FALSE)
+  names(ep) <- c("id", "trt", "age", "base", "y1", "y2", "y3", "y4")
+  ep$trtf  <- factor(ep$trt, labels = c("Placebo", "Progabide"))
+  ep$total <- ep$y1 + ep$y2 + ep$y3 + ep$y4   # seizures over 8 post-rand weeks
+  ep
+}
+
+tlc <- load_tlc()
+ep  <- load_epilepsy()
+```
+
+## Lecture Objectives
+
+By the end of this lecture, you will be able to:
+
+- Describe the three components of a GLM (random, systematic, link)
+- Fit and interpret logistic regression for binary outcomes
+- Fit and interpret Poisson regression for counts, including overdispersion
+- Apply ordinal and multinomial regression for categorical outcomes (instructor extension)
+- Diagnose GLM fit using residuals, influence measures, and deviance
+
+::: {.callout-note}
+**Assessment map.** This lecture is assessed on **HW4** (logistic and Poisson interpretation, overdispersion remedies) and **Quiz 4** (GLM components, odds ratios, rate ratios).
+:::
+
+::: {.notes}
+This is a 2-class lecture (FLW Ch. 11 is dense). Day 1 covers the GLM framework, logistic regression, and Poisson regression (the FLW-native core). Day 2 covers categorical extensions and diagnostics (largely instructor enrichment beyond Ch. 11). Tell students up front which material is examinable FLW content and which is enrichment they should recognize but not memorize.
+:::
+
+---
+
+## Prerequisites and Recall
+
+Before we generalize, recall what we already have:
+
+| From | What carries forward |
+|------|----------------------|
+| LM (Ch. 3-6) | Linear predictor $X_{ij}\boldsymbol\beta$; least squares; residual diagnostics |
+| L10 (Diagnostics) | Residuals, transformed/Mahalanobis residual diagnostics, cluster-influence ideas |
+| LM (Ch. 3-6) | Ordinary-regression diagnostics: leverage, Cook's distance |
+| Notation box | $Y_{ij}$, $\mathbf{X}_i$, $\boldsymbol\beta$, indices $i=1,\dots,N$ subjects |
+
+**The leap today:** the response need not be Normal, and effects act on a *transformed* (link) scale, not directly on the mean.
+
+::: {.notes}
+Anchor the new material in the general linear model they know. Emphasize "LM" (general/normal) vs "GLM" (generalized) so the abbreviation does not collide. Leverage and Cook's distance are ORDINARY-regression diagnostics (LM, Ch. 3-6); L10's FLW-Ch.10 content is transformed/Mahalanobis residuals and cluster influence, not per-observation leverage/Cook's D. Today we extend the general-regression diagnostics to non-normal responses (flagged beyond FLW Ch. 11).
+:::
+
+---
+
+## Roadmap
+
+| Part | Topic | Day |
+|------|-------|-----|
+| 1 | Introduction to GLMs | 1 |
+| 2 | Logistic regression (binary) | 1 |
+| 3 | Poisson regression (counts) | 1 |
+| 4 | Ordinal and multinomial models (extension) | 2 |
+| 5 | GLM diagnostics | 2 |
+| 6 | Extensions and advanced topics (extension) | 2 |
+| 7 | Appendices (technical details) | - |
+
+---
+
+{{< include _notation_box.qmd >}}
+
+---
+
+## Notation (this lecture)
+
+::: {.notation-card style="font-size: 0.82em;"}
+
+| Symbol | Meaning |
+|:--|:--|
+| $\pi_{ij}$ | probability of a binary outcome, subject $i$ occasion $j$ |
+| $\theta_i$ | natural parameter (a re-parameterization of the mean) |
+| $\eta_{ij} = X_{ij}\boldsymbol\beta$ | linear predictor (row form $X_{ij}$, $1\times p$) |
+| $g(\mu)=\eta$ | link function; $\mu=g^{-1}(\eta)$ is the inverse link |
+| $\phi$ | dispersion (scale) parameter; $\mathrm{Var}(Y)=\phi\,v(\mu)$ |
+| $v(\mu)$ | GLM mean-variance function (NOT a covariance matrix) |
+| $\kappa_k$ | ordinal cumulative-logit cutpoints, $k=1,\dots,K-1$ (FLW writes $\alpha_k$; we use $\kappa_k$ to avoid the GEE $\alpha$ and the natural parameter $\theta$) |
+
+:::
+
+::: {.callout-warning}
+$v(\mu)$ here is the scalar **variance function** of the mean (e.g. $v(\mu)=\mu$ for Poisson), NOT the GEE working covariance $V_i$ from the notation box.
+:::
+
+::: {.notes}
+Students conflate three V-like objects: the variance function v(mu) (this slide), the GEE working covariance V_i (Ch. 12-13), and the marginal Gaussian covariance Sigma_i. Flag the distinction now. Also note kappa_k (cutpoints) is unrelated to the GEE working-correlation alpha.
+:::
+
+
+# Part 1 (Day 1): Introduction to GLMs {background-color="#13294B"}
+
+::: {style="color:#ffffff;"}
+Framework, exponential family, link functions, estimation. Pace: ~20-25 min.
+:::
+
+---
+
+## Why Generalized Linear Models?
+
+| Linear Model (LM) Assumption | GLM Extension |
+|-------------------------|---------------|
+| Normally distributed $Y$ | Exponential-family distributions |
+| Constant variance | Variance depends on the mean |
+| Additive effects on the mean | Additive effects on a transformed (link) scale |
+
+**Non-normal outcomes:** binary, counts, proportions, rates.
+
+::: {.notes}
+The motivation: longitudinal outcomes are frequently NOT continuous/normal (a seizure count, a yes/no event). GLMs keep the linear-predictor machinery but swap the response distribution and add a link. Stress that we have not yet handled within-subject correlation; that is Ch. 12-13. Today every observation is treated as independent.
+:::
+
+---
+
+## GLM Framework: the idea first
+
+Two plain sentences before any density:
+
+- $\theta_i$ is a **re-parameterization of the mean**, called the *natural parameter*.
+- $\phi$ is a **scale / dispersion constant** that sets the variance level.
+
+Everything you need follows from one cumulant function:
+
+| Quantity | Formula |
+|----------|---------|
+| Mean | $\mathbb{E}(Y_i) = \mu_i$ |
+| Variance | $\mathrm{Var}(Y_i) = \phi\,V(\mu_i)$ |
+
+::: {.notes}
+Lead with intuition, then show the formula on the next slide. The single most common student failure here is freezing at the exponential-family density. Say in words: pick a distribution, it has a natural parameter theta tied to the mean, and a dispersion phi; the variance is determined by the mean through v(mu). The density is just bookkeeping that makes this true.
+:::
+
+---
+
+## GLM Framework: the exponential family
+
+Each response $Y_i$ has a density in the exponential family. Using FLW's
+notation (eq. 11.3, p. 328):
+
+$$
+f(y_i \mid \theta_i,\phi) =
+\exp\!\left[ \frac{y_i\theta_i - a(\theta_i)}{\phi} + b(y_i,\phi) \right]
+$$
+
+with $\mathbb{E}(Y_i)=\mu_i=a'(\theta_i)$ and $\mathrm{Var}(Y_i)=\phi\,a''(\theta_i)$.
+
+::: {.callout-note}
+**Notation caution.** FLW (eq. 11.3-11.4) writes the **cumulant function as $a(\theta)$** and the data-only term as $b(y,\phi)$, with the scale entering as $\phi$ directly. Many texts (McCullagh & Nelder) instead write $\{y\theta - b(\theta)\}/a(\phi) + c(y,\phi)$. The roles are the same; only the letters differ. We follow FLW here.
+:::
+
+::: {.notes}
+This reconciles the deck to FLW's exact labeling (audit book-departure #1). a(theta) is the cumulant/mean-generating function; differentiate once for the mean, twice (times phi) for the variance. Do NOT dwell; the recipe table on the previous slide is what they keep.
+:::
+
+---
+
+## Exponential Family: a concrete example
+
+For **Poisson** with mean $\mu$ (here $\phi=1$):
+
+- Natural parameter: $\theta = \log(\mu)$
+- Cumulant function: $a(\theta) = e^\theta = \mu$
+- $a'(\theta) = e^\theta = \mu$ (the mean)
+- $a''(\theta) = e^\theta = \mu$ (the variance)
+
+**Insight:** for Poisson, mean $=$ variance. This falls out of the family automatically.
+
+::: {.notes}
+Concrete grounding for the abstract slide. Walk through the two derivatives live. The punchline (mean = variance for Poisson) motivates the entire overdispersion discussion in Part 3.
+:::
+
+---
+
+## GLM Components
+
+| Component | Description | Example |
+|-----------|-------------|---------|
+| Random | $Y_i$ from exponential family | binary, count |
+| Systematic | Linear predictor $\eta_{ij} = X_{ij}\boldsymbol{\beta}$ | $\eta=\beta_0+\beta_1 x$ |
+| Link | $g(\mu_i)=\eta_i$ | logit, log, identity |
+
+Here $X_{ij}$ is the **row** of covariates ($1\times p$), so the mean model is $X_{ij}\boldsymbol\beta$.
+
+::: {.notes}
+The three-component decomposition is THE examinable structure (Quiz 4). Drill it: random = what distribution, systematic = the linear predictor, link = how the mean connects to it. Note the row-vector convention X_ij beta, consistent with the rest of the course.
+:::
+
+---
+
+## Canonical Links
+
+| Distribution | Mean-Variance | Canonical Link |
+|--------------|---------------|----------------|
+| Normal | $\mu,\;\sigma^2$ | identity |
+| Binomial | $\pi,\;\pi(1-\pi)$ | logit |
+| Poisson | $\mu,\;\mu$ | log |
+| Gamma | $\mu,\;\mu^2$ | inverse |
+
+::: {.notes}
+The canonical link is the one for which theta = eta. It is the default in glm(). Note you are NOT required to use the canonical link (e.g. probit is a valid binary link), but it gives the cleanest score equations (Appendix B).
+:::
+
+---
+
+## Estimation: maximum likelihood
+
+GLM coefficients $\boldsymbol\beta$ are estimated by **maximum likelihood**
+(FLW Section 11.7). FLW states only this; the algorithm below is standard GLM
+theory.
+
+::: {.callout-note}
+**Beyond FLW Ch. 11 (instructor extension).** The IRLS algorithm and the score / Fisher-information formulas are standard GLM theory (McCullagh & Nelder 1989; Dobson & Barnett 2018). FLW Ch. 11 only states that estimation is by ML. The intuition slides that follow are supplementary; full details are in Appendix A-B.
+:::
+
+::: {.notes}
+Set expectations: students should understand that glm() maximizes the likelihood iteratively, but the mechanics are enrichment, not Ch. 11. Two intuition slides follow; the bare weight formula is deferred to Appendix A so the main flow stays conceptual.
+:::
+
+---
+
+## IRLS: The Intuition
+
+**Think of IRLS as "smart" weighted regression that learns as it goes:**
+
+| Step | What Happens | Analogy |
+|------|--------------|---------|
+| 1. Initialize | Start with a guess (e.g. $\hat\mu_i=\bar y$) | First draft |
+| 2. Compute weights | Upweight observations we are more certain about | Focus attention |
+| 3. Fit weighted regression | Solve linear system with current weights | Refine estimate |
+| 4. Update predictions | New $\hat\mu_i$ from updated $\hat{\boldsymbol\beta}$ | Revised draft |
+| 5. Repeat | Until estimates stabilize | Final answer |
+
+**Key insight:** higher-variance observations get lower weights, so uncertain points have less influence.
+
+::: {.notes}
+This is the conceptual payoff. The "learns as it goes" framing demystifies iteration. Connect step 2 to heteroscedastic WLS they may have seen. Emphasize: nothing here is examinable, but it explains why glm() can warn about non-convergence.
+:::
+
+---
+
+## IRLS: Why Iteration?
+
+Unlike OLS, GLMs have a **nonlinear** link between parameters and predictions.
+
+**OLS:** one-shot solution $(\mathbf{X}^\top\mathbf{X})^{-1}\mathbf{X}^\top\mathbf{Y}$.
+
+**GLM:** weights depend on $\mu_i$, which depends on $\boldsymbol\beta$, which depends on the weights...
+
+**Solution:** iterate to convergence. Start somewhere reasonable, improve step by step. In R, `glm()` handles this automatically (it warns if there are convergence problems).
+
+::: {.notes}
+The circular dependency (weights -> mu -> beta -> weights) is the crux. Once students see why a closed form is impossible, IRLS feels inevitable. The weight formula itself now lives in Appendix A.
+:::
+
+---
+
+::: {.callout-note collapse="true"}
+## Check Your Understanding: GLM Fundamentals
+
+1. What are the three components of a GLM, and what does each do?
+2. Why does the Poisson distribution have mean equal to variance? (Hint: the exponential family.)
+3. In IRLS, why iterate rather than compute a one-shot solution like OLS?
+
+**Answers:**
+
+1. (1) **Random component**: the distribution of $Y_i$ (binomial, Poisson, ...). (2) **Systematic component**: the linear predictor $\eta_{ij}=X_{ij}\boldsymbol\beta$. (3) **Link**: $g(\mu_i)=\eta_i$ connects the mean to the linear predictor.
+2. For Poisson the cumulant function is $a(\theta)=e^\theta$. Mean $=a'(\theta)=e^\theta=\mu$ and variance $=a''(\theta)=e^\theta=\mu$, so they are equal.
+3. The weights depend on $\mu_i$, which depends on $\boldsymbol\beta$. There is no closed form, so we alternate between updating weights and updating $\boldsymbol\beta$ until convergence.
+:::
+
+
+# Part 2 (Day 1): Logistic Regression {background-color="#13294B"}
+
+::: {style="color:#ffffff;"}
+Binary outcomes: model, odds ratios, fitted probabilities, real-data case study. Pace: ~25-30 min.
+:::
+
+---
+
+## Interpreting Logistic Coefficients
+
+Model on the log-odds scale:
+
+$$
+\log\!\left(\frac{\pi}{1-\pi}\right) = \beta_0 + \beta_1 x_1 + \cdots + \beta_p x_p
+$$
+
+| Quantity | Interpretation |
+|----------|----------------|
+| $\beta_j$ | Change in log-odds per unit increase in $x_j$ |
+| $e^{\beta_j}$ | Odds ratio (OR) |
+| $e^{\beta_j} > 1$ | Odds of $Y=1$ increase |
+| $e^{\beta_j} < 1$ | Odds of $Y=1$ decrease |
+
+::: {.notes}
+This is FLW-native Section 11.3.1 content. The single biggest interpretation error is reporting log-odds as if they were the effect; force exponentiation. Tie e^beta to "odds ratio" verbally every time.
+:::
+
+---
+
+## Case Study: TLC Lead-Exposure Trial (real data)
+
+::: {.callout-note}
+**Real FLW dataset (instructor-defined binary endpoint).** TLC is FLW's lead-exposure trial (Ch. 5/6): 100 children randomized to succimer or placebo, blood lead measured at weeks 0, 1, 4, 6. FLW Ch. 5/6 analyze it as a *continuous* longitudinal response. Here we define an **instructor binary endpoint** -- *elevated lead at week 6* ($\ge 20\ \mu g/dL$) -- to illustrate logistic regression on real data. The cutoff is a teaching choice, not an FLW analysis.
+:::
+
+```{r}
+#| label: tlc-binary-setup
+#| echo: true
+#| output-location: slide
+tlc <- tlc |>
+  dplyr::mutate(elevated_w6 = as.integer(w6 >= 20))   # 1 = elevated lead at wk 6
+table(Treatment = tlc$trt, Elevated_wk6 = tlc$elevated_w6)
+```
+
+---
+
+## Logistic GLM: Fit
+
+```{r}
+#| label: tlc-fit
+#| echo: true
+#| output-location: slide
+fit_logit <- glm(elevated_w6 ~ trt + w0, data = tlc, family = binomial)
+summary(fit_logit)
+```
+
+::: {.notes}
+w0 = baseline lead (a strong prognostic covariate); trt = randomized treatment. Walk the output: the trt coefficient is the adjusted treatment log-odds. Point out the Wald z and p-value (FLW's inferential tool for logistic models, Section 11.3).
+:::
+
+---
+
+## Logistic: Odds Ratios and CIs
+
+```{r}
+#| label: tlc-or
+#| echo: true
+#| output-location: slide
+or_tab <- broom::tidy(fit_logit, conf.int = TRUE) |>
+  dplyr::mutate(OR = exp(estimate),
+                OR_low = exp(conf.low),
+                OR_high = exp(conf.high)) |>
+  dplyr::select(term, estimate, OR, OR_low, OR_high, p.value)
+or_tab
+```
+
+---
+
+## Plain-Language Interpretation: Logistic Output
+
+```{r}
+#| label: tlc-numbers
+#| include: false
+or_trt <- round(exp(coef(fit_logit))[["trtSuccimer"]], 2)
+or_w0  <- round(exp(coef(fit_logit))[["w0"]], 2)
+```
+
+| Term | OR | Interpretation |
+|------|-----|----------------|
+| `(Intercept)` | -- | Baseline log-odds when covariates are 0 |
+| `trtSuccimer` | `r or_trt` | Succimer multiplies the odds of elevated lead at wk 6 by `r or_trt` vs placebo |
+| `w0` | `r or_w0` | Each 1 $\mu g/dL$ higher baseline lead multiplies the odds by `r or_w0` |
+
+**In a sentence:** adjusting for baseline lead, the succimer odds ratio for remaining elevated at week 6 is `r or_trt` (below 1, i.e. lower odds than placebo), and the baseline-lead odds ratio is `r or_w0` (above 1, i.e. higher baseline raises the odds).
+
+::: {.notes}
+All numbers are pulled from the fitted object via inline R, so they cannot drift if data changes. Note succimer's OR < 1 means protective; baseline OR > 1 means risk-increasing. This is the model-as-mean-of-a-probability reading FLW emphasizes.
+:::
+
+---
+
+## From Coefficients to Predicted Probabilities
+
+Logistic inverse link (row form):
+
+$$
+\hat\pi_{ij} = \frac{e^{X_{ij}\hat{\boldsymbol\beta}}}{1 + e^{X_{ij}\hat{\boldsymbol\beta}}}
+$$
+
+In R, `predict(fit, type = "response")` returns $\hat\pi_{ij}$.
+
+```{r}
+#| label: tlc-predict
+#| echo: true
+#| output-location: slide
+tlc$pred_prob <- predict(fit_logit, type = "response")
+head(tlc[, c("trt", "w0", "elevated_w6", "pred_prob")])
+```
+
+::: {.notes}
+Note the row-vector form X_ij beta (canonical convention), not X_i^T beta. Stress that type="response" applies the inverse link; the default predict() returns the linear predictor (log-odds), a frequent student bug.
+:::
+
+---
+
+## Visualize Fitted Probabilities
+
+```{r}
+#| label: tlc-fitplot
+#| echo: true
+#| output-location: slide
+newdat <- expand.grid(
+  trt = levels(tlc$trt),
+  w0  = seq(min(tlc$w0), max(tlc$w0), length = 100)
+)
+newdat$pred_prob <- predict(fit_logit, newdata = newdat, type = "response")
+ggplot(newdat, aes(w0, pred_prob, color = trt)) +
+  geom_line(linewidth = 1.2) +
+  labs(y = "Predicted P(elevated at wk 6)", x = "Baseline lead (wk 0)",
+       title = "Logistic Fitted Probabilities: TLC Trial",
+       color = "Treatment") +
+  theme_minimal()
+```
+
+::: {.notes}
+Self-identifying title and axis labels. The two curves separate clearly (succimer below placebo) and both rise with baseline lead, matching the ORs on the previous slide. This is the visual payoff of a logistic fit.
+:::
+
+---
+
+## Static SAS: PROC LOGISTIC (reference only)
+
+The same TLC logistic model in SAS (FLW Section 11.6 uses PROC GENMOD/LOGISTIC):
+
+```sas
+proc logistic data=tlc descending;
+   class trt (ref="Placebo") / param=ref;
+   model elevated_w6 = trt w0;
+   /* odds ratios printed automatically; oddsratio for custom contrasts */
+run;
+```
+
+::: {.callout-note}
+Shown for reference only, not executed. `descending` models $P(Y=1)$; `class ... param=ref` matches R's reference coding.
+:::
+
+
+# Part 2b (Day 2 enrichment): Classification and Calibration {background-color="#7BAFD4"}
+
+::: {.callout-note}
+**Beyond FLW Ch. 11 (instructor extension).** Classification thresholds, confusion matrices, sensitivity/specificity, ROC/AUC, calibration plots, the Hosmer-Lemeshow test, and residual/influence diagnostics for GLMs are **not** in FLW Ch. 11 (which covers odds-ratio interpretation, ML, and Wald tests for binary data). They are standard applied-logistic tools: see Hosmer, Lemeshow & Sturdivant (2013) and Pepe (2003) for ROC/calibration; Agresti (2015) for the modeling context. Recognize them; they are enrichment, not examinable Ch. 11 content.
+:::
+
+::: {.notes}
+This single banner covers the whole classification/diagnostics block (audit L11-01, book-departures on ROC/HL/calibration/residuals). Tell students these are valuable in practice but flag clearly that FLW Ch. 11 stops at odds ratios + Wald inference.
+:::
+
+---
+
+## Using Probabilities for Classification
+
+Choose a threshold $t$ and predict:
+
+$$
+\widehat Y =
+\begin{cases}
+1, & \hat\pi \ge t \\
+0, & \text{otherwise}
+\end{cases}
+$$
+
+Default $t=0.5$, but it can be tuned to the application's costs.
+
+```{r}
+#| label: tlc-class
+#| echo: true
+#| output-location: slide
+tlc$pred_class_05 <- ifelse(tlc$pred_prob >= 0.5, 1, 0)
+table(Predicted = tlc$pred_class_05, Observed = tlc$elevated_w6)
+mean(tlc$pred_class_05 == tlc$elevated_w6)   # accuracy at t = 0.5
+```
+
+---
+
+## Sensitivity, Specificity, and FPR
+
+| Metric | Definition |
+|--------|------------|
+| Sensitivity (TPR) | $P(\widehat Y=1 \mid Y=1)$ |
+| Specificity (TNR) | $P(\widehat Y=0 \mid Y=0)$ |
+| False positive rate (FPR) | $1 - \text{Specificity} = P(\widehat Y=1 \mid Y=0)$ |
+
+Varying the threshold traces an **ROC curve** (TPR on the $y$-axis vs FPR on the $x$-axis).
+
+::: {.notes}
+FPR = 1 - specificity is defined here because the ROC slide plots TPR vs FPR. Students routinely forget the x-axis is FPR, not specificity. One sentence resolves it.
+:::
+
+---
+
+## ROC Curve and AUC
+
+```{r}
+#| label: tlc-roc
+#| echo: true
+#| output-location: slide
+suppressPackageStartupMessages(library(pROC))
+roc_obj <- roc(tlc$elevated_w6, tlc$pred_prob, quiet = TRUE)
+plot(roc_obj, main = paste0("TLC Logistic ROC (AUC = ", round(auc(roc_obj), 3), ")"))
+```
+
+::: {.callout-note}
+**Reading it:** a curve hugging the top-left corner = good discrimination; the diagonal = no better than chance (AUC 0.5). AUC = probability a random positive is ranked above a random negative.
+:::
+
+---
+
+## Interpreting AUC
+
+::: {.callout-note}
+**Beyond FLW (rule-of-thumb thresholds).** These cutoffs follow Hosmer, Lemeshow & Sturdivant (2013); they are conventions, not FLW content, and are sensitive to context.
+:::
+
+| AUC Range | Discrimination (Hosmer-Lemeshow convention) |
+|-----------|----------------|
+| 0.5 | No discrimination |
+| 0.7-0.8 | Acceptable |
+| 0.8-0.9 | Excellent |
+| > 0.9 | Outstanding (rare) |
+
+---
+
+## Calibration: Predicted vs Observed
+
+```{r}
+#| label: tlc-calib
+#| echo: true
+#| output-location: slide
+dd <- tlc |>
+  dplyr::mutate(dec = cut(pred_prob,
+                          breaks = quantile(pred_prob, probs = seq(0, 1, 0.1), na.rm = TRUE),
+                          include.lowest = TRUE)) |>
+  dplyr::group_by(dec) |>
+  dplyr::summarise(mean_pred = mean(pred_prob),
+                   obs_rate  = mean(elevated_w6),
+                   n = dplyr::n(), .groups = "drop")
+ggplot(dd, aes(mean_pred, obs_rate, size = n)) +
+  geom_point(alpha = 0.8) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed") +
+  labs(title = "TLC Logistic Calibration (deciles of predicted risk)",
+       x = "Mean predicted probability", y = "Observed event rate") +
+  theme_minimal()
+```
+
+::: {.callout-note}
+**Reading it:** points on the dashed 45-degree line = well calibrated (predicted matches observed). Points above the line = model under-predicts risk; below = over-predicts. A high AUC does NOT guarantee good calibration.
+:::
+
+---
+
+## Logistic Diagnostics: Residuals
+
+```{r}
+#| label: tlc-resid
+#| echo: true
+#| output-location: slide
+res_df <- data.frame(
+  fitted = fitted(fit_logit),
+  dev    = residuals(fit_logit, type = "deviance"),
+  pear   = residuals(fit_logit, type = "pearson")
+)
+p1 <- ggplot(res_df, aes(fitted, dev)) + geom_point(alpha = .6) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  labs(title = "Deviance Residuals vs Fitted") + theme_bw()
+p2 <- ggplot(res_df, aes(fitted, pear)) + geom_point(alpha = .6) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  labs(title = "Pearson Residuals vs Fitted") + theme_bw()
+print(p1); print(p2)
+```
+
+::: {.callout-note}
+**Reading it:** for binary data residuals split into two bands (one per outcome), so do not expect a random cloud. Look for points far from 0 (poorly fit observations) and any systematic curvature (possible link misspecification), not for constant spread.
+:::
+
+---
+
+## Influence and Leverage
+
+```{r}
+#| label: tlc-influence
+#| echo: true
+#| output-location: slide
+lev <- hatvalues(fit_logit)
+cd  <- cooks.distance(fit_logit)
+par(mfrow = c(1, 2))
+plot(lev, type = "h", main = "Leverage (hat values)", ylab = "hat")
+abline(h = 2 * mean(lev), col = "red", lty = 2)
+plot(cd, type = "h", main = "Cook's Distance", ylab = "Cook's D")
+abline(h = 4 / length(cd), col = "red", lty = 2)
+par(mfrow = c(1, 1))
+```
+
+::: {.callout-note}
+**Reading it:** the red lines are common rules of thumb -- leverage above $2\bar h$ (twice the average hat value) is high-leverage; Cook's D above $4/n$ flags an influential point. Points crossing both deserve a look (refit without them to gauge sensitivity).
+:::
+
+---
+
+## Goodness-of-Fit: Hosmer-Lemeshow
+
+```{r}
+#| label: tlc-hl
+#| echo: true
+#| output-location: slide
+if (requireNamespace("ResourceSelection", quietly = TRUE)) {
+  hl <- ResourceSelection::hoslem.test(tlc$elevated_w6, fitted(fit_logit), g = 10)
+  hl
+} else {
+  cat("Install 'ResourceSelection' for the Hosmer-Lemeshow test.\n")
+}
+```
+
+::: {.callout-note}
+**Reading it:** large p-value = no evidence of poor fit; small p-value = misfit. Caveat: the result is sensitive to the number of groups $g$ (try a few). This is an enrichment GOF tool; FLW's native fit assessment is deviance / likelihood-ratio tests.
+:::
+
+---
+
+## Logistic Models: Quick Checklist
+
+| Step | Action |
+|------|--------|
+| Coefficients | Exponentiate to odds ratios |
+| Predictions | Use `type="response"` for probabilities |
+| Classification* | Choose a threshold by context |
+| Discrimination* | ROC / AUC |
+| Calibration* | Predicted vs observed |
+| Diagnostics* | Residuals, leverage, influence |
+
+\* enrichment beyond FLW Ch. 11.
+
+---
+
+::: {.callout-note collapse="true"}
+## Check Your Understanding: Logistic Regression
+
+1. If $\hat\beta = 0.7$ for treatment, what is the odds ratio and how do you read it?
+2. If $P(Y=1)=0.2$, what are the odds?
+3. An AUC of 0.75 means what in plain English?
+
+**Answers:**
+
+1. OR $=e^{0.7}=2.01$: the odds of the outcome in the treatment group are about twice the odds in control, adjusting for other covariates.
+2. Odds $=0.2/0.8=0.25$ ("1 to 4").
+3. Pick one positive and one negative at random; there is a 75% chance the model gives the positive the higher predicted probability (acceptable discrimination).
+:::
+
+
+# Part 3 (Day 1): Poisson Regression {background-color="#13294B"}
+
+::: {style="color:#ffffff;"}
+Count outcomes: rates, offsets, overdispersion, quasi-Poisson and NB remedies, on real data. Pace: ~25-30 min.
+:::
+
+---
+
+## Transition to Count Outcomes
+
+**Counts** (number of events) call for the Poisson family.
+
+| Aspect | Consideration |
+|--------|---------------|
+| Distribution | Poisson: $\mathrm{Var}(Y)=\mu$ |
+| Rate modeling | use an `offset(log(exposure))` |
+| Common issue | overdispersion ($\mathrm{Var}>\mu$) |
+| Remedies | quasi-Poisson, negative binomial |
+
+::: {.notes}
+Bridge from binary to counts. Emphasize the Poisson mean=variance constraint (derived in Part 1) is exactly what real count data usually violates, motivating the overdispersion section. Set up the offset idea before the case study.
+:::
+
+---
+
+## Case Study: Epilepsy Seizure-Count Trial (real data)
+
+::: {.callout-note}
+**Real FLW dataset (Thall & Vail 1990; FLW Ch. 11/13/14).** 59 epileptics randomized to progabide or placebo. Baseline = seizure count over an 8-week run-in; outcome = total seizures over the four 2-week post-randomization visits (8 weeks). We model the **rate** with an `offset(log(8))` for the 8-week exposure window.
+:::
+
+```{r}
+#| label: ep-setup
+#| echo: true
+#| output-location: slide
+str(ep[, c("id", "trtf", "age", "base", "total")])
+summary(ep$total)
+```
+
+---
+
+## Fit Poisson GLM (with offset)
+
+```{r}
+#| label: ep-fit
+#| echo: true
+#| output-location: slide
+ep$logexp <- log(8)   # 8 post-randomization weeks of observation
+fit_pois <- glm(total ~ trtf + base + age + offset(logexp),
+                data = ep, family = poisson)
+summary(fit_pois)
+```
+
+::: {.notes}
+The offset(log(8)) makes this a rate model (seizures per week). base and age are prognostic covariates; trtf is the randomized comparison. Note all 59 subjects share an 8-week window here, so the offset is constant, but the construction generalizes to unequal follow-up.
+:::
+
+---
+
+## Poisson GLM: Interpret Rate Ratios
+
+```{r}
+#| label: ep-numbers
+#| include: false
+rr_trt <- round(exp(coef(fit_pois))[["trtfProgabide"]], 2)
+rr_base <- round(exp(coef(fit_pois))[["base"]], 3)
+```
+
+- $e^{\hat\beta_{\text{Progabide}}} =$ `r rr_trt`
+- $e^{\hat\beta_{\text{base}}} =$ `r rr_base` per additional baseline seizure
+
+**Interpretation:** adjusting for baseline count and age, progabide is associated with a seizure rate `r rr_trt` times that of placebo (a `r round((1-rr_trt)*100)`% lower rate point estimate). Each extra baseline seizure multiplies the rate by `r rr_base`.
+
+::: {.callout-warning}
+We will see the SEs here are **too small** (invalid inference) because of overdispersion; do not over-read the significance until we correct it.
+:::
+
+::: {.notes}
+Numbers pulled inline from the fit. Progabide's point estimate is protective but modest; the headline teaching point is the overdispersion correction on the next slides, which inflates the SEs and changes the inferential picture. Use "SEs too small / invalid inference," never "biased SEs."
+:::
+
+---
+
+## Plain-Language Interpretation: Poisson Output
+
+| Term | Rate Ratio | Interpretation |
+|------|------------|----------------|
+| `(Intercept)` | -- | Baseline log-rate (placebo, base=0, age=0) |
+| `trtfProgabide` | `r rr_trt` | Progabide vs placebo seizure-rate ratio |
+| `base` | `r rr_base` | Each extra baseline seizure scales the rate |
+| `age` | `r round(exp(coef(fit_pois))[["age"]],3)` | Per-year multiplicative change in rate |
+| `offset(logexp)` | fixed | Adjusts for the 8-week exposure window |
+
+**Note on the offset:** the offset makes us model *rates* (events per unit time), not raw counts, so subjects with different follow-up are compared fairly.
+
+---
+
+## Visualize Fitted Rates
+
+```{r}
+#| label: ep-fitplot
+#| echo: true
+#| output-location: slide
+newd <- expand.grid(
+  age   = seq(min(ep$age), max(ep$age), length.out = 100),
+  trtf  = levels(ep$trtf),
+  base  = median(ep$base),
+  logexp = log(8)
+)
+newd$pred <- predict(fit_pois, newdata = newd, type = "response")
+ggplot(newd, aes(age, pred, color = trtf)) +
+  geom_line(linewidth = 1.1) +
+  labs(y = "Predicted seizures / 8 weeks", x = "Age",
+       title = "Poisson GLM: Predicted Seizure Count (at median baseline)",
+       color = "Treatment") +
+  theme_minimal()
+```
+
+---
+
+## Poisson Diagnostics: Pearson Residuals
+
+```{r}
+#| label: ep-resid
+#| echo: true
+#| output-location: slide
+pp <- tibble(fitted = fitted(fit_pois),
+             rpear  = residuals(fit_pois, type = "pearson"))
+ggplot(pp, aes(fitted, rpear)) +
+  geom_point(alpha = .6) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  labs(title = "Epilepsy Poisson: Pearson Residuals vs Fitted") +
+  theme_bw()
+```
+
+::: {.callout-note}
+**Reading it:** under a correct Poisson model the Pearson residuals should sit roughly within $\pm 2$ with constant spread. A **fanning** pattern (spread growing with the fitted value) and many residuals far beyond $\pm 2$ signal **overdispersion** -- the variance grows faster than the mean.
+:::
+
+---
+
+## Checking for Overdispersion
+
+```{r}
+#| label: ep-phi
+#| echo: true
+#| output-location: slide
+phi_hat <- sum(residuals(fit_pois, type = "pearson")^2) / fit_pois$df.residual
+phi_hat
+```
+
+If $\hat\phi > 1$, the variance exceeds the mean (overdispersion). Here $\hat\phi$ is far above 1, so the Poisson SEs are **too small** (invalid inference).
+
+**Remedy:** quasi-Poisson or negative binomial.
+
+::: {.notes}
+This is FLW-native (Section 11.5): the Pearson chi-square / df scale factor. The epilepsy data are famously overdispersed (phi around 12), so this lands on real data, not a simulated injection. Stress: point estimates stay valid, the SEs do not.
+:::
+
+---
+
+## Quasi-Poisson Model
+
+```{r}
+#| label: ep-qp
+#| echo: true
+#| output-location: slide
+fit_qp <- glm(total ~ trtf + base + age + offset(logexp),
+              data = ep, family = quasipoisson)
+summary(fit_qp)
+```
+
+::: {.notes}
+Point out: coefficients are IDENTICAL to the Poisson fit; only the SEs (and hence p-values) change, scaled by sqrt(phi_hat). This is the cleanest demonstration of "overdispersion does not bias the mean, it invalidates the naive SEs."
+:::
+
+---
+
+## Compare Poisson vs Quasi-Poisson
+
+| Model | Dispersion | SE behavior | Consequence |
+|-------|------------|-------------|-------------|
+| Poisson | fixed $=1$ | too small if $\mathrm{Var}>\mu$ | inflated significance (invalid inference) |
+| Quasi-Poisson | estimated $\hat\phi$ | scaled by $\sqrt{\hat\phi}$ | coefficients unchanged, SEs corrected |
+
+---
+
+## Negative Binomial
+
+```{r}
+#| label: ep-nb
+#| echo: true
+#| output-location: slide
+fit_nb <- glm.nb(total ~ trtf + base + age + offset(logexp), data = ep)
+summary(fit_nb)
+```
+
+::: {.callout-note}
+NB models the variance as $\mu + \mu^2/k$ (an extra parameter $k$), a more flexible mean-variance relationship than quasi-Poisson's constant scaling. Both correct the SEs; they assume different variance forms.
+:::
+
+---
+
+## Static SAS: PROC GENMOD with offset (reference only)
+
+The epilepsy Poisson rate model in SAS (FLW Section 11.6, Table 11.9 style):
+
+```sas
+data ep; set ep; logexp = log(8); run;
+
+proc genmod data=ep;
+   class trtf (ref="Placebo") / param=ref;
+   model total = trtf base age / dist=poisson link=log offset=logexp;
+   /* for overdispersion, add  dscale  to scale the SEs by sqrt(Pearson/df) */
+run;
+
+/* negative binomial alternative */
+proc genmod data=ep;
+   class trtf (ref="Placebo") / param=ref;
+   model total = trtf base age / dist=negbin link=log offset=logexp;
+run;
+```
+
+::: {.callout-note}
+Shown for reference only, not executed. `offset=logexp` mirrors R's `offset(log(8))`; `dscale` is SAS's overdispersion scale factor.
+:::
+
+---
+
+::: {.callout-note collapse="true"}
+## Check Your Understanding: Poisson Regression
+
+1. What does $\hat\phi = 2.5$ tell you about a Poisson model?
+2. If $\hat\beta=0.68$ for "chronic condition," what is the rate ratio and its reading?
+3. Key difference between quasi-Poisson and negative binomial?
+
+**Answers:**
+
+1. Overdispersion: observed variance about 2.5x the Poisson assumption (variance = mean). The Poisson SEs are too small, inflating significance.
+2. Rate ratio $=e^{0.68}=1.97$: the event rate is about 1.97x for those with the condition, holding other covariates fixed.
+3. Quasi-Poisson scales the variance by a constant $\phi$ (SEs $\times\sqrt\phi$, coefficients unchanged); NB adds a parameter so $\mathrm{Var}=\mu+\mu^2/k$. Both fix the SEs but assume different variance structures.
+:::
+
+
+# Part 4 (Day 2): Ordinal and Multinomial Models {background-color="#7BAFD4"}
+
+::: {.callout-note}
+**Beyond FLW Ch. 11 (instructor extension).** Proportional-odds (ordinal) and multinomial regression are introduced briefly in FLW only via the cumulative-logit example; the modeling depth here (polr, multinom, PO assumption) follows McCullagh (1980) and Agresti (2015). Recognize the models; treat as enrichment. Pace: ~20 min.
+:::
+
+---
+
+## Ordinal Response Setup
+
+Ordered categories (e.g. symptom severity: Low $<$ Med $<$ High).
+
+**Proportional-odds model (POM), R/`polr` convention:**
+
+$$
+\log\!\left(\frac{P(Y\le k)}{P(Y>k)}\right)=\kappa_k - X_{ij}\boldsymbol{\beta},
+\qquad k=1,\dots,K-1
+$$
+
+::: {.callout-note}
+**Sign convention (read carefully).** The $\kappa_k$ are $K-1$ **increasing cutpoints** (FLW eq. (11.1), p. 313, writes these as $\alpha_k$; we use $\kappa_k$ to avoid the GEE working-correlation $\alpha$ and the GLM natural parameter $\theta$). R's `polr` uses the **minus-sign** form above, so a **positive $\beta$ pushes probability toward HIGHER categories.** FLW's eq. (11.1) uses the **plus-sign** form $\mathrm{logit}\,P(Y\le k)=\alpha_k + X_{ij}\boldsymbol\beta$, under which the sign is reversed. FLW (p. 313) explicitly warns the two conventions differ. We use the `polr` (minus) form so code and slides agree.
+:::
+
+::: {.notes}
+This is the audit's high-priority sign-flip callout (L11-11) plus the FLW plus/minus departure. Hammer it: the sign of beta is convention-dependent. Always check which form the software uses before interpreting direction. polr = minus; FLW eq 11.1 = plus.
+:::
+
+---
+
+## Simulate Ordinal Data
+
+::: {.callout-note}
+Simulated to isolate the proportional-odds mechanism (no real FLW ordinal example is loaded here; the real case studies are TLC and epilepsy above).
+:::
+
+```{r}
+#| label: ord-sim
+#| echo: true
+#| output-location: slide
+set.seed(667)
+N <- 250
+dat_ord <- tibble(id = 1:N, trt = rbinom(N, 1, 0.5), time = rnorm(N)) %>%
+  mutate(eta = -0.5 + 1.1 * trt + 0.6 * time,
+         p_low = plogis(1 - eta),
+         p_med = plogis(3 - eta) - plogis(1 - eta),
+         u = runif(N),
+         ord = case_when(u < p_low ~ "L",
+                         u < p_low + p_med ~ "M",
+                         TRUE ~ "H"),
+         trt = factor(trt, labels = c("Ctl", "Tx")),
+         ord = factor(ord, ordered = TRUE, levels = c("L", "M", "H")))
+head(dat_ord)
+```
+
+---
+
+## Fit Ordinal Logistic Model
+
+```{r}
+#| label: ord-fit
+#| echo: true
+#| output-location: slide
+fit_polr <- MASS::polr(ord ~ trt * time, data = dat_ord, Hess = TRUE)
+summary(fit_polr)
+```
+
+---
+
+## What the Coefficients Mean
+
+Models the log-odds of **lower** categories ($\le k$) vs **higher** ($>k$). Under the minus-sign (`polr`) convention:
+
+| Sign of $\beta_j$ | Effect |
+|-------------------|--------|
+| $\beta_j > 0$ | Increases odds of HIGHER categories |
+| $\beta_j < 0$ | Increases odds of LOWER categories |
+
+**Example:** if $\hat\beta_{\text{Tx}}=0.8$, then OR $=e^{0.8}=2.23$: treatment has 2.23x the odds of being in a higher category, and **one** $\beta$ applies across all cutpoints (the proportional-odds assumption).
+
+::: {.notes}
+Tie directly back to the sign-flip callout. The "one beta across cutpoints" line is the PO assumption, tested on the next slide. If beta were positive but you (wrongly) assumed the plus-sign FLW form, you would report the opposite direction.
+:::
+
+---
+
+## Comparing Ordinal vs Multinomial
+
+```{r}
+#| label: multinom-fit
+#| echo: true
+#| output-location: slide
+suppressPackageStartupMessages(library(nnet))
+fit_multi <- multinom(ord ~ trt * time, data = dat_ord, trace = FALSE)
+# AIC comparison: POM (shared beta) vs multinomial (separate beta per category)
+data.frame(model = c("Ordinal POM", "Multinomial"),
+           params = c(length(coef(fit_polr)) + length(fit_polr$zeta),
+                      length(as.vector(coef(fit_multi)))),
+           AIC = c(AIC(fit_polr), AIC(fit_multi)))
+```
+
+::: {.callout-note}
+**Multinomial treats the categories as UNORDERED:** it estimates a **separate $\boldsymbol\beta$ for each category** (relative to a reference) and **discards** the ordering $L<M<H$. That flexibility costs parameters (the count jumps, shown above). The POM is more parsimonious *if* proportional odds holds.
+:::
+
+---
+
+## Is Proportional Odds Reasonable?
+
+A quick check: fit separate binary logits at each cutpoint and compare slopes
+(if PO holds, the slopes should be similar). A formal Brant test is also available.
+
+```{r}
+#| label: po-check
+#| echo: true
+#| output-location: slide
+# Cutpoint 1: P(Y > L);  Cutpoint 2: P(Y > M)
+ge_M <- as.integer(dat_ord$ord >= "M")   # not Low
+ge_H <- as.integer(dat_ord$ord >= "H")   # High
+s1 <- coef(glm(ge_M ~ trt + time, data = dat_ord, family = binomial))
+s2 <- coef(glm(ge_H ~ trt + time, data = dat_ord, family = binomial))
+round(rbind(`cut: >L` = s1, `cut: >M` = s2), 3)
+```
+
+::: {.callout-note}
+**Reading it:** similar slope coefficients across the two cutpoints support proportional odds; very different slopes argue for multinomial (or a partial-PO model). Compare the `trt` and `time` columns across rows.
+:::
+
+---
+
+## Predicted Category Probabilities
+
+```{r}
+#| label: ord-predplot
+#| echo: true
+#| output-location: slide
+newo <- expand.grid(trt = c("Ctl", "Tx"), time = seq(-2, 2, length = 100))
+preds <- predict(fit_polr, newdata = newo, type = "probs")
+pred_df <- cbind(newo, preds) %>%
+  pivot_longer(cols = c(L, M, H), names_to = "level", values_to = "prob")
+ggplot(pred_df, aes(time, prob, color = level)) +
+  geom_line(linewidth = 1) + facet_wrap(~trt) +
+  labs(title = "POM Predicted Category Probabilities", y = "Probability") +
+  theme_minimal()
+```
+
+::: {.notes}
+Treatment shifts mass from Low toward High, consistent with the positive trt coefficient under the minus-sign convention. Faceting by treatment keeps the two panels labeled and comparable.
+:::
+
+
+# Part 5 (Day 2): GLM Diagnostics {background-color="#7BAFD4"}
+
+::: {.callout-note}
+**Beyond FLW Ch. 11 (instructor extension).** Deviance/Pearson residuals, leverage, Cook's distance, and influence plots for GLMs are not defined in FLW Ch. 11; the chapter's only fit tool is the overdispersion scale factor (Section 11.5). Leverage and Cook's distance are the standard ordinary-regression diagnostics (LM, Ch. 3-6 / standard logistic-regression literature) extended to GLMs here; the $2\bar h$ and $4/n$ rules are stated locally below. Pace: ~15 min.
+:::
+
+---
+
+## Diagnostic Goals for GLMs
+
+Single reference table (used by both the logistic and Poisson diagnostics above):
+
+| Goal | What to Check | Tool |
+|------|---------------|------|
+| Link adequacy | Does $g(\mu)$ linearize the relationship? | residual-vs-fitted curvature |
+| Mean-variance | Does variance match the assumed $v(\mu)$? | Pearson residual spread, $\hat\phi$ |
+| Influential points | Outliers affecting estimates? | leverage ($2\bar h$), Cook's D ($4/n$) |
+| Overdispersion | Variance exceeds model expectation? | $\hat\phi=$ Pearson $\chi^2/$df |
+| Goodness-of-fit | Does the model fit overall? | deviance / LRT (FLW); H-L (enrichment) |
+
+::: {.notes}
+This merges the two duplicate diagnostic-goals tables (audit L11-13). The leverage/Cook's-D reference rules (2*hbar, 4/n) are stated here once and referenced from the plot slides above.
+:::
+
+---
+
+## Deviance and Pearson Residuals
+
+$$
+r_i^{(P)} = \frac{y_i - \hat\mu_i}{\sqrt{\hat V(\hat\mu_i)}}, \qquad
+r_i^{(D)} = \operatorname{sign}(y_i-\hat\mu_i)\sqrt{2\left[\ell(y_i)-\ell(\hat\mu_i)\right]}
+$$
+
+| Residual Type | Based On |
+|---------------|----------|
+| Pearson | scaled by estimated variance |
+| Deviance | model log-likelihood contribution |
+
+---
+
+## Assessing Model Fit with Deviance
+
+Residual deviance measures fit relative to the **saturated model** (the model with one parameter per observation, i.e. a perfect fit -- the deviance is twice the log-likelihood gap between your model and that perfect fit).
+
+Compare nested models via the likelihood-ratio test:
+
+$$
+D = 2(\ell_{\text{full}} - \ell_{\text{reduced}}) \sim \chi^2_{df}
+$$
+
+For nested models, smaller deviance indicates better fit. (This is FLW-native, Section 11.7.)
+
+::: {.notes}
+The one-line "saturated model" definition was the audit gap (L11-18). Contrast with the Hosmer-Lemeshow approach (enrichment) flagged earlier. Deviance/LRT is the FLW-native fit tool, so emphasize it as the examinable method.
+:::
+
+---
+
+## Choosing the Link Function
+
+::: {.callout-note}
+**Beyond FLW Ch. 11 (instructor extension):** complementary log-log and probit link choices are general GLM theory (McCullagh & Nelder 1989), not part of the Ch. 11 review.
+:::
+
+| Link | Interpretation | Common Use |
+|------|----------------|------------|
+| Identity | direct mean | Normal |
+| Logit | log-odds | binary |
+| Log | log-rate | count |
+| Probit | latent normal | binary / ordinal |
+| Complementary log-log | asymmetric, rare events | survival-type data |
+
+
+# Part 6 (Day 2): Extensions (read on your own) {background-color="#7BAFD4"}
+
+::: {.callout-note}
+**Beyond FLW Ch. 11 (instructor extension).** Everything in Part 6 is enrichment: skim it, recognize the names, and know where to look. Pace: ~10 min, lecture-light.
+:::
+
+---
+
+## Zero-Inflated and Hurdle Models
+
+::: {.callout-note}
+**Beyond FLW.** FLW (p. 321) mentions zero-inflated Poisson (ZIP) but states a detailed treatment is "beyond the scope of this chapter"; **hurdle** models are not in FLW at all (see Zeileis, Kleiber & Jackman 2008).
+:::
+
+When counts have far more zeros than Poisson allows, use a two-part model:
+
+| Part | Purpose |
+|------|---------|
+| 1 | binary: structural zero vs "at risk" |
+| 2 | count: conditional on being at risk |
+
+```{r}
+#| label: zinfl
+#| echo: true
+#| output-location: slide
+# Illustrative ZIP on the epilepsy counts (note: these are not zero-inflated,
+# so this is a demonstration of syntax, not a recommended model here).
+if (requireNamespace("pscl", quietly = TRUE)) {
+  zi <- pscl::zeroinfl(total ~ trtf + base | 1, data = ep, dist = "poisson")
+  round(coef(zi), 3)
+} else {
+  cat("Install 'pscl' for zero-inflated models.\n")
+}
+```
+
+---
+
+## Quasi-Likelihood and Robust (Sandwich) SEs
+
+::: {.callout-note}
+**Beyond FLW Ch. 11 (instructor extension).** Sandwich/robust SEs are the bridge to GEE (Ch. 12-13); here they are previewed (see Zeger & Liang 1986).
+:::
+
+For misspecified-variance or correlated data, robust (sandwich) SEs give valid inference even if the variance model is wrong.
+
+```{r}
+#| label: sandwich
+#| echo: true
+#| output-location: slide
+if (requireNamespace("sandwich", quietly = TRUE) &&
+    requireNamespace("lmtest", quietly = TRUE)) {
+  lmtest::coeftest(fit_pois, vcov = sandwich::sandwich)
+} else {
+  cat("Install 'sandwich' and 'lmtest' for robust SEs.\n")
+}
+```
+
+---
+
+## GEE Connection (Preview)
+
+Single-level GLMs assume **independent** observations. Longitudinal data have within-subject correlation; Ch. 12-13 relax independence using GEE.
+
+The GEE **working** covariance (NOT the true $\mathrm{Var}(\mathbf{Y}_i)$) is
+
+$$
+V_i = \mathbf{A}_i^{1/2}\,\operatorname{Corr}(\mathbf{Y}_i)\,\mathbf{A}_i^{1/2},
+$$
+
+where $\mathbf{A}_i$ is the diagonal of marginal variances and $\operatorname{Corr}(\mathbf{Y}_i)$ is a **working** correlation.
+
+::: {.callout-note}
+Robust (sandwich) inference stays valid even if the working correlation is wrong. Standard GEE requires **MCAR** for valid inference; IPW-GEE extends to **MAR** (developed in the missing-data chapters, course L17-L18).
+:::
+
+::: {.notes}
+Audit L11-15: this is the WORKING covariance, labeled as such, with Corr(Y_i) not R(alpha), and it does not collide with the reserved R_i. V_i here is legitimately the GEE working covariance (the one context where V_i is allowed per the notation canon). Add the MCAR/IPW caveat.
+:::
+
+---
+
+## Model Selection and AIC
+
+::: {.callout-note}
+**Beyond FLW Ch. 11 (instructor extension):** AIC-based model selection is general practice (Akaike 1974), not part of the Ch. 11 review, which uses deviance/LRT for nested comparisons.
+:::
+
+$$
+\text{AIC} = -2\ell + 2p
+$$
+
+Smaller AIC = better fit/complexity tradeoff. Use the LRT (deviance) for **nested** models; AIC for **non-nested** comparison.
+
+---
+
+## Common Pitfalls
+
+| Pitfall | Issue |
+|---------|-------|
+| Misinterpreting coefficients | odds/log-odds are not probabilities |
+| Ignoring overdispersion | SEs too small, inflated significance |
+| Log link with zero/negative values | model fails |
+| Forgetting the offset | compares counts, not rates |
+| Confusing nested vs non-nested comparison | wrong test (LRT vs AIC) |
+| Misreading the ordinal sign convention | direction flips between polr and FLW |
+
+---
+
+## Further Reading
+
+- Fitzmaurice, Laird & Ware (2011), *Applied Longitudinal Analysis*, Ch. 11 (course text)
+- Dobson & Barnett (2018), *An Introduction to Generalized Linear Models* (GLM theory, IRLS)
+- McCullagh & Nelder (1989), *Generalized Linear Models* (exponential family, links)
+- Agresti (2015), *Foundations of Linear and Generalized Linear Models* (ordinal/multinomial)
+- Hosmer, Lemeshow & Sturdivant (2013), *Applied Logistic Regression* (ROC, calibration, H-L)
+- Zeileis, Kleiber & Jackman (2008), *Regression Models for Count Data in R* (ZIP, hurdle)
+
+---
+
+## GLM Summary: Key Takeaways
+
+| Aspect | Key Point |
+|--------|-----------|
+| Framework | GLMs extend LMs via a link + a mean-variance structure |
+| Outcomes | binary, count, ordinal handled in one framework |
+| FLW core | logistic ORs, Poisson rate ratios, overdispersion scale factor, deviance/LRT |
+| Enrichment | ROC/AUC, calibration, H-L, ordinal/multinomial, ZIP, sandwich, AIC |
+
+**Next Lecture:** Marginal Models (Ch. 12); GEE estimation follows in Ch. 13.
+
+
+# Part 7: Appendices (Technical Details) {background-color="#13294B"}
+
+::: {style="color:#ffffff;"}
+Beyond FLW Ch. 11; reference only.
+:::
+
+---
+
+## Appendix A: IRLS Algorithm Details
+
+::: {.callout-note}
+**Beyond FLW Ch. 11.** Standard GLM theory (McCullagh & Nelder 1989).
+:::
+
+Each iteration solves a weighted least-squares problem:
+
+$$
+\boldsymbol{\beta}^{(t+1)} = (\mathbf{X}^\top W^{(t)} \mathbf{X})^{-1} \mathbf{X}^\top W^{(t)} z^{(t)}
+$$
+
+with working response and weights
+
+$$
+z^{(t)} = \eta^{(t)} + (y - \mu^{(t)}) \frac{d\eta}{d\mu},
+\qquad
+W^{(t)} = \operatorname{diag}\!\left[\left(\tfrac{d\mu}{d\eta}\right)^2 \big/ v(\mu)\right].
+$$
+
+Here $d\mu/d\eta$ is the slope of the inverse link; $v(\mu)$ is the variance function.
+
+---
+
+## Appendix B: Score Function and Fisher Information
+
+::: {.callout-note}
+**Beyond FLW Ch. 11.** Standard GLM theory; below assumes the **canonical link with unit dispersion** ($\phi=1$). The general forms carry $\phi$ and the $(\partial\mu_i/\partial\eta_i)^2$ weight.
+:::
+
+For the canonical link (rows $X_{ij}$, $1\times p$):
+
+$$
+U(\boldsymbol{\beta}) = \sum_i \sum_j X_{ij}^\top (Y_{ij} - \mu_{ij}),
+\qquad
+I(\boldsymbol{\beta}) = \sum_i \sum_j \frac{X_{ij}^\top X_{ij}}{\operatorname{Var}(Y_{ij})} .
+$$
+
+Used for standard errors and likelihood inference.
+
+---
+
+## Appendix C: Exponential Family Examples
+
+Using FLW's labeling: cumulant function $a(\theta)$, data-only term $b(y,\phi)$, scale $\phi$.
+
+| Distribution | $\phi$ | $a(\theta)$ (cumulant) | $b(y,\phi)$ (data-only) |
+|--------------|--------|------------------------|-------------------------|
+| Normal | $\sigma^2$ | $\theta^2/2$ | $-y^2/(2\sigma^2) - \tfrac12\log(2\pi\sigma^2)$ |
+| Binomial | 1 | $\log(1+e^\theta)$ | $\log\binom{n}{y}$ |
+| Poisson | 1 | $e^\theta$ | $-\log(y!)$ |
+
+Recall $\mathbb{E}(Y)=a'(\theta)$ and $\mathrm{Var}(Y)=\phi\,a''(\theta)$.

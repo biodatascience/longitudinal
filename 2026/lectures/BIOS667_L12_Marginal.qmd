@@ -1,0 +1,743 @@
+---
+title: "BIOS 667 - Lecture 12: Marginal Models (Ch. 12)"
+subtitle: "Fitzmaurice, Laird & Ware (2011) - Applied Longitudinal Data Analysis"
+author: "Naim Rashid"
+format:
+  revealjs:
+    theme: [default]
+    footer: BIOS 667 · UNC Gillings - Lecture 12 (Ch.12)
+    slide-number: true
+    hash: true
+    toc: false
+    code-overflow: wrap
+    code-line-numbers: false
+    math: mathjax
+    incremental: true
+    embed-resources: true
+    chalkboard: false
+    css: "../../unc-gillings.css"
+    scrollable: true
+execute:
+  warning: false
+  message: false
+---
+
+## Lecture Objectives
+
+- Understand why standard **GLMs** fail for longitudinal data
+- Define **marginal models** and when to use them
+- Distinguish **marginal vs mixed** model interpretations of $\beta$
+- Describe the **three-part** marginal model: mean, variance, association
+- Preview **GEE** estimation (Ch. 13) and apply it to a real Case Study
+
+::: {.notes}
+This is the conceptual bridge between the GLM review (L11) and GEE estimation (L13). Goal today: students leave able to write down a marginal model's three parts and read a `geeglm` table, even though we do not derive the estimating equations until next time. The Case Study (epilepsy seizure counts) is the payoff slide. Maps to HW4 (GEE / marginal-model questions) and the final-project marginal-analysis component.
+:::
+
+---
+
+## Prerequisites: What You Should Recall
+
+::: {.callout-note}
+## Recall before we start
+
+- **L11 (Ch. 11):** the GLM building blocks: a **link** $g(\mu)$, a **variance function** $v(\mu)$, and a **dispersion** $\phi$. Logistic, Poisson, and linear models are all special cases.
+- **L07/L08 (Ch. 7-8):** modeling **within-subject correlation** with a working/covariance structure (we used `gls()` with `corAR1`/`corCompSymm`). Same idea returns here as the *working correlation*.
+- **L05 (Ch. 5):** population-average mean trajectories by group.
+:::
+
+Today we glue these together: a GLM mean model **plus** a within-subject association structure, fit so that inference stays valid.
+
+::: {.notes}
+Tie each prerequisite to a concrete prior slide. The single most important carry-over is L11's link + variance-function decomposition: the marginal model just adds a third piece (association). If students do not recall the variance function from L11, pause here.
+:::
+
+---
+
+## Roadmap
+
+1. Why GLMs fail for correlated data
+2. Marginal model: **mean | variance | association**
+3. Outcome-type specifications (continuous, count, binary, ordinal)
+4. **Case Study:** epilepsy seizure counts (Poisson GEE)
+5. Why full likelihood is hard for discrete data
+6. GEE preview, missing-data caveat, practical decisions
+
+---
+
+{{< include _notation_box.qmd >}}
+
+---
+
+## Notation (this lecture): GEE working covariance
+
+This is the deck that **introduces** the GEE working-covariance notation. Reserved symbols ($R_i$ = within-subject **residual** covariance) are unchanged.
+
+::: {.notation-card style="font-size: 0.82em;"}
+
+| Symbol | Meaning |
+|:--|:--|
+| $\pi_{ij}$ | binary response probability for subject $i$ at occasion $j$ |
+| $\phi$ | dispersion (scale) parameter |
+| $\alpha$ | working-**correlation** parameter (e.g. exchangeable $\rho$, AR(1) decay) |
+| $\operatorname{Corr}_i(\alpha)$ | working correlation matrix $(n_i \times n_i)$ |
+| $A_i$ | diagonal matrix of marginal variances $\phi\, v(\mu_{ij})$ |
+| $V_i(\alpha) = A_i^{1/2}\,\operatorname{Corr}_i(\alpha)\,A_i^{1/2}$ | GEE **working covariance** of $\mathbf{Y}_i$ |
+
+:::
+
+::: {.callout-warning}
+We write the working structure as $V_i(\alpha)$, and we do **not** reuse the symbol $R_i$ for it: $R_i$ is reserved for the residual covariance of the Gaussian LME. The ordinal cumulative-logit **thresholds** are written $\kappa_k$ to avoid colliding with the working-correlation $\alpha$.
+:::
+
+::: {.notes}
+Make the no-collision point explicit: $R_i$ already means something (the LME residual covariance from L08), so the GEE working structure gets its own symbol $V_i(\alpha)$. $A_i^{1/2}$ just rescales the correlation matrix back to the variance scale using the GLM variance function. Students do not need the formula memorized, only that "working covariance = variances on the diagonal, working correlation off the diagonal."
+:::
+
+---
+
+## Motivation
+
+Repeated measures within a subject are **correlated**.
+
+A naive GLM assumes independence, so its inference is **invalid**: the standard errors are **incorrect** (FLW pp. 43-44).
+
+::: {.callout-note}
+For **positively** correlated within-subject data, ignoring correlation typically makes SEs **too small** for within-subject (time-varying) effects, inflating Type I error. It can make SEs for **between-subject** effects too *large*. Either way, the inference is not trustworthy.
+:::
+
+For **discrete** data, *how* we model correlation also changes the meaning of $\beta$.
+
+::: {.notes}
+Resist saying "SEs are too small" as a blanket rule. The honest framing is "invalid inference." The direction depends on whether the covariate is within- or between-subject. The epilepsy Case Study will show a robust SE about 4x the naive one for a within-subject-flavored effect, which is the common case.
+:::
+
+---
+
+## Two Model Families (FLW Ch. 12)
+
+FLW Ch. 12 contrasts **two** families: marginal (population-average) vs mixed (subject-specific).
+
+| Family | Target | $\beta$ Interpretation |
+|--------|--------|------------------------|
+| **Marginal** | Population mean | Population-average effect |
+| **Mixed** | Individual trajectory | Subject-specific (given $b_i$) |
+| *Transition* (preview) | Conditional on past $Y$ | Effect given previous outcomes |
+
+::: {.callout-note}
+**Transition models** are a third family but are **not** part of FLW Ch. 12. Shown greyed as a forward pointer (transition-models lecture / FLW transition chapter).
+:::
+
+::: {.notes}
+FLW Ch. 12 (p. 341-342) is explicit: marginal = "population-average," mixed = "subject-specific." The transition row is included only so students see the full landscape, but flag it loudly as preview material so it is not mistaken for chapter content.
+:::
+
+---
+
+## Marginal Model = Mean + Variance + Association
+
+**Mean:**
+
+$$E(Y_{ij}\mid X_{ij})=\mu_{ij}, \quad g(\mu_{ij})=X_{ij}\beta$$
+
+**Variance:**
+
+$$\operatorname{Var}(Y_{ij}\mid X_{ij})=\phi\,v(\mu_{ij})$$
+
+**Association:**
+
+Within-subject dependence via the working covariance $V_i(\alpha)$ (exchangeable, AR(1), etc.).
+
+::: {.notes}
+This is the central recipe of the lecture. Three independent choices: link (from the outcome type), variance function (from the outcome type), and association (the modeler's working guess). The key payoff: only the first determines what $\beta$ *means*; the third only affects efficiency.
+:::
+
+---
+
+## Key Insight: Working Correlation
+
+Changing $V_i(\alpha)$ affects **precision**, not the **interpretation** of $\beta$.
+
+This is the defining feature of marginal models: $\beta$ targets the same population-average quantity regardless of the working correlation, and **robust (sandwich) SEs** stay valid even if $V_i(\alpha)$ is misspecified.
+
+::: {.notes}
+This is the slide students should remember. Contrast with mixed models, where changing the random-effects structure *does* change what the coefficients condition on. Here the working correlation is just a tool for efficiency; get it roughly right and you gain precision, get it wrong and you only lose some efficiency, not consistency.
+:::
+
+---
+
+::: {.callout-note collapse="true"}
+## Check Your Understanding: Marginal Model Foundations
+
+1. What is the key difference between marginal and mixed model interpretations of $\beta$?
+
+2. Why does ignoring within-subject correlation give invalid inference for longitudinal data?
+
+3. If you change the working correlation structure in a marginal model, what changes and what stays the same?
+
+**Answers:**
+
+1. **Marginal models** give population-average effects: $\beta$ describes how the average response in the population changes with covariates. **Mixed models** give subject-specific effects: $\beta$ describes how an individual's response changes, conditional on their random effects.
+
+2. A naive GLM assumes observations are independent. When within-subject observations are positively correlated, the effective sample size is smaller than the nominal one. Ignoring this distorts the standard errors (typically too small for within-subject effects, sometimes too large for between-subject effects), so the inference is invalid.
+
+3. The **coefficient estimates** ($\hat{\beta}$) remain stable because they target the same population-average quantity. The **standard errors** change because different working correlations have different efficiency. Robust (sandwich) SEs protect against misspecification of $V_i(\alpha)$.
+:::
+
+---
+
+## 12.2 Notation and Data Structure
+
+- $N$ subjects; subject $i$ has $n_i$ measurements at times $t_{ij}$
+- Stack responses: $\mathbf{Y}_i=(Y_{i1},\dots,Y_{in_i})^\top$
+- Across-subject independence
+- Within-subject dependence
+
+::: {.notes}
+Re-anchor the FLW index convention: $N$ subjects, $n_i$ occasions. The "stacking" notation is what the long-format data frame looks like once you see `head(dat)` two slides from now.
+:::
+
+---
+
+## Covariates
+
+$X_{ij}$ is the $1\times p$ covariate row; stack the rows to $X_i$ ($n_i\times p$)
+
+| Type | Examples |
+|------|----------|
+| **Time-invariant** | Treatment, sex (between-subject) |
+| **Time-varying** | Age, exposure (within-subject) |
+
+---
+
+## Discrete Outcomes: Correlation Is Constrained
+
+For binary outcomes the feasible correlation depends on the marginal means. With $p_1=E(Y_1)=0.2$ and $p_2=E(Y_2)=0.8$:
+
+The largest possible $\Pr(Y_1=1, Y_2=1)$ is $\min(p_1,p_2)=0.2$ (the Frechet bound):
+
+| | $Y_2=0$ | $Y_2=1$ | margin |
+|--|:--:|:--:|:--:|
+| $Y_1=0$ | $0.2$ | $0.6$ | $0.8$ |
+| $Y_1=1$ | $0.0$ | $0.2$ | $0.2$ |
+| margin | $0.2$ | $0.8$ | |
+
+At that maximum, the correlation is
+$$\rho_{12}^{\max}=\sqrt{\frac{p_1(1-p_2)}{p_2(1-p_1)}}=\sqrt{\frac{0.2\cdot 0.2}{0.8\cdot 0.8}}=\sqrt{\tfrac{0.04}{0.64}}=0.25.$$
+
+So $\rho_{12}\le 0.25$: the means alone **cap** the correlation.
+
+::: {.notes}
+The point: for discrete data you cannot pick a mean model and a correlation independently; the marginals constrain the feasible correlations. This is exactly why a full joint likelihood for discrete longitudinal data is awkward and why GEE (specify mean + working association, do not insist on a coherent joint distribution) is attractive.
+:::
+
+---
+
+## Discrete Outcomes: Odds Ratios Are More Natural
+
+For a pair of binary outcomes, define the four joint cell probabilities:
+
+| | $Y_k=0$ | $Y_k=1$ |
+|--|:--:|:--:|
+| $Y_j=0$ | $P_{00}$ | $P_{01}$ |
+| $Y_j=1$ | $P_{10}$ | $P_{11}$ |
+
+The pairwise **log odds ratio** uses these cells directly:
+
+$$
+\theta_{jk}=\log\frac{P_{11}\,P_{00}}{P_{10}\,P_{01}}
+$$
+
+Unlike the correlation, the odds ratio is **not** mechanically bounded by the marginal means, so it is the more natural association measure for binary data.
+
+::: {.notes}
+Walk the 2x2 table out loud before the formula: $P_{11}$ is "both events," $P_{00}$ "neither," etc. The odds ratio is unconstrained on $(0,\infty)$ regardless of the margins, which is precisely the problem the correlation had on the previous slide.
+:::
+
+---
+
+## Master Simulated Dataset: continuous outcome
+
+A small simulated dataset to illustrate the long format and the continuous fit. The continuous outcome carries **subject random effects** ($b_0, b_1$), so it is genuinely correlated within subject.
+
+```{r}
+#| label: setup-data-cont
+#| echo: true
+suppressPackageStartupMessages({
+  library(dplyr); library(tidyr); library(tibble)
+  library(ggplot2); library(nlme); library(broom); library(geepack)
+})
+
+set.seed(667)
+N <- 120
+n_i  <- sample(3:6, N, replace = TRUE)
+id   <- rep(1:N, times = n_i)
+time <- unlist(lapply(n_i, function(n) 0:(n - 1)))
+trt  <- rep(rbinom(N, 1, 0.5), times = n_i)
+
+# subject random effects induce within-subject correlation
+b0 <- rep(rnorm(N, 0, 1.2), times = n_i)
+b1 <- rep(rnorm(N, 0, 0.4), times = n_i)
+y  <- 10 + 0.6 * time + 1.0 * trt + 0.5 * (trt * time) +
+      b0 + b1 * time + rnorm(length(id), 0, 1)
+```
+
+::: {.notes}
+Emphasize: the continuous DGP includes random intercept and slope, so observations within a subject really are correlated. Contrast with the discrete outcomes on the next slide, which (for simplicity) are simulated independent-within-subject; flag that explicitly so students do not think the discrete examples demonstrate correlation.
+:::
+
+---
+
+## Master Simulated Dataset: discrete outcomes
+
+```{r}
+#| label: setup-data-disc
+#| echo: true
+# Discrete outcomes generated INDEPENDENT within subject (illustration only)
+lp_bin  <- -1 + 0.25 * time + 0.7 * trt
+y_bin   <- rbinom(length(id), 1, plogis(lp_bin))
+
+mu_cnt  <- exp(1.2 + 0.15 * time + 0.3 * trt)
+y_count <- rpois(length(id), mu_cnt)
+
+cuts <- quantile(y, probs = c(.25, .5, .75))
+ordinal_y <- cut(y, breaks = c(-Inf, cuts, Inf),
+                 labels = c("L", "M", "H", "VH"), ordered_result = TRUE)
+
+dat <- tibble(
+  id   = factor(id),
+  time = as.integer(time),
+  trt  = factor(trt, levels = c(0, 1), labels = c("Ctl", "Tx")),
+  y = y, y_bin = as.integer(y_bin),
+  y_count = as.integer(y_count), ordinal_y = ordered(ordinal_y)
+)
+```
+
+::: {.callout-warning}
+`y_bin` and `y_count` are generated **independent within subject** (no random effect), so they understate the correlation the lecture motivates. They illustrate the *specification* only. The real correlated discrete analysis is the epilepsy Case Study below.
+:::
+
+---
+
+## Long Format: One Subject's Rows
+
+```{r}
+#| label: head-dat
+#| echo: true
+#| output-location: slide
+head(dat, 8)
+```
+
+::: {.notes}
+Point at the repeated `id` values: each subject contributes several rows, one per occasion. This long ("stacked") layout is what $\mathbf{Y}_i=(Y_{i1},\dots,Y_{in_i})^\top$ means in practice, and it is the format `geeglm`/`gls` expect with an `id`/grouping column.
+:::
+
+---
+
+## Visualizing Imbalance
+
+```{r}
+#| label: viz-imbalance
+#| echo: true
+#| output-location: slide
+ggplot(dat, aes(time, y, group = id, color = trt)) +
+  geom_line(alpha = 0.15) +
+  stat_summary(aes(group = trt), fun = mean, geom = "line", linewidth = 1.2) +
+  labs(title = "Unbalanced Trajectories by Treatment (continuous y)",
+       y = "Continuous outcome y") +
+  theme_minimal()
+```
+
+---
+
+## Implicit Mean Assumption
+
+The marginal mean depends only on the **current** covariate:
+
+$$
+E(Y_{ij}\mid X_{i1},\dots,X_{in_i})=E(Y_{ij}\mid X_{ij})
+$$
+
+This holds for **design-fixed covariates** (fixed by the study design, e.g. randomized treatment, planned visit time).
+
+```
+   time ->        X_1  ->  Y_1     X_2  ->  Y_2     X_3  ->  Y_3
+                            |                |
+   FORBIDDEN feedback:      +----> X_2        +----> X_3   (Y_(j-1) -> X_j)
+```
+
+It **fails** when a future covariate responds to a past outcome (feedback), e.g. a clinician raising the dose after a poor prior response.
+
+::: {.notes}
+"Design-fixed" = the covariate values are set by the design, not by the patient's evolving outcomes. The red feedback arrows are the violation: if $X_j$ reacts to $Y_{j-1}$, the marginal mean model is no longer the right target and GEE can be biased. Keep the algebra light here; the picture is the teaching point.
+:::
+
+---
+
+## Outcome-Type Specifications (one table)
+
+All four use the same three-part recipe; only the link and variance function change.
+
+::: {style="font-size: 0.78em;"}
+
+| Outcome | Link $g(\mu)$ | Variance $v(\mu)$ | $\beta$ interpretation |
+|--|--|--|--|
+| **Continuous** | identity $\mu$ | $\phi$ (constant) | population-avg mean difference / slope |
+| **Count** | log $\log\mu$ | $\phi\,\mu$ | population-avg log **rate ratio** |
+| **Binary** | logit $\log\frac{\mu}{1-\mu}$ | $\mu(1-\mu)$ | population-avg log **odds ratio** |
+| **Ordinal** | cumulative logit | (multinomial) | population-avg log **cumulative-odds ratio** |
+
+:::
+
+Association in every row: a working covariance $V_i(\alpha)$ (exchangeable, AR(1), unstructured, ...).
+
+::: {.notes}
+This single table replaces four near-identical slides. Read across one row at a time. Stress that the $\beta$ interpretation column is fixed by the link (population-average and on the link scale), and is the same whatever working correlation you pick. Ordinal is genuinely different (cumulative logits) and gets its own slide next.
+:::
+
+---
+
+## Ordinal Specification (Proportional Odds)
+
+Genuinely new structure: cumulative dichotomizations with shared slopes.
+
+$$\Pr(Y_{ij}\le k\mid X_{ij})=F_{ijk}, \qquad
+\log\frac{F_{ijk}}{1-F_{ijk}}=\kappa_k - X_{ij}\beta$$
+
+- $\kappa_k$: category-specific **thresholds** (cut-points), $\kappa_1<\dots<\kappa_{K-1}$ (FLW writes these $\alpha_k$; we use $\kappa_k$ to keep $\alpha$ for the GEE working correlation)
+- $\beta$: population-average log **cumulative-odds ratios**, shared across cut-points (the proportional-odds assumption); the **minus-sign** form matches L11 and R's `polr`, so a positive $\beta$ pushes toward higher categories
+
+::: {.callout-warning}
+A proper **marginal** ordinal fit needs **GEE for cumulative logits** (e.g. `multgee::ordLORgee`, `repolr`) to account for within-subject clustering. An ordinary `MASS::polr` fit assumes independence and gives the wrong SEs, so we defer the worked ordinal fit to **L13**. Here we present only the specification.
+:::
+
+::: {.notes}
+We deliberately do NOT fit `polr` here: it ignores clustering and would teach the exact independence error the lecture warns against. The specification (thresholds + shared slope) is what students need now; the cluster-aware estimation is a GEE-for-ordinal topic in L13. Thresholds are $\kappa_k$, not $\alpha_k$, to keep $\alpha$ for the working correlation.
+:::
+
+---
+
+## GEE bridge: how to read `geeglm` (estimation is L13)
+
+::: {.callout-note}
+## Reading a `geeglm` call before we derive GEE
+
+The **estimation machinery** (estimating equations, the sandwich variance) is **next lecture (L13)**. For now, read a `geepack::geeglm` fit as a black box:
+
+- `id =` is the **clustering variable** (which rows belong to the same subject)
+- `corstr =` is the **working correlation** (`"exchangeable"`, `"ar1"`, `"independence"`, ...)
+- the printed **`Std.err` IS the robust / sandwich SE** (valid even if `corstr` is misspecified)
+:::
+
+---
+
+## Continuous Outcome: Fit (`gls`)
+
+```{r}
+#| label: fit-continuous
+#| echo: true
+#| output-location: slide
+dat_cont <- dat |> dplyr::select(id, time, trt, y)
+
+fit_cont <- gls(
+  y ~ time * trt,
+  data = dat_cont,
+  correlation = corAR1(form = ~ time | id),
+  method = "REML"
+)
+
+coef(summary(fit_cont))
+```
+
+::: {.notes}
+For the Gaussian case the marginal model is just generalized least squares with an AR(1) working correlation, which students already saw in L07/L08. REML for the reported coefficients. The point is continuity: GEE for discrete data is the natural generalization of this `gls` fit.
+:::
+
+---
+
+## Continuous: Plain-Language Interpretation
+
+| Term | Estimate | Interpretation |
+|------|----------|----------------|
+| `(Intercept)` | ~10 | Mean outcome at time 0 for control group |
+| `time` | ~0.6 | Control group increases ~0.6 units per period |
+| `trtTx` | ~1.0 | At time 0, treatment group ~1.0 units higher |
+| `time:trtTx` | ~0.5 | Treatment group increases ~0.5 units/time faster |
+
+**In a sentence:** both groups increase over time, but the treatment group starts higher and increases faster, so the separation grows.
+
+---
+
+## Case Study: Epilepsy Seizure Counts
+
+::: {.callout-note}
+## The data (FLW Ch. 12-14 canonical discrete example)
+
+A placebo-controlled trial of the anti-epileptic drug **progabide** in 59 patients with partial seizures (Thall & Vail 1990; FLW Ch. 12-14). Seizure counts were recorded over four successive **2-week** post-randomization intervals, plus an **8-week baseline** count.
+
+- **Outcome:** `seizures` (count) at visits 1-4
+- **Covariates:** `trt` (placebo / progabide), log baseline rate, visit
+- **Question:** does progabide reduce the seizure **rate** vs placebo?
+:::
+
+::: {.notes}
+This is the real-data payoff. Stress: counts -> Poisson marginal model -> log link -> coefficients are log rate ratios. The baseline count is a strong adjustment covariate. Set expectations that the famous result is a *null* treatment effect, which is itself a teaching point (a real trial, an honest non-significant rate ratio).
+:::
+
+---
+
+## Case Study: Load and Reshape (wide -> long)
+
+```{r}
+#| label: epi-load
+#| echo: true
+#| output-location: slide
+epi_url  <- "https://content.sph.harvard.edu/fitzmaur/ala2e/epilepsy.txt"
+epi_file <- "../../data/epilepsy.txt"
+if (!file.exists(epi_file)) {
+  dir.create(dirname(epi_file), showWarnings = FALSE, recursive = TRUE)
+  download.file(epi_url, epi_file)
+}
+
+# FLW .txt has a comment header; data rows start at the first "<int> <int> ..."
+raw <- readLines(epi_file)
+data_start <- grep("^\\s*[0-9]+\\s+[0-9]", raw)[1]
+epi_wide <- read.table(text = raw[data_start:length(raw)])
+names(epi_wide) <- c("id", "trt", "age", "baseline", "c1", "c2", "c3", "c4")
+
+epi <- epi_wide |>
+  tidyr::pivot_longer(c(c1, c2, c3, c4),
+                      names_to = "visit", values_to = "seizures") |>
+  dplyr::mutate(
+    visit = as.integer(gsub("c", "", visit)),
+    trt   = factor(trt, levels = c(0, 1),
+                   labels = c("Placebo", "Progabide")),
+    lbase = log(baseline / 4)   # 8-wk baseline -> per-2-wk rate scale
+  )
+
+head(epi, 6)
+```
+
+::: {.notes}
+Walk through the gotcha: the FLW file is WIDE with a multi-line comment header. We strip the header by finding the first numeric row, then `pivot_longer` the four count columns into a long frame with one row per subject-visit. `lbase` rescales the 8-week baseline to the 2-week rate so it is on the same exposure scale as the outcome.
+:::
+
+---
+
+## Case Study: Marginal Poisson GEE
+
+```{r}
+#| label: epi-gee
+#| echo: true
+#| output-location: slide
+fit_epi <- geeglm(
+  seizures ~ trt + lbase,
+  id      = id,
+  data    = epi,
+  family  = poisson(link = "log"),
+  corstr  = "exchangeable"
+)
+
+summary(fit_epi)
+```
+
+::: {.notes}
+This is a fully real, runnable marginal GEE. `id = id` clusters the four visits per patient; `corstr="exchangeable"` is the working correlation; the `Std.err` column is the robust SE (L13 bridge). Highlight the `trtProgabide` row (null) and the strong `lbase` row. Note the estimated exchangeable working correlation reported at the bottom.
+:::
+
+---
+
+## Case Study: Rate Ratios and Interpretation
+
+```{r}
+#| label: epi-rr
+#| echo: true
+#| output-location: slide
+est <- coef(summary(fit_epi))
+rr  <- exp(cbind(RR = est[, "Estimate"],
+                 Lower = est[, "Estimate"] - 1.96 * est[, "Std.err"],
+                 Upper = est[, "Estimate"] + 1.96 * est[, "Std.err"]))
+round(rr, 3)
+```
+
+**Interpretation (rate ratios, population-average):**
+
+- **Progabide vs placebo:** $\widehat{RR}\approx 0.90$ (95% CI crosses 1) - no significant reduction in seizure rate once baseline is accounted for.
+- **Log baseline:** $\widehat{RR}\approx 3.2$ per unit - the dominant predictor; higher baseline rate strongly predicts more post-randomization seizures.
+
+::: {.notes}
+Read the rate ratio in words: "the progabide group's seizure rate is about 0.90 times the placebo rate, but the CI includes 1, so not significant." This is the well-known honest null from this trial. Contrast with the strong baseline effect: most of the variation is explained by where a patient started.
+:::
+
+---
+
+## Case Study: Model-Based vs Robust SEs
+
+```{r}
+#| label: epi-se
+#| echo: true
+#| output-location: slide
+# Naive Poisson GLM ignores clustering: model-based SEs
+fit_naive <- glm(seizures ~ trt + lbase, data = epi,
+                 family = poisson(link = "log"))
+
+data.frame(
+  term       = c("trtProgabide", "lbase"),
+  naive_SE   = summary(fit_naive)$coef[c("trtProgabide", "lbase"), "Std. Error"],
+  robust_SE  = coef(summary(fit_epi))[c("trtProgabide", "lbase"), "Std.err"]
+) |> dplyr::mutate(ratio = round(robust_SE / naive_SE, 2))
+```
+
+::: {.callout-warning}
+The naive GLM SE for treatment is roughly **one-quarter** of the GEE robust SE: ignoring the within-subject correlation gives **invalid (overconfident) inference**. The point estimate barely moves; only the SEs change.
+:::
+
+::: {.notes}
+This is the single most important slide of the Case Study. The robust SE is about 4x the naive SE here because seizure counts are strongly correlated within patient (large exchangeable $\alpha$). Same $\hat\beta$, very different SE: exactly the "association affects precision not interpretation" thesis, now on real data.
+:::
+
+---
+
+## The Same Model in SAS
+
+Static reference (not run here): the marginal Poisson GEE in `PROC GENMOD` with a `REPEATED` statement.
+
+```sas
+proc genmod data=epi;
+   class id trt;
+   model seizures = trt lbase / dist=poisson link=log;
+   repeated subject=id / type=exch corrw;
+run;
+```
+
+::: {.callout-note}
+`repeated subject=id` is SAS's `id=`; `type=exch` is `corstr="exchangeable"`. `corrw` prints the working correlation. SAS reports **empirical (robust) standard errors** by default, the same sandwich SE as `geeglm`'s `Std.err`.
+:::
+
+::: {.notes}
+Map line-by-line to the R fit: `class` declares the clustering/grouping factors, `model` is the mean+link, `repeated subject=id / type=` is the working correlation. Reassure students the two packages give the same population-average estimates and robust SEs.
+:::
+
+---
+
+## Why Full Likelihood Is Hard
+
+```{r}
+#| label: plot-likelihood-complexity
+#| echo: true
+#| output-location: slide
+needed_terms <- function(m) 2^m - m - 1
+dfc <- data.frame(m = 4:12, extra_assoc = sapply(4:12, needed_terms))
+
+ggplot(dfc, aes(m, extra_assoc)) +
+  geom_point() + geom_line() +
+  scale_y_continuous(labels = scales::comma) +
+  labs(title = "Explosion of Association Parameters",
+       x = "Number of repeats (m)",
+       y = "Parameters beyond means (2^m - m - 1)") +
+  theme_minimal()
+```
+
+::: {.notes}
+For $m$ binary repeats a full joint distribution needs $2^m-m-1$ association parameters beyond the means: 11 at $m=4$, over 4000 at $m=12$. This combinatorial blow-up is *why* GEE specifies only the mean + a low-dimensional working association instead of a full joint likelihood.
+:::
+
+---
+
+## Full Likelihood vs Marginal + GEE
+
+| Approach | Challenge |
+|----------|-----------|
+| **Full likelihood** | Needs 2-, 3-, ... way associations (infeasible) |
+| **Marginal + GEE** | Specify mean, variance, working $V_i(\alpha)$; robust SEs |
+
+GEE wins for practicality and interpretability.
+
+---
+
+::: {.callout-note collapse="true"}
+## Check Your Understanding: Specifications and the Case Study
+
+1. For a count outcome with a log link, what does $\beta$ represent in a marginal model?
+
+2. In the epilepsy Case Study, the naive and robust SEs differed by ~4x but $\hat\beta$ barely moved. Why?
+
+3. Why did we present the ordinal model but not fit it with `polr`?
+
+**Answers:**
+
+1. A population-average **log rate ratio**: $\exp(\beta)$ is the multiplicative change in the average event rate per unit covariate, across the population.
+
+2. The point estimate is consistent regardless of the working correlation, so it is stable. The naive GLM assumes independence and badly underestimates the SE because the four visits per patient are strongly correlated; the GEE robust SE corrects this. Association affects **precision**, not the estimate.
+
+3. `polr` assumes independence and ignores the within-subject clustering, giving the wrong (overconfident) SEs - the exact error this lecture warns against. A proper marginal ordinal fit needs GEE for cumulative logits (L13).
+:::
+
+---
+
+## Practical Decisions: Model Selection
+
+| Question Type | Best Model |
+|---------------|------------|
+| Population-average effects | Marginal (GEE) |
+| Subject-specific trajectories | Mixed effects |
+| *Dependence on past $Y$* (preview) | Transition model |
+
+::: {.callout-note}
+The transition row is a **forward pointer** (not FLW Ch. 12); transition models are covered in their own lecture / FLW transition chapter.
+:::
+
+---
+
+## Looking Ahead (beyond Ch. 12): Missing Data
+
+::: {.callout-note}
+## Missing-data caveat (covered in L17, FLW Ch. 17-18)
+
+- **Standard GEE** requires data **MCAR** (missing completely at random) for valid inference.
+- **IPW-GEE** (inverse-probability-weighted GEE; Robins, Rotnitzky & Zhao 1995) extends validity to **MAR** by weighting observations by the inverse probability of being observed and modeling the dropout process.
+- The MCAR / MAR definitions and the IPW weighting mechanics are developed in **L17** (FLW Ch. 17-18). FLW Ch. 12 (p. 352) explicitly defers missing-data issues to those chapters.
+:::
+
+::: {.notes}
+Keep this to one forward-pointer slide. Do NOT teach IPW mechanics here; just plant the flag that "standard GEE assumes MCAR" so students who run GEE on data with dropout know to revisit it in L17. The earlier draft cited "FLW p. 528" for this on a Ch. 12 deck, which was a mis-citation (p. 528 is in the missing-data chapters); that attribution is removed.
+:::
+
+---
+
+## Common Mistakes in Marginal Models
+
+| Mistake | Why It Is Wrong | Correct Approach |
+|---------|-----------------|------------------|
+| Interpreting $\beta$ as subject-specific | Marginal $\beta$ is population-average | Use mixed models for subject-specific effects |
+| Ignoring within-subject correlation | Gives invalid inference / incorrect SEs | Account for it via GEE or mixed models |
+| Using standard GEE with MAR dropout | Standard GEE assumes MCAR (L17) | IPW-GEE or likelihood-based methods |
+| Treating all outcome types the same | Binary/ordinal have constrained associations | Use the appropriate link and variance functions |
+| Confusing efficiency with consistency | Wrong $V_i(\alpha)$ loses efficiency, not consistency | Choose sensible $V_i(\alpha)$; robust SEs protect |
+| Assuming marginal $=$ conditional for non-linear links | They differ for logistic/Poisson (marginal attenuated vs conditional; **quantified in L14/L16, FLW Ch. 16**) | Be explicit about which target you mean |
+
+::: {.notes}
+The last row is a forward reference: the marginal-vs-conditional attenuation result is GLMM material (Ch. 14/16), not Ch. 12. Flag it as such so students do not think the attenuation constant lives in this chapter.
+:::
+
+---
+
+## Key Takeaways
+
+- Marginal model = **mean + variance + association** ($g$, $v(\mu)$, $V_i(\alpha)$)
+- $\beta$ = **population-average** effect (log rate/odds ratio for count/binary), robust to the working correlation
+- The working correlation $V_i(\alpha)$ affects **precision**, not interpretation; **robust SEs** stay valid
+- Case Study (epilepsy): progabide $\widehat{RR}\approx 0.90$ (not significant); robust SEs ~4x the naive ones
+- For discrete data, full joint likelihoods are intractable; use **GEE** (L13)
+- Standard GEE assumes **MCAR**; missing-data extensions in **L17**
+
+---
+
+## Further Reading
+
+- **FLW (2011) Ch. 12**, "Marginal Models: Introduction and Overview" (pp. 341-352), and its *Further Reading* section.
+- **Liang, K.-Y. & Zeger, S.L. (1986).** Longitudinal data analysis using generalized linear models. *Biometrika* 73, 13-22. (The original GEE paper; estimation in L13.)
+- **Robins, J.M., Rotnitzky, A. & Zhao, L.P. (1995).** Analysis of semiparametric regression models for repeated outcomes in the presence of missing data. *JASA* 90, 106-121. (IPW-GEE; missing data in L17.)
+- **Thall, P.F. & Vail, S.C. (1990).** Some covariance models for longitudinal count data with overdispersion. *Biometrics* 46, 657-671. (The epilepsy data.)
+
+**Next lecture (L13):** GEE estimation - the estimating equations, the sandwich variance, and choosing the working correlation.

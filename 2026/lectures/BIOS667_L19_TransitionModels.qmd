@@ -1,0 +1,1022 @@
+---
+title: "BIOS 667 - Lecture 19: Transition (Markov) Models"
+subtitle: "Fitzmaurice, Laird & Ware (2011) - Applied Longitudinal Data Analysis"
+author: "Naim Rashid"
+format:
+  revealjs:
+    theme: [default]
+    footer: BIOS 667 · UNC Gillings - Lecture 19 (Transition Models)
+    slide-number: true
+    hash: true
+    toc: false
+    code-overflow: wrap
+    code-line-numbers: false
+    math: mathjax
+    incremental: true
+    embed-resources: true
+    chalkboard: false
+    css: "../../unc-gillings.css"
+    scrollable: true
+execute:
+  warning: false
+  message: false
+---
+
+## Lecture Objectives
+
+- Understand **transition models** as an alternative to marginal and mixed models
+- Define **Markov models** and their application to longitudinal data
+- Fit **first-order transition models** for binary outcomes
+- Interpret regression coefficients conditional on **previous responses**
+- Compare transition, marginal, and mixed model interpretations
+
+::: {.callout-note}
+## Provenance: instructor extension
+
+Transition (Markov) models are an **instructor extension**, FLW 1st-ed (2004) Ch. 10. The 2nd-ed (2011) text has **no dedicated transition-models chapter**; the marginal/mixed/transition trichotomy is framed in FLW 2nd-ed Ch. 12 (Marginal Models). We include transition models here to complete that trichotomy.
+:::
+
+---
+
+## Roadmap
+
+| Part | Topic |
+|------|-------|
+| I | Introduction: Three Model Families |
+| II | Markov Models and Transition Probabilities |
+| III | First-Order Transition Models |
+| IV | Estimation and Inference |
+| V | Extensions and Higher-Order Models |
+| VI | Comparison with Marginal and Mixed Models |
+
+---
+
+## Part I: Introduction
+
+---
+
+## Three Approaches to Longitudinal Data
+
+| Model Family | Conditions On | $\beta$ Interpretation |
+|--------------|---------------|------------------------|
+| **Marginal** | Covariates only | Population-average |
+| **Mixed** | Random effects $b_i$ | Subject-specific |
+| **Transition** | Previous responses $Y_{i,j-1}$ | Conditional on past |
+
+All three can be valid for the same data; the choice depends on the scientific question.
+
+---
+
+## When to Use Transition Models
+
+Transition models are natural when:
+
+- The **previous outcome** directly influences the current outcome
+- Interest lies in **state changes** over time
+- Data represent a **stochastic process** (e.g., disease progression)
+
+**Examples:** relapse/remission, employment status, symptom presence/absence
+
+---
+
+## Motivating Example: Depression Study
+
+Consider a longitudinal study of depression where patients are assessed monthly.
+
+**Question:** Does current depression status depend on:
+
+1. Covariates (treatment, age)?
+2. Depression status at the previous visit?
+
+A transition model addresses both simultaneously.
+
+---
+
+## Check Your Understanding: Part I
+
+::: {.callout-tip}
+## Quick Self-Check
+
+1. **Model Selection:** A researcher wants to estimate the population-average effect of a new drug on blood pressure. Should they use a marginal, mixed, or transition model?
+
+2. **Research Question Match:** You want to know: "Given that a patient was depressed last month, what is the probability they are depressed this month?" Which model type answers this question?
+
+3. **When NOT to Use Transition Models:** A study measures height in children annually. Would a transition model be appropriate? Why or why not?
+:::
+
+::: {.callout-note collapse="true"}
+## Answers
+
+1. **Marginal model (GEE)** - The research question is about population-average effects, not conditional on individual history or subject-specific effects.
+
+2. **Transition model** - This question explicitly conditions on the previous state ("given that a patient was depressed last month"), which is exactly what transition models address.
+
+3. **No** - Height is a continuous, monotonically increasing outcome where the previous value does not meaningfully "cause" the current value in a stochastic sense. A mixed model capturing individual growth trajectories would be more appropriate. Transition models are best for discrete states or outcomes where state dependence is meaningful (e.g., relapse/remission).
+:::
+
+---
+
+## Part II: Markov Models
+
+---
+
+## Markov Processes
+
+A **Markov chain** is a stochastic process where the future state depends only on the current state, not the full history.
+
+**First-order Markov property:**
+
+$$
+P(Y_{ij} | Y_{i1}, \ldots, Y_{i,j-1}, X_i) = P(Y_{ij} | Y_{i,j-1}, X_{ij})
+$$
+
+The past influences the present only through the most recent observation.
+
+---
+
+## Transition Probabilities
+
+For binary outcomes, define the **transition probability** (subject $i$, occasion $j$):
+
+$$
+\pi_{jk} = P(Y_{ij} = 1 \mid Y_{i,j-1} = k), \quad k \in \{0, 1\}
+$$
+
+| From State | To State | Probability |
+|------------|----------|-------------|
+| 0 (healthy) | 1 (diseased) | $\pi_{j0}$ |
+| 1 (diseased) | 1 (diseased) | $\pi_{j1}$ |
+
+---
+
+## Transition Matrix
+
+The **transition matrix** summarizes all state changes:
+
+$$
+\mathbf{P} = \begin{pmatrix}
+1 - \pi_{j0} & \pi_{j0} \\
+1 - \pi_{j1} & \pi_{j1}
+\end{pmatrix}
+$$
+
+Row $k$ gives probabilities of moving from state $k$ to each possible state.
+
+---
+
+## Example: 2-State Health Model
+
+```{r}
+#| label: transition-matrix-example
+#| echo: true
+#| output-location: slide
+# Hypothetical transition probabilities
+pi_0 <- 0.15  # P(sick | was healthy)
+pi_1 <- 0.70  # P(sick | was sick)
+
+P <- matrix(c(1 - pi_0, pi_0,
+              1 - pi_1, pi_1),
+            nrow = 2, byrow = TRUE,
+            dimnames = list(c("Healthy", "Sick"),
+                            c("Healthy", "Sick")))
+P
+```
+
+---
+
+## Visualizing Transitions
+
+```{r}
+#| label: viz-transition
+#| echo: true
+#| output-location: slide
+suppressPackageStartupMessages({
+  library(ggplot2)
+  library(dplyr)
+  library(tidyr)
+})
+
+trans_df <- as.data.frame(P) |>
+  tibble::rownames_to_column("From") |>
+  pivot_longer(-From, names_to = "To", values_to = "Probability")
+
+ggplot(trans_df, aes(To, From, fill = Probability)) +
+  geom_tile(color = "white", linewidth = 1) +
+  geom_text(aes(label = round(Probability, 2)), size = 6) +
+  scale_fill_gradient(low = "white", high = "steelblue") +
+  labs(title = "Transition Probability Matrix",
+       x = "To State", y = "From State") +
+  theme_minimal(base_size = 14) +
+  theme(legend.position = "none")
+```
+
+---
+
+## Stationary Distribution
+
+If transitions are time-homogeneous, the **stationary distribution** $\pi^*$ satisfies:
+
+$$
+\pi^* = \pi^* \mathbf{P}
+$$
+
+This gives the long-run proportion in each state.
+
+```{r}
+#| label: stationary-dist
+#| echo: true
+#| output-location: slide
+# Solve for stationary distribution
+# pi = pi * P means (I - P')pi = 0
+# Add constraint: sum(pi) = 1
+A <- rbind(t(diag(2) - P), c(1, 1))
+b <- c(0, 0, 1)
+pi_star <- qr.solve(A, b)
+names(pi_star) <- c("Healthy", "Sick")
+round(pi_star, 3)
+```
+
+---
+
+## Check Your Understanding: Part II
+
+::: {.callout-tip}
+## Quick Self-Check
+
+1. **Transition Matrix:** Given a transition matrix where P(Sick|Healthy) = 0.2 and P(Sick|Sick) = 0.6, what is P(Healthy|Sick)?
+
+2. **Markov Property:** Patient A has been healthy for 5 visits. Patient B has been healthy for 1 visit. According to the first-order Markov property, how do their probabilities of being sick next visit compare?
+
+3. **Stationary Distribution:** If a disease has P(Disease|Healthy) = 0.1 and P(Disease|Disease) = 0.9, will the long-run prevalence be closer to 10% or 50%?
+:::
+
+::: {.callout-note collapse="true"}
+## Answers
+
+1. **P(Healthy|Sick) = 0.4** - Each row of the transition matrix must sum to 1. If P(Sick|Sick) = 0.6, then P(Healthy|Sick) = 1 - 0.6 = 0.4.
+
+2. **They are the same!** The first-order Markov property says the future depends ONLY on the current state, not the history. Both patients are currently Healthy, so both have the same transition probability to Sick.
+
+3. **Closer to 50%** - Solve $\pi = \pi P$: $\pi_{disease} = \pi_{healthy} \times 0.1 + \pi_{disease} \times 0.9$. With $\pi_{healthy} + \pi_{disease} = 1$, we get $\pi_{disease} = 0.5$. The high persistence in the disease state (0.9) keeps people sick once they become sick.
+:::
+
+---
+
+## Part III: First-Order Transition Models
+
+---
+
+## The Basic Transition Model
+
+For binary $Y_{ij}$, model the conditional probability:
+
+$$
+\text{logit}\, P(Y_{ij} = 1 | Y_{i,j-1}, X_{ij}) = \beta_0 + \beta_1 Y_{i,j-1} + X_{ij}\gamma
+$$
+
+- $\beta_0$: baseline log-odds when $Y_{i,j-1} = 0$
+- $\beta_1$: effect of previous positive response (dependence parameter)
+- $\gamma$: covariate effects, conditional on previous response
+
+---
+
+## Interpretation of $\beta_1$
+
+The coefficient $\beta_1$ captures **state dependence**:
+
+- $\beta_1 > 0$: positive autocorrelation (persistence)
+- $\beta_1 = 0$: no first-order state dependence (responses conditionally independent given covariates; still a valid Markov model)
+- $\beta_1 < 0$: negative autocorrelation (alternating states)
+
+$$
+\text{OR} = e^{\beta_1}
+$$
+
+---
+
+## Simulate Transition Data
+
+```{r}
+#| label: simulate-transition
+#| echo: true
+#| output-location: slide
+set.seed(667)
+
+N <- 200      # subjects
+n_times <- 6  # observations per subject
+
+# Subject-level covariates
+trt <- rep(rbinom(N, 1, 0.5), each = n_times)
+id <- rep(1:N, each = n_times)
+time <- rep(0:(n_times-1), N)
+
+# Initialize
+y <- numeric(N * n_times)
+
+# Parameters
+beta_0 <- -1.5   # baseline log-odds
+beta_1 <- 1.8    # lag effect (strong positive dependence)
+gamma_trt <- -0.6  # treatment effect
+gamma_time <- 0.1  # time effect
+
+# Generate first observation (use marginal model)
+first_idx <- seq(1, N * n_times, by = n_times)
+p_first <- plogis(beta_0 + gamma_trt * trt[first_idx])
+y[first_idx] <- rbinom(N, 1, p_first)
+
+# Generate subsequent observations using transition model
+for (i in 1:N) {
+  for (j in 2:n_times) {
+    idx <- (i - 1) * n_times + j
+    idx_prev <- idx - 1
+    lp <- beta_0 + beta_1 * y[idx_prev] + gamma_trt * trt[idx] + gamma_time * time[idx]
+    y[idx] <- rbinom(1, 1, plogis(lp))
+  }
+}
+
+dat <- data.frame(
+  id = factor(id),
+  time = time,
+  trt = factor(trt, labels = c("Control", "Treatment")),
+  y = y
+)
+
+head(dat, 12)
+```
+
+---
+
+## Create Lagged Response
+
+```{r}
+#| label: create-lag
+#| echo: true
+#| output-location: slide
+# Add lagged response within each subject
+dat <- dat |>
+  group_by(id) |>
+  mutate(y_lag = lag(y, 1)) |>
+  ungroup()
+
+# Remove first observation (no lag available)
+dat_model <- dat |> filter(!is.na(y_lag))
+
+head(dat_model, 12)
+```
+
+---
+
+## Fit First-Order Transition Model
+
+```{r}
+#| label: fit-transition
+#| echo: true
+#| output-location: slide
+fit_trans <- glm(y ~ y_lag + trt + time,
+                 data = dat_model,
+                 family = binomial(link = "logit"))
+
+summary(fit_trans)
+```
+
+---
+
+## Coefficient Interpretation
+
+```{r}
+#| label: coef-interpret
+#| echo: true
+#| output-location: slide
+suppressPackageStartupMessages(library(broom))
+
+tidy_trans <- tidy(fit_trans, conf.int = TRUE, exponentiate = TRUE)
+tidy_trans |>
+  mutate(across(where(is.numeric), ~round(., 3))) |>
+  select(term, estimate, conf.low, conf.high, p.value)
+```
+
+---
+
+## Key Findings
+
+| Parameter | Estimate | Interpretation |
+|-----------|----------|----------------|
+| `y_lag` | OR = `r round(exp(coef(fit_trans)["y_lag"]), 2)` | Strong positive dependence |
+| `trtTreatment` | OR = `r round(exp(coef(fit_trans)["trtTreatment"]), 2)` | Treatment reduces odds |
+| `time` | OR = `r round(exp(coef(fit_trans)["time"]), 2)` | Slight increase over time |
+
+**Interpretation:** Given the previous response, treatment reduces the odds of a positive response at the current time.
+
+---
+
+## Recipe Card: Fitting First-Order Transition Models
+
+::: {.callout-tip}
+## Step-by-Step Guide
+
+**Step 1: Prepare the Data**
+```r
+# Create lagged response within each subject
+dat <- dat |>
+  group_by(id) |>
+  mutate(y_lag = lag(y, 1)) |>
+  ungroup()
+
+# Remove first observation (no lag available)
+dat_model <- dat |> filter(!is.na(y_lag))
+```
+
+**Step 2: Fit the Model**
+```r
+# Standard GLM with lagged response as covariate
+fit <- glm(y ~ y_lag + treatment + time,
+           data = dat_model,
+           family = binomial(link = "logit"))
+```
+
+**Step 3: Get Robust Standard Errors**
+```r
+library(sandwich)
+library(lmtest)
+coeftest(fit, vcov = vcovCL(fit, cluster = dat_model$id))
+```
+
+**Step 4: Alternative - Use GEE**
+```r
+library(geepack)
+fit_gee <- geeglm(y ~ y_lag + treatment + time,
+                  data = dat_model,
+                  id = id,
+                  family = binomial,
+                  corstr = "independence")
+```
+:::
+
+---
+
+## Interpreting Transition Model Output
+
+::: {.callout-note}
+## How to Read Your Results
+
+**The $\beta_1$ (y_lag) coefficient:**
+
+- $\beta_1 > 0$ (OR > 1): **Persistence** - being in state 1 increases odds of staying in state 1
+- $\beta_1 < 0$ (OR < 1): **Alternation** - being in state 1 decreases odds of staying in state 1
+- $\beta_1 = 0$ (OR = 1): No state dependence (observations are independent given covariates)
+
+**Treatment effect interpretation:**
+
+Unlike marginal models, the treatment effect $\gamma$ is **conditional on the previous state**:
+
+> "Among subjects who were [in state k] at the previous visit, treatment reduces/increases the odds of being [in state 1] by [OR]"
+
+This is NOT the same as the population-average treatment effect from GEE!
+
+**When to trust your model:**
+
+1. Check if first-order is sufficient (test second lag)
+2. Verify robust SEs are similar to model-based SEs
+3. Examine residuals and predicted probabilities
+:::
+
+---
+
+## Predicted Transition Probabilities
+
+```{r}
+#| label: pred-trans-prob
+#| echo: true
+#| output-location: slide
+newdat <- expand.grid(
+  y_lag = c(0, 1),
+  trt = c("Control", "Treatment"),
+  time = 3  # mid-study
+)
+
+newdat$prob <- predict(fit_trans, newdata = newdat, type = "response")
+
+ggplot(newdat, aes(x = factor(y_lag), y = prob, fill = trt)) +
+  geom_bar(stat = "identity", position = "dodge", width = 0.6) +
+  labs(title = "Transition Probabilities by Treatment",
+       x = "Previous Response (Y_lag)",
+       y = "P(Y = 1 | Y_lag, Treatment)",
+       fill = "Group") +
+  scale_y_continuous(limits = c(0, 1)) +
+  theme_minimal(base_size = 14)
+```
+
+---
+
+## Observed Transition Frequencies
+
+```{r}
+#| label: obs-trans-freq
+#| echo: true
+#| output-location: slide
+trans_table <- dat_model |>
+  group_by(trt, y_lag, y) |>
+  summarise(n = n(), .groups = "drop") |>
+  group_by(trt, y_lag) |>
+  mutate(prop = n / sum(n)) |>
+  filter(y == 1) |>
+  select(trt, y_lag, prop)
+
+trans_table
+```
+
+---
+
+## Part IV: Estimation and Inference
+
+---
+
+## Likelihood for Transition Models
+
+The likelihood factorizes by the Markov property:
+
+$$
+L(\beta) = \prod_{i=1}^N \left[ P(Y_{i1} | X_{i1}) \prod_{j=2}^{n_i} P(Y_{ij} | Y_{i,j-1}, X_{ij}) \right]
+$$
+
+Often, we condition on $Y_{i1}$ (observed) and maximize:
+
+$$
+L_c(\beta) = \prod_{i=1}^N \prod_{j=2}^{n_i} P(Y_{ij} | Y_{i,j-1}, X_{ij})
+$$
+
+---
+
+## Estimation via Standard GLM
+
+Given the lagged response, estimation uses **standard logistic regression:**
+
+```r
+glm(y ~ y_lag + covariates, family = binomial)
+```
+
+- ML estimation via IRLS
+- Standard errors from observed Fisher information
+- Wald tests and likelihood ratio tests apply
+
+---
+
+## Robust Standard Errors
+
+Within-subject observations may still be correlated beyond the first-order dependence.
+
+Use **sandwich/robust SEs** for valid inference:
+
+```{r}
+#| label: robust-se
+#| echo: true
+#| output-location: slide
+suppressPackageStartupMessages(library(sandwich))
+suppressPackageStartupMessages(library(lmtest))
+
+# Cluster-robust standard errors
+robust_se <- coeftest(fit_trans, vcov = vcovCL(fit_trans, cluster = dat_model$id))
+robust_se
+```
+
+---
+
+## GEE for Transition Models
+
+Alternatively, use `geepack` with an independence working correlation:
+
+```{r}
+#| label: gee-transition
+#| echo: true
+#| output-location: slide
+suppressPackageStartupMessages(library(geepack))
+
+fit_gee <- geeglm(y ~ y_lag + trt + time,
+                  data = dat_model,
+                  id = id,
+                  family = binomial,
+                  corstr = "independence")
+
+summary(fit_gee)
+```
+
+---
+
+## Comparing GLM and GEE Standard Errors
+
+```{r}
+#| label: compare-se
+#| echo: true
+#| output-location: slide
+se_comparison <- data.frame(
+  term = names(coef(fit_trans)),
+  GLM_SE = summary(fit_trans)$coefficients[, "Std. Error"],
+  Robust_SE = robust_se[, "Std. Error"],
+  GEE_SE = summary(fit_gee)$coefficients[, "Std.err"]
+)
+
+se_comparison[, -1] <- round(se_comparison[, -1], 4)
+se_comparison
+```
+
+---
+
+## Check Your Understanding: Part IV
+
+::: {.callout-tip}
+## Quick Self-Check
+
+1. **Likelihood Factorization:** Why can we use standard `glm()` to fit transition models instead of specialized software?
+
+2. **Robust vs Model-Based SEs:** Your GLM gives SE = 0.15, but robust cluster SEs give SE = 0.25. What does this suggest?
+
+3. **GEE with Independence:** Why do we use `corstr = "independence"` in GEE for transition models, even though the data are clearly correlated?
+:::
+
+::: {.callout-note collapse="true"}
+## Answers
+
+1. The Markov property allows the likelihood to **factorize** into a product of conditional probabilities: $L = \prod_i \prod_{j \geq 2} P(Y_{ij} | Y_{i,j-1}, X_{ij})$. Each term is a standard logistic regression likelihood with $Y_{i,j-1}$ as a covariate. This is just a pooled logistic regression!
+
+2. This suggests **residual correlation** beyond what the first-order lag captures. The model-based SEs assume conditional independence given the lag, but the data show additional clustering. Use the robust SEs or consider higher-order lags.
+
+3. The lag variable $Y_{i,j-1}$ **explicitly captures the serial dependence**. Once we condition on the previous response, the residuals should be approximately independent. A non-independence working correlation would try to model correlation that we've already accounted for.
+:::
+
+---
+
+## Part V: Extensions
+
+---
+
+## Higher-Order Markov Models
+
+Include additional lags to capture longer memory:
+
+$$
+\text{logit}\, P(Y_{ij} = 1) = \beta_0 + \beta_1 Y_{i,j-1} + \beta_2 Y_{i,j-2} + X_{ij}\gamma
+$$
+
+**Second-order model:** Current state depends on two previous states.
+
+---
+
+## Fitting a Second-Order Model
+
+```{r}
+#| label: second-order
+#| echo: true
+#| output-location: slide
+# Create second lag
+dat_order2 <- dat |>
+  group_by(id) |>
+  mutate(
+    y_lag1 = lag(y, 1),
+    y_lag2 = lag(y, 2)
+  ) |>
+  ungroup() |>
+  filter(!is.na(y_lag2))
+
+fit_order2 <- glm(y ~ y_lag1 + y_lag2 + trt + time,
+                  data = dat_order2,
+                  family = binomial)
+
+summary(fit_order2)$coefficients
+```
+
+---
+
+## Testing for Higher-Order Dependence
+
+Compare nested models via likelihood ratio test:
+
+```{r}
+#| label: lrt-order
+#| echo: true
+#| output-location: slide
+# Refit first-order on same data
+fit_order1 <- glm(y ~ y_lag1 + trt + time,
+                  data = dat_order2,
+                  family = binomial)
+
+anova(fit_order1, fit_order2, test = "LRT")
+```
+
+---
+
+## Time-Varying Transition Probabilities
+
+Allow dependence parameter to change over time:
+
+$$
+\text{logit}\, P(Y_{ij} = 1) = \beta_0 + \beta_1(t) Y_{i,j-1} + X_{ij}\gamma
+$$
+
+Model $\beta_1(t)$ as a function of time (e.g., linear, spline).
+
+```{r}
+#| label: time-varying-dep
+#| echo: true
+#| output-location: slide
+fit_tv <- glm(y ~ y_lag * time + trt,
+              data = dat_model,
+              family = binomial)
+
+summary(fit_tv)$coefficients
+```
+
+---
+
+## Visualization: Time-Varying Effect
+
+```{r}
+#| label: viz-tv-effect
+#| echo: true
+#| output-location: slide
+times <- 0:5
+coefs <- coef(fit_tv)
+
+# Effect of y_lag at each time point
+effect_at_t <- coefs["y_lag"] + coefs["y_lag:time"] * times
+
+eff_df <- data.frame(time = times, log_or = effect_at_t)
+
+ggplot(eff_df, aes(time, log_or)) +
+  geom_line(linewidth = 1.2, color = "steelblue") +
+  geom_point(size = 3, color = "steelblue") +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  labs(title = "Time-Varying Dependence on Previous Response",
+       x = "Time", y = "Log Odds Ratio for Y_lag") +
+  theme_minimal(base_size = 14)
+```
+
+---
+
+## Handling the Initial Observation
+
+Three approaches for $Y_{i1}$:
+
+| Approach | Description |
+|----------|-------------|
+| **Condition on $Y_{i1}$** | Treat as fixed (most common) |
+| **Model $Y_{i1}$ separately** | Specify marginal distribution |
+| **Include random effects** | Joint model with shared $b_i$ |
+
+Conditioning is simple and usually valid if $n_i$ is moderate.
+
+---
+
+## Part VI: Model Comparison
+
+---
+
+## Transition vs Marginal Models
+
+| Aspect | Marginal (GEE) | Transition |
+|--------|----------------|------------|
+| Conditions on | Covariates only | Covariates + past $Y$ |
+| Correlation | Working $\operatorname{Corr}_i(\alpha)$ | Explicit via $Y_{j-1}$ |
+| $\beta$ meaning | Population-average | Conditional on history |
+| Use case | Population effects | State dependence |
+
+---
+
+## Transition vs Mixed Models
+
+| Aspect | Mixed (GLMM) | Transition |
+|--------|--------------|------------|
+| Conditions on | Random effects $b_i$ | Past responses |
+| Heterogeneity | Unobserved traits | Observable history |
+| Correlation source | Latent variable | Serial dependence |
+| Computation | Integration required | Standard GLM |
+
+---
+
+## Same Data, Different Questions
+
+```{r}
+#| label: three-models
+#| echo: true
+#| output-location: slide
+suppressPackageStartupMessages(library(lme4))
+
+# Transition model (already fit)
+# fit_trans
+
+# Marginal model (GEE)
+fit_marginal <- geeglm(y ~ trt + time,
+                       data = dat_model,
+                       id = id,
+                       family = binomial,
+                       corstr = "ar1")
+
+# Mixed model (GLMM with random intercept)
+fit_mixed <- glmer(y ~ trt + time + (1 | id),
+                   data = dat_model,
+                   family = binomial)
+
+# Compare treatment effects
+data.frame(
+  Model = c("Transition", "Marginal (GEE)", "Mixed (GLMM)"),
+  Estimate = c(coef(fit_trans)["trtTreatment"],
+               coef(fit_marginal)["trtTreatment"],
+               fixef(fit_mixed)["trtTreatment"]),
+  SE = c(summary(fit_trans)$coefficients["trtTreatment", "Std. Error"],
+         summary(fit_marginal)$coefficients["trtTreatment", "Std.err"],
+         summary(fit_mixed)$coefficients["trtTreatment", "Std. Error"])
+) |> mutate(across(where(is.numeric), ~round(., 3)))
+```
+
+---
+
+## Key Insight: Different Interpretations
+
+**Transition:** Treatment effect on current response, **given previous response**
+
+**Marginal:** Treatment effect on population-average probability
+
+**Mixed:** Treatment effect for a specific subject (given $b_i$)
+
+All are valid; choice depends on the research question.
+
+---
+
+## When Transition Models Excel
+
+1. **Disease progression:** Natural states (remission/relapse)
+2. **Panel surveys:** Employment, insurance status
+3. **Clinical trials:** Response at each visit conditional on prior
+4. **Process understanding:** Mechanism involves serial dependence
+
+---
+
+## Visualizing Trajectories
+
+```{r}
+#| label: viz-trajectories
+#| echo: true
+#| output-location: slide
+# Sample 20 subjects
+set.seed(667)
+sample_ids <- sample(unique(dat$id), 20)
+
+dat_sample <- dat |>
+  filter(id %in% sample_ids)
+
+ggplot(dat_sample, aes(time, y, group = id, color = trt)) +
+  geom_line(alpha = 0.6) +
+  geom_point(size = 1.5) +
+  facet_wrap(~trt) +
+  labs(title = "Individual Binary Trajectories",
+       x = "Time", y = "Response (0/1)") +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "none")
+```
+
+---
+
+## Check Your Understanding: Part VI
+
+::: {.callout-tip}
+## Quick Self-Check
+
+1. **Model Comparison:** A transition model gives treatment OR = 0.6; a marginal GEE gives OR = 0.7. Which is "correct"?
+
+2. **Initial Observation:** You have 6 time points. When you fit a first-order transition model, how many observations per subject contribute to the likelihood?
+
+3. **Choosing a Model:** You want to study how treatment affects the probability of relapse among cancer survivors. Which model type is most appropriate?
+:::
+
+::: {.callout-note collapse="true"}
+## Answers
+
+1. **Both are correct for different questions!** The transition model OR is conditional on previous state ("among those who were healthy last visit, treatment reduces odds of being sick by 40%"). The marginal OR is population-average ("overall, treatment reduces the odds of being sick by 30%"). They answer different questions.
+
+2. **5 observations** - The first observation has no lag and is typically conditioned on (not modeled). The remaining 5 observations contribute to the conditional likelihood.
+
+3. **Transition model** - The question explicitly involves a "state change" (relapse). Transition models naturally capture the probability of moving from remission to relapse, and can assess whether treatment modifies this transition probability.
+:::
+
+---
+
+## Common Mistakes in Transition Models
+
+::: {.callout-warning}
+## Errors to Avoid
+
+| # | Mistake | Correct Approach |
+|---|---------|------------------|
+| 1 | Interpreting transition model $\beta$ as population-average | Transition $\beta$ is **conditional on previous state**; use GEE for population-average |
+| 2 | Using non-independence working correlation | Once you include $Y_{j-1}$, use `corstr = "independence"` or robust SEs |
+| 3 | Forgetting to remove first observation | First timepoint has no lag; filter to `!is.na(y_lag)` |
+| 4 | Not testing higher-order dependence | Use LRT to compare first vs second-order models |
+| 5 | Ignoring robust SEs | Always compute cluster-robust SEs; compare to model-based |
+| 6 | Applying transition models to inappropriate outcomes | Best for discrete states with meaningful persistence (not continuous growth) |
+| 7 | Confusing $\beta_1$ sign interpretation | $\beta_1 > 0$ = persistence; $\beta_1 < 0$ = alternation |
+| 8 | Treating different models as competitors | Transition, marginal, and mixed models answer **different questions** |
+:::
+
+---
+
+::: {.callout-important}
+## Golden Rule for Transition Models
+
+**The coefficient $\beta$ answers: "What is the effect of X on Y at time t, GIVEN that I know the state at time t-1?"**
+
+This is fundamentally different from:
+
+- Marginal models: "What is the effect of X on the average Y in the population?"
+- Mixed models: "What is the effect of X on Y for a specific subject?"
+
+All three can be valid; the choice depends on your scientific question.
+:::
+
+---
+
+## Summary
+
+| Topic | Key Point |
+|-------|-----------|
+| **Transition models** | Condition on previous responses |
+| **Markov property** | Future depends on present, not full history |
+| **Estimation** | Standard GLM with lagged response |
+| **Interpretation** | Effect given past state |
+| **Extensions** | Higher-order, time-varying dependence |
+| **Comparison** | Different from marginal/mixed interpretations |
+
+---
+
+## Key Equations
+
+**First-order transition model:**
+$$
+\text{logit}\, P(Y_{ij} = 1 | Y_{i,j-1}, X_{ij}) = \beta_0 + \beta_1 Y_{i,j-1} + X_{ij}\gamma
+$$
+
+**Transition probability:**
+$$
+\pi_{jk} = P(Y_{ij} = 1 | Y_{i,j-1} = k)
+$$
+
+**Odds ratio for state dependence:**
+$$
+\text{OR}_{\text{lag}} = e^{\beta_1}
+$$
+
+---
+
+## Practical Recommendations
+
+1. **Check for state dependence** before choosing a model
+2. **Use robust SEs** (cluster or GEE) for valid inference
+3. **Test higher-order terms** if theory suggests longer memory
+4. **Compare with marginal/mixed** to understand different perspectives
+5. **Report the conditioning** clearly when presenting results
+
+---
+
+## Course Wrap-Up
+
+This completes the methods sequence. The three model families, all on one map:
+
+- **Marginal** models (Ch. 12-13): population-average effects, GEE
+- **Mixed** models (Ch. 8, 14): subject-specific effects, random effects $b_i$
+- **Transition** models (instructor extension, FLW 1st-ed Ch. 10): effects conditional on past responses
+
+Missing-data methods (MCAR/MAR/MNAR, multiple imputation, sensitivity analysis) were covered in the prior missing-data lectures. With transition models, you now have a complete toolkit for the three ways correlation enters longitudinal data.
+
+---
+
+## References
+
+- Transition models are not a FLW 2nd-ed chapter. Source: Fitzmaurice, Laird & Ware (2004, 1st ed.), *Applied Longitudinal Analysis*, Ch. 10; the marginal/mixed/transition trichotomy is framed in FLW (2011, 2nd ed.) Ch. 12 (Marginal Models), which has no dedicated transition chapter.
+- Diggle, Heagerty, Liang & Zeger (2002), *Analysis of Longitudinal Data*, Chapter 10
+- Agresti (2013), *Categorical Data Analysis*, Chapter 12
+
+---
+
+## Appendix: Code Summary
+
+```r
+# Create lagged response
+dat <- dat |>
+  group_by(id) |>
+  mutate(y_lag = lag(y, 1)) |>
+  ungroup()
+
+# Fit transition model
+fit <- glm(y ~ y_lag + trt + time,
+           data = dat,
+           family = binomial)
+
+# Robust standard errors
+library(sandwich)
+vcovCL(fit, cluster = dat$id)
+
+# GEE alternative
+library(geepack)
+geeglm(y ~ y_lag + trt + time,
+       id = id,
+       family = binomial,
+       corstr = "independence")
+```

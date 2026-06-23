@@ -1,0 +1,534 @@
+---
+title: "BIOS 667 - Lecture 2: Longitudinal Data - Basic Concepts (Ch. 2)"
+subtitle: "Fitzmaurice, Laird & Ware (2011) - Applied Longitudinal Data Analysis"
+author: "Naim Rashid"
+format:
+  revealjs:
+    theme: [default]
+    footer: BIOS 667 · UNC Gillings - Lecture 2 (Ch. 2)
+    slide-number: true
+    hash: true
+    toc: false
+    code-overflow: wrap
+    code-line-numbers: false
+    math: mathjax
+    incremental: true
+    embed-resources: true
+    chalkboard: false
+    css: "../../unc-gillings.css"
+    scrollable: true
+execute:
+  warning: false
+  message: false
+---
+
+```{r}
+#| label: setup
+#| include: false
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+
+# Download datasets if not present
+ala_base <- "https://content.sph.harvard.edu/fitzmaur/ala2e"
+datasets <- c("fev1.txt")
+dir.create("../../data", showWarnings = FALSE)
+for (f in datasets) {
+
+  dest <- file.path("../../data", f)
+  if (!file.exists(dest)) {
+    try(download.file(paste0(ala_base, "/", f), dest, mode = "wb", quiet = TRUE), silent = TRUE)
+  }
+}
+```
+
+## Lecture Objectives
+
+By the end of this lecture, you will be able to:
+
+1. Use standard **notation** for longitudinal data ($Y_{ij}$, $\mathbf{X}_i$, $n_i$)
+2. Distinguish **wide vs. long** data formats and reshape between them
+3. Describe the **mean, covariance, and correlation** structure of repeated measures
+4. Identify the **three sources** of within-subject correlation
+5. Connect each source to its effect on the observed correlation structure
+
+---
+
+## Roadmap
+
+1. Notation and data structures
+2. Sources of correlation
+3. Summary and next steps
+
+---
+
+## Prerequisites / recall
+
+Recall from **Lecture 1 (Ch. 1)**:
+
+- **Longitudinal vs. cross-sectional**: longitudinal data repeats measurements on the same subjects over time, creating within-subject correlation
+- **Why correlation matters**: ignoring it leaves point estimates consistent but corrupts standard errors and invalidates inference
+
+Today we make this precise: the notation for repeated measures and the mechanisms that generate their correlation.
+
+::: {.notes}
+Bridge directly from Lecture 1. The students already know longitudinal data is correlated and that correlation matters; this lecture supplies the vocabulary (notation, data layouts) and the mechanisms (the three sources). The matrix algebra in Part I stays light. Transition: "first we need a compact way to write down a subject's repeated measurements."
+:::
+
+---
+
+{{< include _notation_box_intro.qmd >}}
+
+
+# Part I: Notation and Data Structures
+
+## Response Vector
+
+Each subject has a **vector of responses**:
+
+$$\mathbf{Y}_i = (Y_{i1}, Y_{i2}, \dots, Y_{in_i})^\top$$
+
+Dimension: $n_i \times 1$
+
+---
+
+## Covariate Information
+
+Covariates for subject $i$ at visit $j$ form a **row vector** $X_{ij}$ (dimension $1 \times p$):
+
+$$X_{ij} = (x_{ij1}, x_{ij2}, \dots, x_{ijp})$$
+
+The mean model is written $E(Y_{ij}) = X_{ij}\boldsymbol\beta$, the row vector times the coefficient vector ($\boldsymbol\beta$ is the vector of population-average regression coefficients).
+
+Covariates include:
+
+- **Time-invariant**: sex, treatment arm, genotype
+- **Time-varying**: weight, adherence, current dose
+
+```{r}
+#| label: design-matrix-tile
+#| echo: false
+#| fig-width: 5
+#| fig-height: 2.6
+# tiny example design matrix X_i for one subject: 3 occasions (rows) x 3 columns
+Xi <- data.frame(
+  occasion = factor(rep(c("j=1", "j=2", "j=3"), times = 3),
+                    levels = c("j=3", "j=2", "j=1")),
+  column   = factor(rep(c("intercept", "time", "sex"), each = 3),
+                    levels = c("intercept", "time", "sex")),
+  value    = c(1, 1, 1,    # intercept column
+               0, 1, 2,    # time column (time-varying)
+               1, 1, 1)    # sex column (time-invariant, here = 1)
+)
+
+ggplot(Xi, aes(x = column, y = occasion, fill = column)) +
+  geom_tile(color = "white", linewidth = 1.5, alpha = 0.5) +
+  geom_text(aes(label = value), size = 6) +
+  scale_fill_brewer(palette = "Blues", guide = "none") +
+  labs(title = expression(paste("Example design matrix ", X[i],
+                                "  (", n[i], " = 3 occasions, p = 3 columns)")),
+       x = NULL, y = "occasion") +
+  theme_minimal(base_size = 13) +
+  theme(panel.grid = element_blank())
+```
+
+Each **row** is one occasion $X_{ij}$; each **column** is a covariate. So $X_i$ is $n_i \times p$ (here $3 \times 3$).
+
+---
+
+## Design Matrix
+
+Stack the covariate row vectors for subject $i$:
+
+$$\mathbf{X}_i =
+\begin{pmatrix}
+X_{i1} \\
+X_{i2} \\
+\vdots \\
+X_{in_i}
+\end{pmatrix}$$
+
+Dimension: $n_i \times p$. The mean for the whole subject is $E(\mathbf{Y}_i) = \mathbf{X}_i\boldsymbol\beta$.
+
+---
+
+## Complete Data Structure
+
+The basic longitudinal data structure:
+
+$$(\mathbf{Y}_i, \mathbf{X}_i), \quad i = 1, \dots, N$$
+
+Key features:
+
+- Multiple responses per subject
+- Within-subject correlation
+- Unequal $n_i$ possible
+
+---
+
+## Wide vs. Long Format
+
+**Wide format** (each row = subject):
+
+| id | sex | bp_t1 | bp_t2 | bp_t3 |
+|----|-----|-------|-------|-------|
+| 1  | 0   | 120   | 122   | 125   |
+| 2  | 1   | 135   | 137   | 140   |
+
+---
+
+## Wide vs. Long Format
+
+**Long format** (each row = observation):
+
+| id | sex | time | bp  |
+|----|-----|------|-----|
+| 1  | 0   | 0    | 120 |
+| 1  | 0   | 1    | 122 |
+| 1  | 0   | 2    | 125 |
+| 2  | 1   | 0    | 135 |
+
+Most R modeling functions expect **long format**.
+
+---
+
+## Reshaping: Wide to Long
+
+```{r}
+#| label: reshape-demo
+#| echo: true
+#| output-location: slide
+df_wide <- tibble(
+  id = c(1, 2),
+  sex = c(0, 1),
+  bp_t1 = c(120, 135),
+  bp_t2 = c(122, 137),
+  bp_t3 = c(125, 140)
+)
+
+df_long <- df_wide |>
+  pivot_longer(cols = starts_with("bp"),
+               names_to = "visit",
+               values_to = "bp") |>
+  # build a numeric time index from the visit label:
+  #   gsub("bp_t", "", visit) strips the "bp_t" prefix, leaving "1", "2", "3"
+  #   as.numeric() coerces that text to a number
+  #   - 1 shifts the index so the first visit is baseline = 0
+  mutate(time = as.numeric(gsub("bp_t", "", visit)) - 1)
+
+df_long
+```
+
+**Interpretation:** The output shows the same data restructured so each row represents one observation (one visit for one subject). Subject 1 now has 3 rows (one per visit) instead of 3 columns. The `time` variable is coded as 0, 1, 2 to represent the three visits. This long format is required by most R modeling functions like `lme()` and `gls()`.
+
+---
+
+::: {.callout-note collapse="true"}
+## Check Your Understanding: Part I (Q1-2)
+
+1. If subject $i$ has 4 visits, what is the dimension of $\mathbf{Y}_i$?
+2. In the design matrix $\mathbf{X}_i$, why does each row correspond to a different visit?
+
+**Answers:**
+
+1. $4 \times 1$ (a column vector with 4 elements).
+2. Because the covariates can vary across visits (e.g., age, time since baseline), each row contains the covariate values for that specific occasion.
+:::
+
+::: {.callout-note collapse="true"}
+## Check Your Understanding: Part I (Q3)
+
+3. Which format (wide or long) would you use to calculate the correlation between Time 1 and Time 2 measurements?
+
+**Answer:**
+
+3. Wide format: correlations require measurements at each time point in separate columns.
+:::
+
+
+# Part II: Sources of Correlation
+
+## Three Sources of Variability
+
+1. **Between-individual heterogeneity**
+2. **Within-individual biological variation**
+3. **Measurement error**
+
+::: {.notes}
+Preview the three sources before drilling into each, so students have a map. Tie each to a covariance consequence: heterogeneity gives a constant positive correlation across all occasions, biological variation gives correlation that decays with the time gap, and measurement error keeps even the lag-0 correlation below one. Common confusion: students think only one mechanism is at work; stress that real data mixes all three, and that is why we need flexible covariance models later (Ch. 7-8). Transition: "let us take them one at a time, starting with heterogeneity."
+:::
+
+---
+
+## Covariance and Correlation in Real Data
+
+The chapter is built around one object: the $n_i \times n_i$ **covariance matrix** of a subject's repeated measures (and its standardized form, the correlation matrix). Let us estimate it from the TLC lead-exposure trial, placebo group (50 children measured at weeks 0, 1, 4, 6). These reproduce FLW Tables 2.2-2.3.
+
+```{r}
+#| label: tlc-cov-cor
+#| echo: true
+#| output-location: slide
+# tlc.csv is WIDE: ID, Treatment Group, then lead level at weeks 0, 1, 4, 6
+tlc_file <- "../../data/tlc.csv"
+if (file.exists(tlc_file)) {
+  tlc <- read.csv(tlc_file)
+} else {
+  # fallback: the FLW site ships a whitespace-delimited, header-free file
+  tlc <- read.table("https://content.sph.harvard.edu/fitzmaur/ala2e/tlc-data.txt",
+                    header = FALSE,
+                    col.names = c("ID", "Treatment.Group",
+                                  "Lead.Level.Week.0", "Lead.Level.Week.1",
+                                  "Lead.Level.Week.4", "Lead.Level.Week.6"))
+}
+
+# placebo group only: one row per subject, one column per occasion
+pbo <- tlc[tlc$Treatment.Group == "P", 3:6]
+colnames(pbo) <- c("Week 0", "Week 1", "Week 4", "Week 6")
+dim(pbo)          # 50 subjects x 4 occasions
+
+round(cov(pbo), 1)   # covariance matrix (variances on the diagonal)
+round(cor(pbo), 2)   # correlation matrix (1's on the diagonal)
+```
+
+::: {.callout-note}
+## Interpretation: two structural facts
+
+- **Variance is not constant across occasions.** The diagonal of the covariance matrix grows from about 25.2 at week 0 to 33.1 at week 4 and 31.8 at week 6 (FLW Table 2.2). Spread increases over follow-up, so an "equal-variance" assumption is already wrong here.
+- **Off-diagonal correlations are high and positive, and tend to decay with time separation (about 0.76-0.87).** The highest correlation is between adjacent late occasions (week 4 vs week 6 at 0.87) and the lowest is the most-separated pair (week 0 vs week 6 at 0.76, FLW Table 2.3); the decay is the broad trend, not a strict monotone rule (some non-adjacent pairs slightly exceed some adjacent ones). The dominant signal is strong positive correlation everywhere (between-subject heterogeneity), weakening as the gap between occasions widens.
+
+These two facts (non-constant variance, structured correlation) are exactly what the covariance models in Ch. 7-8 are designed to capture.
+:::
+
+---
+
+## Source 1: Between-Individual Heterogeneity
+
+- Some individuals are consistently high responders
+- Others are consistently low responders
+- Creates **positive correlation** across all time points
+
+**Statistical approach**: Random effects (Ch. 8)
+
+---
+
+## Visualizing Heterogeneity
+
+```{r}
+#| label: heterogeneity-plot
+#| echo: true
+#| output-location: slide
+set.seed(667)
+df <- tibble(
+  id = rep(1:8, each = 6),
+  time = rep(1:6, 8),
+  # Random intercept per subject
+  y = rep(rnorm(8, 10, 3), each = 6) + rnorm(48, 0, 1)
+)
+
+ggplot(df, aes(x = time, y = y, group = id, color = factor(id))) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 2) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  labs(title = "Between-Subject Heterogeneity",
+       subtitle = "Each subject has a different baseline level",
+       x = "Time", y = "Outcome")
+```
+
+**Interpretation:** Notice how each line (representing one subject) stays roughly at its own level throughout the study. Some subjects sit consistently high, others stay low. This separation illustrates between-subject heterogeneity: some individuals are consistently higher or lower responders. This creates positive correlation among all measurements within each person.
+
+---
+
+## Source 2: Within-Individual Biological Variation
+
+- Natural fluctuations around homeostatic set point
+- Driven by circadian rhythms, diet, environment
+- **Serial correlation**: Closer measurements -> higher correlation
+
+::: {.callout-note}
+**Forward preview.** Ch. 2 treats serial correlation only qualitatively (correlation declines as the time gap grows). The AR(1) generative model, the lag-$k$ formula $\rho^k$, and the ACF plot on the next two slides are a preview of FLW Ch. 7 (covariance-pattern models), where the autoregressive structure is defined formally. We show them now to build intuition, not because they are Ch. 2 material.
+:::
+
+---
+
+## Serial Correlation
+
+::: {.callout-note}
+**Ch. 7 preview, not Ch. 2.** The AR(1) model and the lag-$k$ formula $\rho^k$ below come from FLW Ch. 7 (covariance-pattern models). Ch. 2 only needs the qualitative idea that correlation decays with the time gap.
+:::
+
+AR(1) (first-order autoregressive) means each measurement equals $\rho$ times the previous one plus noise, so the correlation at lag $k$ is $\rho^k$ ($\rho$ is the within-subject correlation parameter; for AR(1) the lag-$k$ correlation is $\rho^k$).
+
+```{r}
+#| label: ar1-demo
+#| echo: true
+#| output-location: slide
+set.seed(667)
+
+# Simulate AR(1) process
+n <- 50
+rho <- 0.8
+bp <- arima.sim(model = list(ar = rho), n = n, sd = 5) + 120
+
+tibble(time = 1:n, bp = as.numeric(bp)) |>
+  ggplot(aes(x = time, y = bp)) +
+  geom_line(linewidth = 0.8, color = "steelblue") +
+  geom_point(size = 2, color = "steelblue") +
+  theme_minimal() +
+  labs(title = "Serial Correlation in Repeated Measures",
+       subtitle = expression(paste("AR(1) with ", rho, " = 0.8")),
+       x = "Time", y = "Blood Pressure")
+```
+
+**Interpretation:** This plot shows blood pressure measurements over 50 time points from a single simulated individual. Notice how the trajectory does not jump erratically: when blood pressure is high at one time point, it tends to remain elevated at the next. This "smoothness" reflects serial correlation: measurements close in time are more similar than measurements far apart. The AR(1) model with $\rho = 0.8$ captures this pattern mathematically.
+
+---
+
+## Autocorrelation Function
+
+::: {.callout-note}
+**Ch. 7 preview, not Ch. 2.** The ACF and the decaying-correlation-with-lag picture belong to FLW Ch. 7 (covariance-pattern models). Here it just visualizes the qualitative Ch. 2 point that closer measurements are more alike.
+:::
+
+```{r}
+#| label: acf-demo
+#| echo: true
+#| output-location: slide
+acf(bp, main = "Autocorrelation of Repeated Measures",
+    col = "steelblue", lwd = 2)
+```
+
+**Interpretation:** The autocorrelation function (ACF) plot shows how correlation changes with time lag. The x-axis shows the lag (number of time steps apart), and the y-axis shows the correlation. At lag 0, the correlation is 1 (a measurement is perfectly correlated with itself). At lag 1, the correlation is about 0.8, meaning measurements one time step apart are highly correlated. As the lag increases, the bars get shorter, showing that correlation decays with time separation. The dashed blue lines indicate statistical significance; bars extending beyond these lines suggest meaningful correlation.
+
+---
+
+## Source 3: Measurement Error
+
+- Imprecision in instruments/procedures
+- Distinct from biological variability
+- **Attenuates** observed correlations
+
+**Reliability** = Var(True) / Var(Total)
+
+---
+
+## Reliability Examples
+
+| Measure | Reliability |
+|---------|-------------|
+| Height | ~0.98 |
+| LDL cholesterol | ~0.85 |
+| Self-reported well-being | <0.50 |
+
+Lower reliability -> weaker observed correlations.
+
+---
+
+## Attenuation Effect
+
+**Reliability** $=$ Var(true) / Var(total), and the **observed correlation** $=$ true correlation $\times$ reliability, so low reliability attenuates (shrinks) the observed correlation toward 0.
+
+```{r}
+#| label: attenuation-plot
+#| echo: true
+set.seed(667)
+n <- 300
+true_data <- matrix(rnorm(n * 2, 10, 2), ncol = 2)
+
+add_error <- function(data, reliability) {
+  v_true <- var(as.vector(data))
+  v_err <- v_true * (1 - reliability) / reliability
+  data + matrix(rnorm(length(data), 0, sqrt(v_err)), ncol = 2)
+}
+
+rels <- c(0.98, 0.85, 0.50)
+df_plot <- do.call(rbind, lapply(rels, function(r) {
+  d <- add_error(true_data, r)
+  tibble(t1 = d[,1], t2 = d[,2], Reliability = paste("Reliability =", r))
+}))
+
+ggplot(df_plot, aes(t1, t2)) +
+  geom_point(alpha = 0.4) +
+  geom_smooth(method = "lm", se = FALSE, color = "red") +
+  facet_wrap(~Reliability) +
+  theme_minimal() +
+  labs(title = "Attenuation of Correlation with Lower Reliability",
+       x = "Measurement at Time 1", y = "Measurement at Time 2")
+```
+
+---
+
+## Summary: Three Sources
+
+| Source | Effect on Correlation |
+|--------|----------------------|
+| Between-individual heterogeneity | Positive correlation |
+| Within-individual variation | Decreases with time lag |
+| Measurement error | Prevents correlation = 1 |
+
+All three combine to determine observed correlation structure.
+
+::: {.callout-note}
+The one-source-per-row mapping is a teaching simplification. Per FLW p. 41 the effects act in union: the positive correlation across occasions arises from heterogeneity AND biological variation together, and the decay with time lag can come from biological variation AND/OR heterogeneity of individual trajectories. Real data mix these mechanisms, which is why flexible covariance models (Ch. 7-8) are needed.
+:::
+
+---
+
+::: {.callout-note collapse="true"}
+## Check Your Understanding: Part II (Q1-2)
+
+1. Why does between-individual heterogeneity create positive correlation across all time points?
+2. If a measurement has low reliability (e.g., 0.50), what happens to the observed correlation between repeated measures?
+
+**Answers:**
+
+1. Some individuals are consistently above average (high responders) and others consistently below average (low responders). This shared individual-level effect makes all measurements from the same person positively correlated.
+2. Low reliability adds measurement error, which attenuates (reduces) the observed correlation. Even if the true biological correlation is high, the observed correlation will be lower.
+:::
+
+::: {.callout-note collapse="true"}
+## Check Your Understanding: Part II (Q3)
+
+3. In an AR(1) model with $\rho = 0.8$, what is the correlation between measurements that are 2 time points apart?
+
+**Answer:**
+
+3. In AR(1), correlation at lag $k$ is $\rho^k$. So at lag 2: $0.8^2 = 0.64$.
+:::
+
+
+# Summary
+
+## Common Mistakes to Avoid
+
+- **Treating repeated measures as independent**: inflates Type I error and corrupts p-values.
+- **Confusing wide and long formats**: long-format functions like `lme()` reject wide data.
+- **Ignoring the source of correlation**: assuming pure heterogeneity when serial correlation is also present misspecifies the model.
+- **Conflating correlation with causation**: temporal ordering helps, but it is not proof.
+- **Thinking ignored correlation biases $\hat{\beta}$**: $\hat{\beta}$ stays consistent; it is the standard errors that break.
+
+---
+
+## Key Takeaways
+
+1. Longitudinal data has **repeated measures** per subject
+2. Ignoring correlation -> **invalid inference**
+3. Three sources: heterogeneity, serial correlation, error
+4. Standard notation: $Y_{ij}$, $\mathbf{X}_i$, $n_i$
+5. Long format required for most R functions
+
+---
+
+## Canonical Resources
+
+- **Author slides**: content.sph.harvard.edu/fitzmaur/ala2e/
+- **Datasets**: content.sph.harvard.edu/fitzmaur/ala2e/datasets.html
+- **Sample R code**: content.sph.harvard.edu/fitzmaur/ala2e/SampleR.html
+
+---
+
+## For Next Time
+
+Read **Chapter 3** of Fitzmaurice, Laird & Ware (2011)
+
+- Lecture 3 (Ch. 3): the general linear model for longitudinal data

@@ -1,0 +1,649 @@
+---
+title: "BIOS 667 - Homework 6"
+subtitle: "Fitzmaurice, Laird & Ware (2011) - Applied Longitudinal Data Analysis, Lectures 17-19: Missing Data (Ch. 17-18) and Transition Models"
+author: "Your Name Here"
+date: today
+format:
+  html:
+    embed-resources: true
+    toc: true
+execute:
+  warning: false
+  message: false
+---
+
+## Instructions
+
+**Collaboration Policy:** You may discuss problems with classmates, but all submitted work must be your own.
+
+**AI Use Policy:** AI tools may be used for code assistance. Disclose any AI use in your submission.
+
+**Submission:** Submit a rendered HTML file to Gradescope by the due date.
+
+**Due Date:** See Canvas for due date
+
+## Grading Rubric
+
+| Category | Weight | Description |
+|----------|--------|-------------|
+| Interpretation & Reasoning | 40% | Conceptual understanding, correct interpretations |
+| Analysis & Setup | 40% | Code correctness, model specification |
+| Clarity & Presentation | 20% | Writing quality, formatting, organization |
+
+## Setup
+
+```{r}
+#| label: setup
+#| include: false
+library(nlme)
+library(lme4)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(mice)
+library(geepack)
+set.seed(667)
+```
+
+---
+
+## Question 1: Transition (Markov) Models (20 points)
+
+**Context:** Transition models (also called Markov models) describe how an individual's response at time $t$ depends on their response at previous time points. In a first-order Markov model, the current state depends only on the immediately preceding state. (Transition models are the L19 instructor topic, FLW 1st-ed Ch. 10.)
+
+Consider a longitudinal study of depression symptoms where patients are classified as either "depressed" (D) or "not depressed" (N) at each of 4 monthly visits.
+
+### Part (a) - **WRITE:** Define a first-order Markov model (5 pts)
+
+Define a first-order Markov model for longitudinal data. What is the key assumption that distinguishes it from higher-order Markov models? Write the mathematical expression for the likelihood of a sequence of observations under this model.
+
+*Your answer here*
+
+### Part (b) - **CODE:** Simulate transition data (5 pts)
+
+Simulate a dataset of 200 patients observed at 4 time points, where the outcome is binary (depressed/not depressed). Use these transition probabilities:
+
+- $P(D \to D) = 0.7$ (probability of staying depressed)
+- $P(N \to D) = 0.2$ (probability of becoming depressed)
+- Initial probability of depression: $P(D_1) = 0.3$
+
+```{r}
+#| label: q1b-simulate-markov
+
+# Your code here
+```
+
+### Part (c) - **CODE:** Fit a transition model (5 pts)
+
+Fit a logistic regression transition model to estimate the transition probabilities. Include the lagged response as a predictor. Verify that your estimates are close to the true values.
+
+```{r}
+#| label: q1c-fit-transition
+
+# Your code here
+```
+
+### Part (d) - **WRITE:** Interpret the model and contrast it with an AR(1) error structure (5 pts)
+
+(i) Interpret the lagged-depression coefficient from part (c) as an odds ratio: what does it tell us about the "stickiness" of depression? (ii) For a continuous outcome, a transition model (lagged response as a predictor) and a linear mixed model with an AR(1) error covariance are two different ways to handle serial correlation. Explain how their target estimands differ and when each is more appropriate.
+
+*Your answer here*
+
+---
+
+## Question 2: Inverse-Probability-Weighted GEE for MAR Dropout (20 points)
+
+**Context:** Likelihood-based methods (ML/REML, multiple imputation) are valid under **MAR**, but **standard GEE for marginal models needs MCAR**: the estimating equation is unbiased only if the observed cases are a random subset (FLW Ch. 18.3). **Inverse-probability-weighted GEE (IPW-GEE)** repairs this. Each observed response is weighted by the inverse probability that the subject was still in the study, so the reweighted observed sample "stands in" for the full sample and consistency is restored under MAR with a **correctly specified dropout model**.
+
+For monotone dropout, let $R_{ij}$ be the response/missingness indicator ($1$ = observed at occasion $j$, $0$ = missing). (Chapter-local override: in this missing-data context $R$ / $R_{ij}$ / $R_i$ is the $0/1$ response indicator following the FLW Ch. 17-18 convention, NOT the within-subject residual covariance $R_i$ from L08-L10.) Let $\pi_{ij}$ be the conditional probability of remaining observed at $j$ given the subject was observed at $j-1$. The unconditional probability of being observed at $j$ is the cumulative product $\pi_{i1}\pi_{i2}\cdots\pi_{ij}$, so the **inverse-probability weight** is its inverse (FLW p. 529):
+
+$$w_{ij} = \frac{1}{\pi_{i1}\,\pi_{i2}\,\cdots\,\pi_{ij}}.$$
+
+A weighted GEE then uses these $w_{ij}$ with a **working-independence** correlation (weights enter standard GEE software correctly only under working independence; FLW p. 530).
+
+### Part (a) - **WRITE:** Why standard GEE fails under MAR and how IPW fixes it (5 pts)
+
+(i) Explain why an unweighted (complete-case / available-case) GEE is generally biased when dropout is MAR but not MCAR. (ii) Define the inverse-probability weight $w_{ij}$ in words and give the intuition for why a subject who was unlikely to remain gets a large weight.
+
+*Your answer here*
+
+### Part (b) - **CODE:** Simulate monotone MAR dropout (5 pts)
+
+Simulate a continuous longitudinal outcome for 300 subjects over 4 visits (centered visit = 0, 1, 2, 3) with monotone MAR dropout, where dropout depends on the subject's PREVIOUS observed value (so missingness depends on observed history = MAR, not on the current unobserved value):
+
+- True mean: baseline 50, improvement of -4 units per visit (lower = better)
+- Subject random-intercept SD: 6; residual SD: 4
+- Dropout probability at a visit increases with the previous (worse = higher) value
+
+Keep both the full (no-dropout) outcome `y_full` and the observed outcome `y` (set to `NA` after dropout) so you can later compare to the full-data truth.
+
+::: {.callout-tip collapse="true"}
+## Hint: Monotone MAR dropout
+
+```
+1. Simulate COMPLETE data first:
+   b_i ~ N(0, 6^2)
+   y_full_it = 50 + (-4)*visit + b_i + e_it,  e_it ~ N(0, 4^2)
+
+2. Add the previous value yprev = lag(y_full) within each subject.
+
+3. Monotone MAR dropout (depends on the PREVIOUS = observed value):
+   p_drop = plogis(alpha_0 + alpha_1 * (yprev - 50))   with alpha_1 > 0
+   observed = (cumsum of dropouts so far == 0)   # once you leave, you stay out
+   y = ifelse(observed, y_full, NA)
+```
+
+**Key**: MAR means dropout depends on the PREVIOUS observed value (`yprev`), NOT on the current/next unobserved value (that would be MNAR). Use `set.seed(667)`.
+:::
+
+```{r}
+#| label: q2b-simulate-mar-dropout
+
+# Your code here
+```
+
+### Part (c) - **CODE:** Estimate weights and fit IPW-GEE (5 pts)
+
+Using the data from part (b):
+
+1. Fit a logistic model for remaining observed, on the observed history (previous value plus visit), to get $\hat\pi_{ij}$.
+2. Form the inverse-probability weights $w_{ij} = 1/\prod_{k\le j}\hat\pi_{ik}$ (cumulative product), and inspect them for extreme values.
+3. Fit (a) a naive unweighted GEE on the observed data, (b) a weighted IPW-GEE (`weights = w`, `corstr = "independence"`), and (c) the full-data GEE (the truth). Compare the visit coefficient across the three.
+
+::: {.callout-tip collapse="true"}
+## Hint: Building the weights and the weighted GEE
+
+```r
+library(geepack)
+
+# Step 1: among subjects observed at the prior occasion (occ >= 2), model
+#         the probability of remaining observed on the observed history.
+pi_model <- glm(R ~ yprev + factor(visit), data = stacked, family = binomial)
+
+# Step 2: predicted pi_ij at each at-risk occasion, then the CUMULATIVE-PRODUCT
+#         weight within each subject:
+#   w_ij = 1 / cumprod(pi_hat)      # NOT 1/pi_hat
+# Inspect summary(w) for extreme weights (FLW p. 529 caution).
+
+# Step 3: weights enter standard GEE only under working independence (FLW p.530)
+gee_naive <- geeglm(y      ~ visit, id = id, data = obs_dat, corstr = "independence")
+gee_ipw   <- geeglm(y      ~ visit, id = id, data = obs_dat, weights = w,
+                    corstr = "independence")
+gee_full  <- geeglm(y_full ~ visit, id = id, data = full_data, corstr = "independence")
+```
+
+Compare the `visit` coefficient from all three and the distance of the naive and IPW estimates from the full-data truth.
+:::
+
+```{r}
+#| label: q2c-ipw-gee
+
+# Your code here
+```
+
+### Part (d) - **WRITE:** Interpret the comparison; IPW-GEE vs. multiple imputation (5 pts)
+
+(i) Using your three estimates from part (c), explain the direction of the naive bias and how IPW-GEE corrects it. (ii) IPW-GEE and multiple imputation (Question 5) are the two co-primary MAR methods in FLW Ch. 18. Briefly contrast them: what does each model, and when would you prefer one over the other?
+
+*Your answer here*
+
+---
+
+## Question 3: Pattern-Mixture Models for Missing Data (20 points)
+
+**Context:** Pattern-mixture models (PMMs) stratify the analysis by the pattern of missing data. The observed data distribution is modeled separately for each missing data pattern, and results are then combined. This approach is useful for sensitivity analysis under missing not at random (MNAR) assumptions.
+
+Consider a clinical trial with 3 planned visits (baseline, month 3, month 6). Some patients drop out before completing all visits.
+
+### Part (a) - **WRITE:** Define pattern-mixture models (5 pts)
+
+Explain the pattern-mixture model factorization of the joint distribution. How does it differ from a selection model approach?
+
+::: {.callout-tip collapse="true"}
+## Hint: Understanding the Two Factorizations
+
+The joint distribution of outcomes $Y$ and missingness $R$ can be factored in two ways. (Chapter-local override: here $R$ / $R_{it}$ / $R_i$ is the 0/1 response/missingness indicator following the FLW Ch. 17-18 convention, NOT the within-subject residual covariance $R_i$ from L08-L10.)
+
+**Selection Model Factorization:**
+$$f(Y, R) = f(Y) \cdot P(R | Y)$$
+- Model the outcome distribution first
+- Then model the probability of missingness given outcomes
+
+**Pattern-Mixture Model Factorization:**
+$$f(Y, R) = f(Y | R) \cdot P(R)$$
+- Stratify by missingness pattern first
+- Model the outcome distribution separately within each pattern
+
+The key conceptual difference is what is conditioned on what. Think about:
+- Which approach conditions on the outcome?
+- Which approach conditions on the missingness pattern?
+- What are the identifying assumptions for each?
+:::
+
+*Your answer here*
+
+### Part (b) - **CODE:** Simulate data with informative dropout (5 pts)
+
+Simulate a dataset where dropout is related to the unobserved outcome (MNAR). Create 150 subjects with:
+
+- True outcome trend: baseline 50, improvement of 5 units per visit
+- Subject random effect SD: 8
+- Residual SD: 4
+- Dropout probability increases if the underlying (unobserved) outcome at the next visit would be poor (higher score = worse)
+
+::: {.callout-tip collapse="true"}
+## Hint: MNAR Simulation Strategy
+
+**Pseudocode for MNAR Simulation:**
+```
+1. Set parameters:
+   - n = 150 subjects
+   - visits = 3 (baseline, month 3, month 6)
+   - beta_0 = 50 (baseline mean)
+   - beta_time = -5 (improvement per visit)
+   - sigma_b = 8 (random effect SD)
+   - sigma_e = 4 (residual SD)
+
+2. Generate COMPLETE data first:
+   For each subject i:
+     b_i ~ N(0, sigma_b^2)
+     For each visit t = 0, 1, 2:
+       Y_it = beta_0 + beta_time * t + b_i + e_it
+       where e_it ~ N(0, sigma_e^2)
+
+3. Create MNAR dropout mechanism:
+   For each subject i:
+     - Keep baseline (t=0) always observed
+     - For t = 1:
+       P(dropout before t=1) = expit(alpha_0 + alpha_1 * Y_{i,1})
+       # Note: dropout depends on UNOBSERVED Y at time 1
+       If dropout, set Y_{i,1} and Y_{i,2} to NA
+     - For t = 2 (if still in study):
+       P(dropout before t=2) = expit(alpha_0 + alpha_1 * Y_{i,2})
+       If dropout, set Y_{i,2} to NA
+
+4. The key MNAR feature: dropout probability depends on the
+   outcome value that WOULD BE observed (but is not, due to dropout)
+```
+
+**Important**: MNAR means dropout depends on the unobserved value itself. Choose alpha_1 > 0 so that higher (worse) scores increase dropout probability.
+:::
+
+```{r}
+#| label: q3b-simulate-mnar
+
+# Your code here
+```
+
+### Part (c) - **CODE:** Fit pattern-mixture model (5 pts)
+
+Fit a pattern-mixture model by:
+
+1. Fitting separate models within each dropout pattern
+2. Combining estimates using pattern probabilities as weights
+
+Compare the PMM estimate to the complete-case analysis and the analysis using all available data (MAR assumption).
+
+::: {.callout-tip collapse="true"}
+## Hint: Pattern-Mixture Model Implementation
+
+**Step-by-step approach:**
+
+1. **Identify dropout patterns**: With 3 visits, possible patterns are:
+   - Pattern 1: Observed at all visits (complete cases)
+   - Pattern 2: Dropout after visit 1 (observed at visits 0, 1)
+   - Pattern 3: Dropout after baseline (observed only at visit 0)
+
+2. **Create pattern indicator**:
+```r
+data <- data %>%
+  group_by(id) %>%
+  mutate(
+    n_obs = sum(!is.na(outcome)),
+    pattern = case_when(
+      n_obs == 3 ~ "complete",
+      n_obs == 2 ~ "dropout_after_v1",
+      n_obs == 1 ~ "dropout_after_v0"
+    )
+  ) %>%
+  ungroup()
+```
+
+3. **Fit separate models within each pattern**:
+```r
+# For patterns with enough time points to estimate trend
+fit_complete <- lm(outcome ~ visit, data = filter(data, pattern == "complete"))
+fit_partial <- lm(outcome ~ visit, data = filter(data, pattern == "dropout_after_v1"))
+```
+
+4. **Combine estimates weighted by pattern probability**:
+```r
+# Pattern probabilities
+p_complete <- mean(data$pattern == "complete")
+p_partial <- mean(data$pattern == "dropout_after_v1")
+# ... etc.
+
+# Weighted average of treatment effects
+beta_pmm <- p_complete * coef(fit_complete)["visit"] +
+            p_partial * coef(fit_partial)["visit"] + ...
+```
+
+**Note**: Patterns with only one observation cannot contribute to trend estimation - you may need to make assumptions or borrow information.
+:::
+
+```{r}
+#| label: q3c-pmm
+
+# Your code here
+```
+
+### Part (d) - **WRITE:** Interpret the PMM results and discuss assumptions (5 pts)
+
+Compare the three estimates (complete case, MAR, PMM). Why do they differ? What assumptions does each make, and which is most appropriate for this data?
+
+*Your answer here*
+
+---
+
+## Question 4: Selection Models for Dropout (20 points)
+
+**Context:** Selection models explicitly model the dropout process as a function of observed and possibly unobserved outcomes. The joint likelihood is:
+
+$$L(Y, R) = f(Y) \cdot P(R | Y)$$
+
+This allows direct modeling of MNAR mechanisms.
+
+### Part (a) - **WRITE:** Types of selection models (5 pts)
+
+Describe the three types of missing data mechanisms (MCAR, MAR, MNAR) in the context of selection models. Give an example of each for a clinical trial measuring pain scores.
+
+*Your answer here*
+
+### Part (b) - **CODE:** Fit a selection model (5 pts)
+
+Using the data from Question 3, fit a simple selection model by jointly modeling:
+
+1. The outcome model: $Y_{it} = \beta_0 + \beta_1 \text{visit} + b_i + \epsilon_{it}$
+2. The dropout model: $\text{logit}(P(\text{dropout})) = \alpha_0 + \alpha_1 Y_{it}$
+
+Implement this using a two-step approach (outcome model, then dropout model).
+
+::: {.callout-tip collapse="true"}
+## Hint: Two-Step Selection Model Implementation
+
+**Two-step approach:**
+
+**Step 1: Fit outcome model using available data (assuming MAR)**
+```r
+# Fit mixed model to observed data
+outcome_model <- lme(outcome ~ visit, random = ~ 1 | id, data = data_observed)
+```
+
+**Step 2: Model the dropout process**
+- Create a dropout indicator for each observation
+- Model dropout as a function of the observed (or predicted) outcome
+
+```r
+# Create dropout indicator
+# For each subject, identify if they dropped out after each visit
+data_dropout <- data %>%
+  group_by(id) %>%
+  mutate(
+    dropped_next = lead(is.na(outcome), default = FALSE),
+    # Or: did subject drop out after this visit?
+    dropout_indicator = ...
+  )
+
+# Fit dropout model
+dropout_model <- glm(dropout_indicator ~ outcome_observed,
+                     family = binomial, data = data_dropout)
+```
+
+**Note**: The two-step approach does not properly account for the joint uncertainty. A proper joint likelihood approach would estimate both models simultaneously, but that requires specialized software (e.g., shared parameter models).
+:::
+
+```{r}
+#| label: q4b-selection-model
+
+# Your code here
+```
+
+### Part (c) - **WRITE:** Limitations of the two-step approach (5 pts)
+
+The two-step approach implemented above has important limitations. Explain why a joint likelihood approach would be preferable and what issues arise with the two-step method.
+
+*Your answer here*
+
+### Part (d) - **CODE:** Sensitivity analysis varying MNAR assumptions (5 pts)
+
+Perform a sensitivity analysis by varying the assumed relationship between dropout and the unobserved outcome. Create a plot showing how the treatment effect estimate changes under different assumptions about the MNAR mechanism.
+
+::: {.callout-tip collapse="true"}
+## Hint: Delta-Adjustment Sensitivity Analysis
+
+A common sensitivity analysis approach is the **delta-adjustment method** (also called tipping point analysis):
+
+**Concept**: Assume that subjects who drop out would have had outcomes that differ from the MAR prediction by some amount $\delta$.
+
+**Pseudocode:**
+```
+1. Fit the MAR model to get predicted values for missing data
+2. For a range of delta values (e.g., -10 to +10):
+   a. Adjust imputed values: Y_imputed = Y_MAR_predicted + delta
+   b. Refit the analysis model with adjusted imputations
+   c. Store the treatment effect estimate
+3. Plot treatment effect vs. delta
+4. Identify the "tipping point" - the delta where conclusions change
+```
+
+**R code structure:**
+```r
+# Range of delta values to explore
+delta_values <- seq(-10, 10, by = 1)
+
+# Storage for results
+results <- data.frame(delta = delta_values, estimate = NA, se = NA)
+
+for (i in seq_along(delta_values)) {
+  delta <- delta_values[i]
+
+  # Create adjusted data: add delta to imputed/predicted values for dropouts
+  data_adjusted <- data_with_imputations
+  data_adjusted$outcome[is.na(data_original$outcome)] <-
+    data_adjusted$outcome[is.na(data_original$outcome)] + delta
+
+  # Refit model
+  fit <- lme(outcome ~ visit, random = ~ 1 | id, data = data_adjusted)
+
+  # Store results
+  results$estimate[i] <- fixef(fit)["visit"]
+  results$se[i] <- ...
+}
+
+# Plot
+ggplot(results, aes(x = delta, y = estimate)) +
+  geom_line() +
+  geom_ribbon(aes(ymin = estimate - 1.96*se, ymax = estimate + 1.96*se), alpha = 0.3) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  labs(x = "Delta (deviation from MAR)", y = "Treatment Effect Estimate")
+```
+:::
+
+```{r}
+#| label: q4d-sensitivity
+#| fig-width: 8
+#| fig-height: 6
+
+# Your code here
+```
+
+---
+
+## Question 5: Multiple Imputation for Longitudinal Data (20 points)
+
+**Context:** Multiple imputation (MI) is a powerful method for handling missing data that properly accounts for imputation uncertainty. For longitudinal data, the imputation model must respect the correlation structure of the data.
+
+### Part (a) - **WRITE:** Multiple imputation procedure (5 pts)
+
+Describe Rubin's three steps for multiple imputation and explain why each step is necessary. What is the key advantage of MI over single imputation?
+
+::: {.callout-tip collapse="true"}
+## Reference: Rubin's Three Steps
+
+**Step 1: Imputation**
+- Create $m$ complete datasets by filling in missing values $m$ times
+- Each imputation draws from the posterior predictive distribution of the missing data
+- Typically $m = 20$ or more imputations
+
+**Step 2: Analysis**
+- Analyze each of the $m$ complete datasets separately using the planned analysis method
+- Obtain $m$ sets of estimates: $\hat{\theta}_1, \hat{\theta}_2, \ldots, \hat{\theta}_m$
+- And $m$ variance estimates: $\hat{V}_1, \hat{V}_2, \ldots, \hat{V}_m$
+
+**Step 3: Pooling (Rubin's Rules)**
+- Combine the $m$ estimates into a single inference
+- See Part (c) for the formulas
+
+**Key advantage over single imputation**: Multiple imputation properly accounts for the uncertainty in the imputed values. Single imputation treats imputed values as if they were known, leading to underestimated standard errors.
+:::
+
+*Your answer here*
+
+### Part (b) - **CODE:** Implement multiple imputation (5 pts)
+
+Using the data from Question 3, perform multiple imputation with 20 imputations using the `mice` package. Include all available outcome variables (the repeated measures `y1`-`y3`) in the imputation model so the longitudinal correlation is preserved; in these simulated data there are no auxiliary covariates beyond the repeated outcomes.
+
+::: {.callout-tip collapse="true"}
+## Hint: Using the mice Package
+
+**Basic mice workflow:**
+```r
+library(mice)
+
+# Step 1: Examine missing data pattern
+md.pattern(data_wide)  # For wide-format data
+
+# Step 2: Run multiple imputation
+# mice() expects wide-format data typically
+imp <- mice(data_wide,
+            m = 20,          # Number of imputations
+            method = "pmm",  # Predictive mean matching (good default)
+            maxit = 10,      # Number of iterations
+            seed = 667)
+
+# Step 3: Check convergence
+plot(imp)  # Should show stable traces
+
+# Step 4: Analyze each imputed dataset
+# Option A: Use with() for simple models
+fits <- with(imp, lm(outcome_v2 ~ outcome_v1 + treatment))
+
+# Option B: For mixed models, extract datasets and fit separately
+imputed_list <- complete(imp, action = "all")
+# Then loop over list and fit lme() to each
+
+# Step 5: Pool results
+pooled <- pool(fits)
+summary(pooled)
+```
+
+**Important for longitudinal data**: You may need to reshape your data to wide format for imputation, then reshape back to long format for analysis.
+:::
+
+```{r}
+#| label: q5b-mice
+#| cache: true
+
+# Your code here
+```
+
+### Part (c) - **CODE:** Analyze imputed datasets and pool results (5 pts)
+
+Fit a linear mixed model to each imputed dataset and pool the results using Rubin's rules. Compare the pooled estimate to the complete case and available case estimates.
+
+::: {.callout-tip collapse="true"}
+## Reference: Rubin's Rules Formulas
+
+Given $m$ imputations with estimates $\hat{\theta}_j$ and variances $\hat{V}_j$ for $j = 1, \ldots, m$:
+
+**Pooled point estimate:**
+$$\bar{\theta} = \frac{1}{m} \sum_{j=1}^{m} \hat{\theta}_j$$
+
+**Within-imputation variance (average of the $m$ variance estimates):**
+$$\bar{W} = \frac{1}{m} \sum_{j=1}^{m} \hat{V}_j$$
+
+**Between-imputation variance (variance of the $m$ point estimates):**
+$$B = \frac{1}{m-1} \sum_{j=1}^{m} (\hat{\theta}_j - \bar{\theta})^2$$
+
+**Total variance:**
+$$T = \bar{W} + \left(1 + \frac{1}{m}\right) B$$
+
+**Standard error:**
+$$SE = \sqrt{T}$$
+
+**Degrees of freedom (for t-distribution inference):**
+$$\nu = (m - 1)\left(1 + \frac{\bar{W}}{(1 + 1/m)B}\right)^2$$
+
+**R code example:**
+```r
+# After fitting models to each imputed dataset
+estimates <- sapply(fits, function(f) fixef(f)["visit"])
+variances <- sapply(fits, function(f) vcov(f)["visit", "visit"])
+
+# Pooled estimate
+theta_bar <- mean(estimates)
+
+# Within-imputation variance
+W_bar <- mean(variances)
+
+# Between-imputation variance
+B <- var(estimates)
+
+# Total variance
+m <- length(estimates)
+T_var <- W_bar + (1 + 1/m) * B
+
+# Standard error
+SE <- sqrt(T_var)
+```
+
+**Note**: The `mice` package has a `pool()` function that does this automatically for supported model types.
+:::
+
+```{r}
+#| label: q5c-pool
+
+# Your code here
+```
+
+### Part (d) - **WRITE:** Discuss MI assumptions and limitations (5 pts)
+
+Multiple imputation assumes MAR. Given that our data has MNAR dropout, discuss:
+
+1. How does this violation affect the MI results?
+2. What could be done to make MI more robust to MNAR in this setting?
+3. When is MI still a useful tool even under suspected MNAR?
+
+*Your answer here*
+
+---
+
+## Peer Review Section
+
+After submission, you will be assigned peer reviews. Use this rubric:
+
+| Criterion | Excellent (5) | Good (3-4) | Needs Work (1-2) |
+|-----------|---------------|------------|------------------|
+| Code correctness | All code runs, correct output | Minor errors | Major errors |
+| Interpretations | Clear, accurate, in context | Mostly correct | Missing key points |
+| Presentation | Well-organized, readable | Adequate | Difficult to follow |
+
+---
+
+## Reminders
+
+- [ ] Knit document before submission
+- [ ] Check that all code executes without errors
+- [ ] Ensure figures are visible and properly labeled
+- [ ] Format tables appropriately
+- [ ] Include AI disclosure if applicable

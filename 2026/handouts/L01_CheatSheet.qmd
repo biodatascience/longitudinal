@@ -1,0 +1,99 @@
+---
+title: "BIOS 667 — Lecture 1 Cheat Sheet"
+subtitle: "Longitudinal Data Notation & First-Look Workflow"
+format:
+  html:
+    theme: cosmo
+    toc: false
+    embed-resources: true
+  pdf:
+    number-sections: false
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+## 1. Notation Reference Table
+
+| Symbol | Definition |
+|--------|------------|
+| $i = 1, \dots, m$ | Subject index ($m$ total subjects) |
+| $j = 1, \dots, n_i$ | Visit index for subject $i$ ($n_i$ observations) |
+| $Y_{ij}$ | Outcome for subject $i$ at visit $j$ |
+| $\mathbf{X}_{ij}$ | Covariate vector for subject $i$ at visit $j$ |
+| $\mu_{ij} = \mathbb{E}(Y_{ij} \mid \mathbf{X}_{ij})$ | Conditional mean |
+| $\boldsymbol{\Sigma}_i$ | $n_i \times n_i$ covariance matrix for subject $i$ |
+| $\mathbf{Y}_i = (Y_{i1}, \dots, Y_{in_i})^\top$ | Response vector for subject $i$ |
+| $\mathbf{X}_i$ | $n_i \times p$ design matrix for subject $i$ |
+
+**Covariate Types:**
+
+| Type | Definition | Example |
+|------|------------|---------|
+| Time-constant | $X_{ij} = X_i$ for all $j$ | Sex, baseline age, treatment arm |
+| Time-varying | $X_{ij}$ changes with $j$ | Current BP, visit time, cumulative dose |
+
+---
+
+## 2. Why Correlation Matters
+
+**Paired vs Unpaired Variance for Mean Difference:**
+
+| Design | $\mathrm{Var}(\bar{D})$ | Efficiency Gain |
+|--------|-------------------------|-----------------|
+| Unpaired (independent) | $\dfrac{2\sigma^2}{n}$ | — |
+| Paired (same subjects) | $\dfrac{2\sigma^2(1-\rho)}{n}$ | Factor of $(1-\rho)$ |
+
+**Key Rule:** Same subject measured at both times $\Rightarrow$ use **paired** analysis.
+
+**Reliability & Attenuation:**
+
+- Reliability: $\rho_{XX} = \dfrac{\sigma^2_{\text{true}}}{\sigma^2_{\text{true}} + \sigma^2_{\text{error}}}$
+- Attenuation: $\hat{\beta}_{\text{obs}} = \rho_{XX} \cdot \beta_{\text{true}}$
+
+---
+
+## 3. First Look Workflow
+
+| Step | Task | Purpose |
+|:----:|------|---------|
+| 1 | Distribution of $n_i$ (visits per subject) | Detect imbalance, dropout |
+| 2 | Spaghetti plot (10 random IDs) | Visualize individual trajectories |
+| 3 | Mean $\pm$ SE by visit/group | Population trend, group differences |
+| 4 | Missingness pattern visualization | Identify MCAR/MAR/MNAR concerns |
+| 5 | Correlation heatmap by visit | Inform covariance structure choice |
+
+---
+
+## 4. Three Modeling Approaches
+
+| Approach | Time Treatment | Chapter | When to Use |
+|----------|----------------|:-------:|-------------|
+| **Response Profiles** | Time as factor | Ch. 5 | Few discrete time points; no trend assumption |
+| **Parametric Trends** | Linear/quad/spline | Ch. 6 | Continuous time; smooth trajectory assumed |
+| **Covariance Patterns** | CS/AR(1)/UN | Ch. 7 | Focus on variance structure; efficiency gains |
+
+---
+
+## 5. Common Data Structures
+
+| Format | Structure | Best For |
+|--------|-----------|----------|
+| **Wide** | One row per subject, columns = visits | Time-constant covariates, multivariate analysis |
+| **Long** | One row per observation | Mixed models, GEE, most R/SAS procedures |
+
+**Key R Functions:**
+
+```r
+# Wide to Long
+long_df <- pivot_longer(wide_df,
+                        cols = starts_with("Y"),
+                        names_to = "visit",
+                        values_to = "outcome")
+
+# Long to Wide
+wide_df <- pivot_wider(long_df,
+                       names_from = visit,
+                       values_from = outcome)
+```

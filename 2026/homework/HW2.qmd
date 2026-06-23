@@ -1,0 +1,394 @@
+---
+title: "BIOS 667: Homework 2"
+subtitle: "Chapters 4-6: Estimation, Inference, Response Profiles, and Parametric Curves"
+author: "Your Name Here"
+date: today
+format:
+  html:
+    embed-resources: true
+    toc: true
+    toc-depth: 3
+    number-sections: true
+execute:
+  warning: false
+  message: false
+---
+
+## Instructions
+
+**Collaboration Policy:** You may discuss problems with classmates, but all submitted work must be your own.
+
+**AI Use Policy:** AI tools may be used for code assistance. Disclose any AI use in your submission.
+
+**Submission:** Submit a rendered HTML file to Gradescope by the due date.
+
+**Due Date:** TBD - Check Canvas
+
+**Chapters Covered:** 4 (Estimation & Inference), 5 (Response Profiles), 6 (Parametric Curves)
+
+## Grading Rubric
+
+| Category | Weight | Description |
+|----------|--------|-------------|
+| Interpretation & Reasoning | 40% | Conceptual understanding, correct interpretations |
+| Analysis & Setup | 40% | Code correctness, model specification |
+| Clarity & Presentation | 20% | Writing quality, formatting, organization |
+
+## Setup
+
+```{r}
+#| label: setup
+library(nlme)
+library(lme4)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(emmeans)
+set.seed(667)
+
+# Load datasets with download fallback
+# Dental data
+dental_url <- "https://content.sph.harvard.edu/fitzmaur/ala2e/dental.txt"
+dental_file <- if (file.exists("../../data/dental.txt")) "../../data/dental.txt" else "data/dental.txt"
+if (!file.exists(dental_file)) {
+  dir.create("data", showWarnings = FALSE)
+  download.file(dental_url, dental_file)
+}
+dental <- read.table(dental_file,
+                     skip = 27, header = FALSE,
+                     col.names = c("id", "gender", "age8", "age10", "age12", "age14"))
+
+# Convert to long format
+dental_long <- dental %>%
+  pivot_longer(cols = starts_with("age"),
+               names_to = "age_char",
+               values_to = "distance") %>%
+  mutate(age = as.numeric(gsub("age", "", age_char)),
+         id = factor(id),
+         gender = factor(gender))
+
+# TLC data with download fallback
+tlc_url <- "https://content.sph.harvard.edu/fitzmaur/ala2e/tlc.csv"
+tlc_file <- if (file.exists("../../data/tlc.csv")) "../../data/tlc.csv" else "data/tlc.csv"
+if (!file.exists(tlc_file)) {
+  dir.create("data", showWarnings = FALSE)
+  download.file(tlc_url, tlc_file)
+}
+tlc <- read.csv(tlc_file)
+names(tlc) <- c("id", "trt", "week0", "week1", "week4", "week6")
+tlc_long <- tlc %>%
+  pivot_longer(cols = starts_with("week"),
+               names_to = "week_char",
+               values_to = "lead") %>%
+  mutate(week = as.numeric(gsub("week", "", week_char)),
+         id = factor(id),
+         trt = factor(trt, levels = c("P", "A"), labels = c("Placebo", "Succimer")))
+
+# NCGS serum cholesterol data (FLW Ch. 5 Problem 5.1) with download fallback.
+# Seven columns, space-delimited, no header: group, id, Y1..Y5 (serum cholesterol
+# at months 0, 6, 12, 20, 24). Group is coded 1 = High-Dose, 2 = Placebo.
+# Missing cholesterol values are coded ".".
+chol_url <- "https://content.sph.harvard.edu/fitzmaur/ala2e/cholesterol.dat"
+chol_file <- if (file.exists("../../data/cholesterol.dat")) "../../data/cholesterol.dat" else "data/cholesterol.dat"
+if (!file.exists(chol_file)) {
+  dir.create("data", showWarnings = FALSE)
+  download.file(chol_url, chol_file)
+}
+cholesterol <- read.table(chol_file, header = FALSE, na.strings = ".",
+                          col.names = c("group", "id", "y1", "y2", "y3", "y4", "y5"))
+
+# Placebo (group 2) is the reference group per FLW Problem 5.1.7.
+cholesterol <- cholesterol %>%
+  mutate(id = factor(id),
+         group = factor(group, levels = c(2, 1), labels = c("Placebo", "HighDose")))
+
+# Long format: five records per subject, months 0/6/12/20/24 (FLW 5.1.4).
+chol_long <- cholesterol %>%
+  pivot_longer(cols = y1:y5, names_to = "occ", values_to = "chol") %>%
+  mutate(month = dplyr::case_match(occ, "y1" ~ 0, "y2" ~ 6, "y3" ~ 12, "y4" ~ 20, "y5" ~ 24),
+         month_f = factor(month),
+         # Occasion index 1-5: index corSymm by OCCASION (not row order) so the 5x5
+         # correlation positions stay correct when a subject has interior missing visits.
+         occ_idx = match(occ, c("y1", "y2", "y3", "y4", "y5"))) %>%
+  filter(!is.na(chol))
+```
+
+---
+
+## Question 1: ML vs REML Estimation (20 points)
+
+This question explores the differences between Maximum Likelihood (ML) and Restricted Maximum Likelihood (REML) estimation in the context of longitudinal data analysis.
+
+### Part (a) - **WRITE:** Conceptual Comparison (5 pts)
+
+Explain the key difference between ML and REML estimation. Specifically, address:
+
+1. How each method handles the loss of degrees of freedom when estimating fixed effects
+2. When each method produces biased/unbiased estimates of variance components
+3. Which method should be used when comparing models with different fixed effects vs. different covariance structures
+
+*Your answer here*
+
+### Part (b) - **CODE:** Demonstrate ML vs REML Bias (5 pts)
+
+Using the dental data, fit a linear mixed model with a random intercept for subject. Fit the model using both ML and REML and compare the estimated variance components.
+
+```{r}
+#| label: q1b-ml-reml
+
+# Your code here
+```
+
+### Part (c) - **WRITE:** Interpret the Bias (5 pts)
+
+Based on your output from Part (b), which method produced larger variance component estimates? Explain why this is expected based on the theoretical properties of ML vs REML.
+
+*Your answer here*
+
+### Part (d) - **CODE:** Model Comparison with LRT (5 pts)
+
+Test whether there is a significant gender effect on dental growth using a likelihood ratio test. Explain why you must use ML (not REML) for this test.
+
+```{r}
+#| label: q1d-lrt
+
+# Your code here
+```
+
+*Your answer here*
+
+---
+
+## Question 2: Hypothesis Testing Framework (20 points)
+
+This question compares the three major approaches to hypothesis testing in longitudinal models: Wald tests, Likelihood Ratio Tests (LRT), and Score tests.
+
+### Part (a) - **WRITE:** Conceptual Framework (6 pts)
+
+Compare and contrast the Wald test, LRT, and Score test. For each, describe:
+
+1. What information from the model fit is required
+2. Key assumptions and when the test is most appropriate
+3. One advantage and one disadvantage
+
+*Your answer here*
+
+### Part (b) - **CODE:** Wald Test Implementation (4 pts)
+
+Using the TLC data, fit a response profiles model with treatment, week (as factor), and their interaction. Conduct a Wald test for the treatment main effect.
+
+```{r}
+#| label: q2b-wald
+
+# Your code here
+```
+
+### Part (c) - **CODE:** LRT Implementation (5 pts)
+
+Conduct a likelihood ratio test comparing the full model (with treatment by week interaction) to a reduced model (without interaction). Interpret the results.
+
+```{r}
+#| label: q2c-lrt
+
+# Your code here
+```
+
+*Your answer here*
+
+### Part (d) - **WRITE:** When Tests Disagree (5 pts)
+
+In what situations might the Wald, LRT, and Score tests give substantially different results? Discuss at least two scenarios and explain which test you would trust more in each case.
+
+*Your answer here*
+
+---
+
+## Question 3: Response Profiles Analysis - NCGS Cholesterol (20 points)
+
+This question reproduces FLW Chapter 5 Problem 5.1 on the **National Cooperative Gallstone Study (NCGS)**. Patients with floating cholesterol gallstones were randomized to high-dose chenodiol (750 mg/day) or placebo, and serum cholesterol (mg/dL) was measured at baseline and at 6, 12, 20, and 24 months. Because chenodiol dissolves gallstones but may raise serum cholesterol, interest centers on whether the **pattern of change** in mean cholesterol over time differs by group. Many measurements are missing (missed visits, lost specimens, early termination). The data are loaded in the setup chunk as `chol_long` (placebo is the reference group; group is coded 1 = High-Dose, 2 = Placebo in the raw file).
+
+### Part (a) - **CODE:** Sample Summaries and Mean Profile Plot (2 pts)
+
+Following FLW 5.1.2 and 5.1.3: compute the sample mean, standard deviation, and number of observations of serum cholesterol at each occasion within each group, then plot the mean response profiles over time (months) for the two groups. (FLW 5.1.2 / 5.1.3)
+
+```{r}
+#| label: q3a-ncgs-summaries
+#| fig-width: 8
+#| fig-height: 5
+
+# Your code here
+```
+
+### Part (b) - **CODE + WRITE:** Fit the Response-Profiles Model and Test Parallelism (6 pts)
+
+Following FLW 5.1.5 and 5.1.7: fit the saturated (response-profiles) model `group * factor(month)` with an **unstructured** covariance matrix, and test the null hypothesis that the pattern of change over time is the same in the two groups (parallel profiles). Use **ML** for the parallelism likelihood ratio test (the test is on the mean structure). Then **WRITE** out the corresponding regression model, taking baseline (month 0) and placebo (group 2) as the reference.
+
+```{r}
+#| label: q3b-ncgs-parallelism
+
+# Your code here
+```
+
+*Your answer here*
+
+### Part (c) - **WRITE:** Derive the Contrast Matrix L by Hand (6 pts)
+
+Following FLW 5.1.8: let $\boldsymbol{\beta} = (\beta_1, \ldots, \beta_{10})^\top$ be the regression parameters from your Part (b) model. The null hypothesis that the patterns of change over time do **not** differ between groups can be written $H_0: L\boldsymbol{\beta} = \mathbf{0}$. Write out an appropriate weight matrix $L$, state its dimensions, and explain why it has that number of rows. (You may include a short code chunk to confirm your $L$ reproduces the test, but the derivation should be by hand.)
+
+*Your answer here*
+
+### Part (d) - **CODE + WRITE:** Reconstruct the Group Means from the Coefficients (6 pts)
+
+Following FLW 5.1.9: show how the **estimated regression coefficients** from the response-profiles model produce the time-specific group means, and compare these reconstructed means with the sample means from Part (a). Reconstruct by hand from the coefficients (do not just call `predict`), then verify against `emmeans` and the sample means. Explain any differences.
+
+```{r}
+#| label: q3d-mean-reconstruction
+
+# Your code here
+```
+
+*Your answer here*
+
+---
+
+## Question 4: Parametric Curves - Polynomial Models (20 points)
+
+This question explores parametric curve modeling using the dental growth data, focusing on polynomial trends and model comparison.
+
+### Part (a) - **CODE:** Linear Trend Model (5 pts)
+
+Fit a linear trend model for dental distance as a function of age, gender, and their interaction. Use a compound symmetry covariance structure.
+
+```{r}
+#| label: q4a-linear-trend
+
+# Your code here
+```
+
+### Part (b) - **CODE:** Quadratic Trend Model (5 pts)
+
+Fit a quadratic trend model. Test whether the quadratic term significantly improves the fit compared to the linear model using a likelihood ratio test.
+
+```{r}
+#| label: q4b-quadratic
+
+# Your code here
+```
+
+*Your answer here*
+
+### Part (c) - **WRITE:** Interpret Slopes (5 pts)
+
+Based on your linear trend model, interpret the age slopes for males and females. Calculate the slope for each gender and explain what these values mean in the context of dental growth.
+
+```{r}
+#| label: q4c-slopes
+
+# Your code here
+```
+
+*Your answer here*
+
+### Part (d) - **CODE:** Visualize Fitted Curves (5 pts)
+
+Create a plot showing the observed data and the fitted linear trend lines for each gender. Include 95% confidence bands for the fitted values.
+
+```{r}
+#| label: q4d-visualization
+#| fig-width: 9
+#| fig-height: 6
+
+# Your code here
+```
+
+---
+
+## Question 5: Parametric Curves - Linear Splines (20 points)
+
+This question addresses piecewise linear (spline) models for capturing non-linear trends, using the TLC data where a clear change in slope is expected.
+
+### Part (a) - **WRITE:** When to Use Splines (4 pts)
+
+Explain when a linear spline model would be preferred over:
+
+1. A simple linear trend
+2. A quadratic polynomial
+3. A saturated means (response profiles) model
+
+*Your answer here*
+
+### Part (b) - **CODE:** Fit Linear Spline Model (5 pts)
+
+Fit a linear spline model to the TLC data with a knot at week 1, allowing different slopes before and after the knot for each treatment group.
+
+```{r}
+#| label: q5b-spline-fit
+
+# Your code here
+```
+
+### Part (c) - **WRITE:** Interpret Spline Coefficients (5 pts)
+
+Using the coefficient table from your fitted spline model, calculate and interpret:
+
+1. The pre-knot slope (week 0 to week 1) for each treatment group
+2. The post-knot slope (week 1 onwards) for each treatment group
+3. The change in slope at the knot for each treatment group
+
+```{r}
+#| label: q5c-interpret
+
+# Your code here
+```
+
+*Your answer here*
+
+### Part (d) - **CODE:** Visualize Spline Fit (6 pts)
+
+Create a plot showing:
+
+1. The observed mean profiles (points connected by lines)
+2. The fitted spline curves for each treatment group
+3. A vertical line indicating the knot location
+
+```{r}
+#| label: q5d-spline-plot
+#| fig-width: 9
+#| fig-height: 6
+
+# Your code here
+```
+
+---
+
+## Peer Review Section
+
+After submission, you will be assigned peer reviews. Use this rubric:
+
+| Criterion | Excellent (5) | Good (3-4) | Needs Work (1-2) |
+|-----------|---------------|------------|------------------|
+| Code correctness | All code runs, correct output | Minor errors | Major errors |
+| Interpretations | Clear, accurate, in context | Mostly correct | Missing key points |
+| Statistical reasoning | Appropriate methods, correct inference | Minor issues | Conceptual errors |
+| Presentation | Well-organized, readable | Adequate | Difficult to follow |
+
+---
+
+## Reminders
+
+- [ ] Knit document before submission
+- [ ] Check that all code executes without errors
+- [ ] Ensure figures are visible and properly labeled
+- [ ] Format tables appropriately
+- [ ] Include AI disclosure if applicable
+- [ ] Verify all interpretations are in context (units, meaningful statements)
+
+---
+
+## Additional Resources
+
+- Fitzmaurice, Laird & Ware (2011), Chapters 4-6
+- R packages: `nlme`, `lme4`, `emmeans`
+- Centering continuous variables improves interpretability of intercepts
+- Always use ML (not REML) when comparing models with different fixed effects
+- Linear splines are specified using the "hockey stick" basis: $(t - t^*)_+ = \max(t - t^*, 0)$

@@ -1,0 +1,47 @@
+
+/* UNC Gillings minimal theme for revealjs */
+:root { --unc-blue: #4B9CD3; --unc-dark:#13294B; --text:#1f2937; }
+
+/* Reduce base font sizes to fit more content */
+.reveal { font-size: 32px; } /* Default is usually 40px */
+.reveal h1 { font-size: 2.2em; } /* Slightly smaller headers */
+.reveal h2 { font-size: 1.4em; }
+.reveal h3 { font-size: 1.2em; }
+.reveal p, .reveal ul, .reveal ol { font-size: 0.95em; } /* Reduce body text */
+
+.reveal .slides { color: var(--text); }
+.reveal .slide-number { background: var(--unc-dark); color: white;bottom: 20px !important;}
+.callout { border-left: 4px solid var(--unc-blue); background: #eef6fc; padding: 0.75rem; border-radius: 0.25rem; }
+.small { font-size: 0.85rem; }
+.scroll { max-height: 72vh; overflow-y: auto; }
+.reveal .footer > * {
+position: absolute; bottom:0; width:100%; background-color: var(--unc-blue); color: #0b2239; font-size: 0.9rem; padding: 6px 12px;
+}
+
+/* Code blocks */
+code.sourceCode {
+  font-size: 0.75em; /* Reduced from 0.8em */
+  line-height: 1.3; /* Tighter line spacing */
+}
+
+/* Reduce spacing in lists */
+.reveal ul, .reveal ol {
+  line-height: 1.4; /* Tighter list spacing */
+}
+
+/* Math formulas - slightly smaller */
+.reveal .math {
+  font-size: 0.9em;
+}
+
+/* Notation reference card: Pandoc emits 50/50 <col> widths, leaving a wide gap
+   after the short Symbol column. Override the colgroup so Symbol is narrow and
+   Meaning fills the rest. */
+.reveal .notation-card th, .reveal .notation-card td { padding: 0.18em 0.7em; vertical-align: top; }
+.reveal .notation-card col:first-child { width: 22% !important; }
+.reveal .notation-card col:last-child  { width: 78% !important; }
+.reveal .notation-card td:first-child, .reveal .notation-card th:first-child {
+  white-space: nowrap; text-align: left;
+}
+/* keep inline math from colliding with adjacent words (e.g. "$(...N)$ and") */
+.reveal .notation-card td mjx-container { margin-left: 0.12em; margin-right: 0.12em; }

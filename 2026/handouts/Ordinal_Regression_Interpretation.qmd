@@ -1,0 +1,716 @@
+---
+title: "Ordinal Regression Coefficient Interpretation"
+subtitle: "Cumulative Logit Models and Proportional Odds"
+format:
+  html:
+    theme: cosmo
+    toc: true
+    embed-resources: true
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+```{r}
+#| label: setup
+#| include: false
+library(MASS)
+library(ordinal)
+library(emmeans)
+library(ggplot2)
+```
+
+## 1. What is Ordinal Regression?
+
+Ordinal regression is used when the outcome variable has **ordered categories** that have a natural ranking but the distances between categories are not necessarily equal.
+
+### Examples of Ordinal Outcomes
+
+| Domain | Categories |
+|--------|------------|
+| **Pain severity** | None < Mild < Moderate < Severe |
+| **Disease stage** | Stage I < Stage II < Stage III < Stage IV |
+| **Agreement scale** | Strongly Disagree < Disagree < Neutral < Agree < Strongly Agree |
+| **Functional status** | Independent < Some assistance < Dependent |
+| **Treatment response** | No response < Partial response < Complete response |
+
+### The Cumulative Logit Model
+
+The most common ordinal regression model is the **cumulative logit model** (also called proportional odds model). It models the probability of being at or below each category.
+
+**Link function:**
+$$\text{logit}(P(Y \leq j)) = \log\left(\frac{P(Y \leq j)}{P(Y > j)}\right)$$
+
+This is the log-odds of being in category $j$ or lower versus being in a higher category.
+
+### Key Feature: Single Coefficient
+
+The proportional odds model uses a **single coefficient** for each predictor across all cut points. This assumes the effect of the predictor is the same regardless of where you "cut" the outcome scale.
+
+::: {.callout-important}
+## Why Ordinal, Not Multinomial?
+
+Ordinal regression **uses the ordering information** in your outcome. Multinomial regression ignores this ordering, treating categories as unrelated. Ordinal regression is more efficient and interpretable when the outcome is truly ordered.
+:::
+
+
+## 2. The Model
+
+### Mathematical Formulation
+
+For an outcome $Y$ with $J$ ordered categories (1, 2, ..., J), the cumulative logit model is:
+
+$$\text{logit}(P(Y \leq j | \mathbf{X})) = \alpha_j - \boldsymbol{\beta}^T\mathbf{X}$$
+
+for $j = 1, 2, \ldots, J-1$
+
+where:
+
+| Component | Description |
+|-----------|-------------|
+| $\alpha_j$ | Threshold (intercept) for cumulative probability up to category $j$ |
+| $\boldsymbol{\beta}$ | Vector of regression coefficients |
+| $\mathbf{X}$ | Vector of covariates |
+
+### Understanding the Thresholds
+
+There are $J-1$ thresholds for $J$ categories:
+
+- $\alpha_1$: threshold between category 1 and categories 2-J
+- $\alpha_2$: threshold between categories 1-2 and categories 3-J
+- $\vdots$
+- $\alpha_{J-1}$: threshold between categories 1 to J-1 and category J
+
+The thresholds are **ordered**: $\alpha_1 < \alpha_2 < \cdots < \alpha_{J-1}$
+
+::: {.callout-warning}
+## The Sign Convention Varies by Software!
+
+Some software (including `polr` and `clm`) uses the model:
+$$\text{logit}(P(Y \leq j | \mathbf{X})) = \alpha_j - \boldsymbol{\beta}^T\mathbf{X}$$
+
+Other software uses:
+$$\text{logit}(P(Y \leq j | \mathbf{X})) = \alpha_j + \boldsymbol{\beta}^T\mathbf{X}$$
+
+**This changes the interpretation of positive/negative coefficients!** See Section 5 for details.
+:::
+
+### Implied Category Probabilities
+
+From the cumulative model, we can derive individual category probabilities:
+
+$$P(Y = j | \mathbf{X}) = P(Y \leq j | \mathbf{X}) - P(Y \leq j-1 | \mathbf{X})$$
+
+where $P(Y \leq 0) = 0$ and $P(Y \leq J) = 1$ by convention.
+
+
+## 3. Coefficient Interpretation
+
+### The Proportional Odds Interpretation
+
+For `MASS::polr` and `ordinal::clm` (which use the **minus sign** convention):
+
+| Coefficient Sign | Interpretation |
+|------------------|----------------|
+| $\beta > 0$ | Higher values of $X$ associated with **higher** outcome categories |
+| $\beta < 0$ | Higher values of $X$ associated with **lower** outcome categories |
+| $\exp(\beta)$ | **Cumulative odds ratio** for higher vs. lower categories |
+
+### What is the Cumulative Odds Ratio?
+
+The cumulative odds ratio $\exp(\beta)$ compares:
+
+$$\text{OR} = \frac{\text{Odds}(Y > j | X = x+1)}{\text{Odds}(Y > j | X = x)} = \exp(\beta)$$
+
+This is the same at **every cut point** (the proportional odds assumption).
+
+### Interpretation Template
+
+For a one-unit increase in $X$:
+
+> "A one-unit increase in $X$ is associated with $\exp(\beta)$ times the odds of being in a **higher** category versus a **lower** category (or any categories above threshold $j$ versus at or below $j$)."
+
+### Example Interpretations
+
+| Scenario | $\beta$ | $\exp(\beta)$ | Interpretation |
+|----------|---------|---------------|----------------|
+| Treatment effect | 0.85 | 2.34 | Treatment associated with 2.34 times odds of higher category |
+| Age effect | -0.03 | 0.97 | Each year of age associated with 3% lower odds of higher category |
+| Dose effect | 1.20 | 3.32 | Each unit increase in dose associated with 3.32 times odds of higher category |
+
+::: {.callout-note}
+## Higher vs. Lower Categories
+
+The cumulative odds ratio applies to the odds of being **above** any cutpoint versus **at or below** it. Because of the proportional odds assumption, this ratio is constant across all cutpoints.
+:::
+
+
+## 4. The Proportional Odds Assumption
+
+### What It Means
+
+The proportional odds assumption states that the effect of each predictor is **constant** across all cutpoints of the outcome. Mathematically:
+
+$$\frac{\text{Odds}(Y > j | X = x+1)}{\text{Odds}(Y > j | X = x)} = \exp(\beta) \text{ for all } j$$
+
+### Visual Representation
+
+```{r}
+#| echo: false
+#| fig-height: 4
+#| fig-width: 8
+
+# Create illustration of proportional odds
+x_vals <- seq(-3, 3, length.out = 100)
+thresholds <- c(-1.5, 0, 1.5)
+beta <- 0.8
+
+# Calculate cumulative probabilities for X=0 and X=1
+dat_plot <- expand.grid(x = x_vals, threshold = 1:3, X_group = c("X = 0", "X = 1"))
+dat_plot$alpha <- thresholds[dat_plot$threshold]
+dat_plot$X_val <- ifelse(dat_plot$X_group == "X = 0", 0, 1)
+dat_plot$cumprob <- plogis(dat_plot$alpha - beta * dat_plot$X_val)
+dat_plot$threshold_label <- paste("P(Y <=", dat_plot$threshold, ")")
+
+ggplot(dat_plot[dat_plot$X_group %in% c("X = 0", "X = 1") & dat_plot$x == 0, ],
+       aes(x = threshold, y = cumprob, color = X_group, group = X_group)) +
+  geom_line(linewidth = 1.2) +
+  geom_point(size = 3) +
+  labs(x = "Cumulative Category (j)",
+       y = "Cumulative Probability P(Y <= j)",
+       color = "Predictor Value",
+       title = "Proportional Odds: Parallel Cumulative Probability Curves") +
+  scale_x_continuous(breaks = 1:3) +
+  scale_y_continuous(limits = c(0, 1)) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+The curves are **parallel** on the logit scale, meaning the distance between them (the log-odds ratio) is constant.
+
+### When Proportional Odds Fails
+
+The assumption may be violated when:
+
+- Different predictors have different effects at different severity levels
+- There are "ceiling" or "floor" effects
+- The categories are not truly ordinal
+- Sample size is small at extreme categories
+
+### Testing: The Brant Test
+
+```{r}
+#| eval: false
+
+# Using the brant package
+library(brant)
+brant(polr_model)
+
+# Interpretation:
+# - Non-significant p-values suggest proportional odds is reasonable
+# - Significant p-values indicate violation for that predictor
+```
+
+### Alternatives When Assumption Fails
+
+| Alternative | Description |
+|-------------|-------------|
+| **Partial proportional odds** | Allow some predictors to have different effects at each cutpoint |
+| **Multinomial logit** | Abandon ordering, treat as nominal |
+| **Adjacent-category logit** | Model odds of adjacent categories |
+| **Continuation-ratio logit** | Model sequential transitions |
+| **Stereotype model** | Ordinal model without proportional odds |
+
+The `ordinal::clm` package allows partial proportional odds models via the `nominal` argument.
+
+
+## 5. Software Sign Conventions
+
+::: {.callout-important}
+## Critical: Know Your Software's Convention!
+
+Different software packages use different sign conventions. Getting this wrong leads to completely reversed interpretations!
+:::
+
+### Sign Convention Comparison
+
+| Package | Model Form | Positive $\beta$ Means | Notes |
+|---------|------------|------------------------|-------|
+| `MASS::polr` (R) | $\text{logit}(P(Y \leq j)) = \alpha_j - \beta X$ | Higher $X$ $\to$ **higher** $Y$ | Most common in R |
+| `ordinal::clm` (R) | $\text{logit}(P(Y \leq j)) = \alpha_j - \beta X$ | Higher $X$ $\to$ **higher** $Y$ | Same as `polr` |
+| `VGAM::vglm` (R) | $\text{logit}(P(Y \leq j)) = \alpha_j - \beta X$ | Higher $X$ $\to$ **higher** $Y$ | Uses "propodds" family |
+| SAS PROC LOGISTIC | Depends on `DESCENDING` option | Check output! | Default may vary |
+| Stata `ologit` | $\text{logit}(P(Y \leq j)) = \alpha_j - \beta X$ | Higher $X$ $\to$ **higher** $Y$ | Same convention |
+
+### How to Verify Your Software's Convention
+
+**Always verify with predicted probabilities:**
+
+```{r}
+# Create simple test data
+set.seed(667)
+test_dat <- data.frame(
+  y = factor(c(rep(1, 20), rep(2, 30), rep(3, 30), rep(4, 20)),
+             ordered = TRUE, levels = 1:4),
+  x = c(rnorm(20, 0), rnorm(30, 1), rnorm(30, 2), rnorm(20, 3))
+)
+
+# Fit model
+test_fit <- polr(y ~ x, data = test_dat)
+
+# Get predictions for low and high x
+pred_low <- predict(test_fit, newdata = data.frame(x = 0), type = "probs")
+pred_high <- predict(test_fit, newdata = data.frame(x = 3), type = "probs")
+
+cat("Predicted probabilities for x = 0:\n")
+print(round(pred_low, 3))
+cat("\nPredicted probabilities for x = 3:\n")
+print(round(pred_high, 3))
+
+# Check: If beta > 0 in polr, higher x should have more probability in higher categories
+cat("\nCoefficient for x:", coef(test_fit), "\n")
+cat("Beta > 0, so higher x should give more probability in higher categories\n")
+cat("Sum of P(Y=3) + P(Y=4) for x=0:", sum(pred_low[3:4]), "\n")
+cat("Sum of P(Y=3) + P(Y=4) for x=3:", sum(pred_high[3:4]), "\n")
+```
+
+
+## 6. Worked Example
+
+### Pain Severity Data
+
+Let's analyze a simulated clinical trial examining the effect of treatment on pain severity.
+
+```{r}
+set.seed(667)
+
+# Simulate pain severity data
+n <- 200
+
+# Covariates
+treatment <- factor(rep(c("Placebo", "Treatment"), each = n/2))
+age <- round(rnorm(n, mean = 50, sd = 12))
+baseline_pain <- sample(1:4, n, replace = TRUE, prob = c(0.1, 0.3, 0.4, 0.2))
+
+# Generate ordinal outcome (1=none, 2=mild, 3=moderate, 4=severe)
+# Treatment reduces pain (negative effect on severity)
+# Higher baseline pain associated with higher post-treatment pain
+eta <- -0.8 * (treatment == "Treatment") + 0.4 * (baseline_pain - 2) + 0.02 * (age - 50)
+
+# Convert to ordinal using latent variable approach
+latent <- eta + rlogis(n)
+thresholds <- c(-2, 0, 2)
+pain <- cut(latent, breaks = c(-Inf, thresholds, Inf), labels = c("None", "Mild", "Moderate", "Severe"))
+pain <- ordered(pain, levels = c("None", "Mild", "Moderate", "Severe"))
+
+# Create data frame
+pain_data <- data.frame(
+  pain = pain,
+  treatment = treatment,
+  age = age,
+  baseline_pain = factor(baseline_pain, labels = c("None", "Mild", "Moderate", "Severe"))
+)
+
+# View data summary
+table(pain_data$pain, pain_data$treatment)
+```
+
+### Fit the Proportional Odds Model
+
+```{r}
+# Fit with MASS::polr
+fit_polr <- polr(pain ~ treatment + age + baseline_pain, data = pain_data, Hess = TRUE)
+
+# Summary
+summary(fit_polr)
+```
+
+### Extract and Interpret Coefficients
+
+```{r}
+# Extract coefficients and standard errors
+coef_table <- coef(summary(fit_polr))
+print(coef_table)
+
+# Calculate odds ratios and 95% CIs
+beta <- coef_table[, "Value"]
+se <- coef_table[, "Std. Error"]
+
+# Create results table
+results <- data.frame(
+  Variable = names(beta),
+  Coefficient = beta,
+  SE = se,
+  OR = exp(beta),
+  OR_Lower = exp(beta - 1.96 * se),
+  OR_Upper = exp(beta + 1.96 * se),
+  z_value = beta / se,
+  p_value = 2 * (1 - pnorm(abs(beta / se)))
+)
+
+print(results, digits = 3)
+```
+
+### Interpretation
+
+```{r}
+#| echo: false
+
+trt_coef <- coef(fit_polr)["treatmentTreatment"]
+trt_or <- exp(trt_coef)
+```
+
+**Treatment effect:**
+
+- Coefficient = `r round(trt_coef, 3)`
+- Odds Ratio = `r round(trt_or, 3)`
+
+Since we are using `polr` (minus sign convention) and $\beta < 0$:
+
+> "Patients receiving treatment have `r round(trt_or, 2)` times the odds of being in a **higher** (more severe) pain category compared to placebo. Equivalently, treatment is associated with `r round(1/trt_or, 2)` times the odds of being in a **lower** (less severe) pain category."
+
+Or more intuitively:
+
+> "Treatment reduces the odds of higher pain severity by `r round((1-trt_or)*100)`% compared to placebo."
+
+
+## 7. Predicted Probabilities
+
+### Calculating Category Probabilities
+
+```{r}
+# Get predicted probabilities for all observations
+pred_probs <- predict(fit_polr, type = "probs")
+head(pred_probs)
+```
+
+### Predictions for Specific Covariate Values
+
+```{r}
+# Create prediction scenarios
+new_data <- expand.grid(
+  treatment = c("Placebo", "Treatment"),
+  age = 50,
+  baseline_pain = "Moderate"
+)
+
+# Get predicted probabilities
+pred_scenarios <- predict(fit_polr, newdata = new_data, type = "probs")
+pred_scenarios <- as.data.frame(pred_scenarios)
+pred_scenarios <- cbind(new_data[, "treatment", drop = FALSE], pred_scenarios)
+
+print(pred_scenarios, digits = 3)
+```
+
+### Visualization of Predicted Probabilities
+
+```{r}
+#| fig-height: 5
+#| fig-width: 8
+
+# Create data for plotting
+plot_data <- expand.grid(
+  treatment = c("Placebo", "Treatment"),
+  age = 50,
+  baseline_pain = c("None", "Mild", "Moderate", "Severe")
+)
+
+pred_plot <- predict(fit_polr, newdata = plot_data, type = "probs")
+plot_data <- cbind(plot_data, pred_plot)
+
+# Reshape for plotting
+library(tidyr)
+plot_long <- pivot_longer(plot_data, cols = c("None", "Mild", "Moderate", "Severe"),
+                          names_to = "Pain_Level", values_to = "Probability")
+plot_long$Pain_Level <- factor(plot_long$Pain_Level,
+                                levels = c("None", "Mild", "Moderate", "Severe"))
+
+ggplot(plot_long, aes(x = baseline_pain, y = Probability, fill = Pain_Level)) +
+  geom_bar(stat = "identity", position = "stack") +
+  facet_wrap(~ treatment) +
+  scale_fill_brewer(palette = "YlOrRd", name = "Post-Treatment\nPain Level") +
+  labs(x = "Baseline Pain Level", y = "Predicted Probability",
+       title = "Predicted Pain Outcomes by Treatment and Baseline Pain",
+       subtitle = "Age = 50 years") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+### Cumulative Probability Curves
+
+```{r}
+#| fig-height: 4
+#| fig-width: 8
+
+# Calculate cumulative probabilities across age range
+age_range <- data.frame(
+  treatment = rep(c("Placebo", "Treatment"), each = 50),
+  age = rep(seq(30, 70, length.out = 50), 2),
+  baseline_pain = "Moderate"
+)
+
+# Get cumulative probabilities
+pred_age <- predict(fit_polr, newdata = age_range, type = "probs")
+age_range <- cbind(age_range, pred_age)
+
+# Calculate cumulative probabilities
+age_range$cum_mild <- age_range$None + age_range$Mild
+age_range$cum_moderate <- age_range$cum_mild + age_range$Moderate
+
+# Plot
+plot_cum <- pivot_longer(age_range,
+                         cols = c("None", "cum_mild", "cum_moderate"),
+                         names_to = "Cumulative", values_to = "Prob")
+plot_cum$Cumulative <- factor(plot_cum$Cumulative,
+                              levels = c("None", "cum_mild", "cum_moderate"),
+                              labels = c("P(Y <= None)", "P(Y <= Mild)", "P(Y <= Moderate)"))
+
+ggplot(plot_cum, aes(x = age, y = Prob, color = Cumulative, linetype = treatment)) +
+  geom_line(linewidth = 1) +
+  labs(x = "Age (years)", y = "Cumulative Probability",
+       title = "Cumulative Probability Curves by Age and Treatment",
+       subtitle = "Baseline pain = Moderate",
+       color = "Cumulative Probability",
+       linetype = "Treatment") +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+
+## 8. Using emmeans for Adjusted Probabilities
+
+The `emmeans` package provides an elegant way to obtain adjusted predicted probabilities and contrasts.
+
+### Adjusted Probabilities by Treatment
+
+```{r}
+# Get adjusted predicted probabilities
+em_probs <- emmeans(fit_polr, ~ pain | treatment, mode = "prob")
+summary(em_probs)
+```
+
+### Pairwise Comparisons on Odds Ratio Scale
+
+```{r}
+# Treatment comparison on odds ratio scale
+em_or <- emmeans(fit_polr, ~ treatment, mode = "latent")
+pairs(em_or, type = "response")
+```
+
+### Marginal Effects
+
+```{r}
+# Joint reference grid
+em_joint <- emmeans(fit_polr, ~ treatment, mode = "latent")
+summary(em_joint)
+
+# Contrast (log-odds scale)
+contrast(em_joint, method = "pairwise")
+```
+
+### Plotting emmeans Results
+
+```{r}
+#| fig-height: 4
+#| fig-width: 7
+
+# Extract probability estimates for plotting
+em_summary <- as.data.frame(summary(em_probs))
+
+ggplot(em_summary, aes(x = pain, y = prob, fill = treatment)) +
+  geom_bar(stat = "identity", position = "dodge", width = 0.7) +
+  geom_errorbar(aes(ymin = asymp.LCL, ymax = asymp.UCL),
+                position = position_dodge(0.7), width = 0.25) +
+  labs(x = "Pain Severity", y = "Adjusted Probability (with 95% CI)",
+       title = "Adjusted Predicted Probabilities by Treatment",
+       fill = "Treatment Group") +
+  scale_fill_brewer(palette = "Set1") +
+  theme_minimal()
+```
+
+
+## 9. Common Mistakes
+
+### Mistake 1: Getting the Sign Wrong
+
+```{r}
+#| eval: false
+
+# WRONG: Interpreting positive coefficient as lower outcome
+# "Treatment (beta = 0.8) is associated with lower pain"
+
+# CORRECT for polr/clm: Positive coefficient means HIGHER category
+# "Treatment (beta = 0.8) is associated with HIGHER pain severity"
+```
+
+**Always verify with predicted probabilities!**
+
+### Mistake 2: Interpreting as Probability
+
+```{r}
+#| eval: false
+
+# WRONG
+# "A one-unit increase in X increases the probability of higher category by exp(beta)"
+
+# CORRECT
+# "A one-unit increase in X multiplies the ODDS of higher category by exp(beta)"
+```
+
+### Mistake 3: Ignoring Proportional Odds Violation
+
+```{r}
+#| eval: false
+
+# WRONG: Blindly reporting results without checking
+summary(fit_polr)
+
+# CORRECT: Test the assumption
+library(brant)
+brant(fit_polr)  # Check for violations
+
+# If violated, consider alternatives:
+# - Partial proportional odds (clm with nominal terms)
+# - Multinomial regression
+# - Report with caveat about violation
+```
+
+### Mistake 4: Forgetting Software Conventions
+
+```{r}
+# Different packages may give different signs!
+# Always document which package and verify interpretation
+
+# Example: Compare polr and clm (should be same)
+fit_clm <- clm(pain ~ treatment + age + baseline_pain, data = pain_data)
+
+cat("polr coefficient for treatment:", coef(fit_polr)["treatmentTreatment"], "\n")
+cat("clm coefficient for treatment:", coef(fit_clm)["treatmentTreatment"], "\n")
+```
+
+### Mistake 5: Treating Ordinal as Continuous
+
+```{r}
+#| eval: false
+
+# WRONG: Linear regression on ordinal outcome
+lm(as.numeric(pain) ~ treatment, data = pain_data)
+
+# This assumes equal intervals between categories!
+
+# CORRECT: Use ordinal regression
+polr(pain ~ treatment, data = pain_data)
+```
+
+### Summary of Common Mistakes
+
+| Mistake | Problem | Solution |
+|---------|---------|----------|
+| Sign reversal | Wrong interpretation direction | Verify with predicted probabilities |
+| Probability vs odds | Misinterpret coefficient magnitude | Report as odds ratio |
+| Ignoring proportional odds | Invalid inference | Test with Brant test |
+| Wrong software convention | Completely wrong interpretation | Check package documentation |
+| Treating as continuous | Assumes equal intervals | Use proper ordinal model |
+
+
+## 10. Quick Reference Card
+
+### Interpretation Template
+
+For `MASS::polr` and `ordinal::clm`:
+
+::: {.callout-tip}
+## Standard Interpretation
+
+"A one-unit increase in $X$ is associated with $\exp(\beta)$ = **[value]** times the odds of being in a **higher** versus **lower** category of $Y$."
+
+Or equivalently:
+
+"A one-unit increase in $X$ is associated with $\exp(\beta)$ times the odds of being **above** any given threshold versus **at or below** that threshold."
+:::
+
+### Quick Formulas
+
+| Quantity | Formula |
+|----------|---------|
+| Odds ratio | $\text{OR} = \exp(\beta)$ |
+| 95% CI for OR | $\exp(\beta \pm 1.96 \times \text{SE})$ |
+| Probability $P(Y \leq j)$ | $\text{logit}^{-1}(\alpha_j - \beta X)$ |
+| Probability $P(Y = j)$ | $P(Y \leq j) - P(Y \leq j-1)$ |
+
+### Essential R Code
+
+```{r}
+#| eval: false
+
+# Fit model
+library(MASS)
+fit <- polr(outcome ~ predictor, data = dat, Hess = TRUE)
+
+# Summary with p-values
+coef_table <- coef(summary(fit))
+p_values <- 2 * (1 - pnorm(abs(coef_table[, "t value"])))
+
+# Odds ratios with CIs
+exp(coef(fit))                              # OR
+exp(confint(fit))                           # 95% CI for OR
+
+# Predicted probabilities
+predict(fit, type = "probs")                # Category probs
+predict(fit, type = "class")                # Predicted class
+
+# Test proportional odds
+library(brant)
+brant(fit)
+
+# Adjusted predictions with emmeans
+library(emmeans)
+emmeans(fit, ~ predictor, mode = "prob")
+```
+
+### Decision Guide
+
+```
+Is outcome ordered?
+  --> No  --> Use multinomial logistic regression
+  --> Yes --> Continue
+
+Are intervals between categories equal?
+  --> Yes --> Can consider linear regression (with caution)
+  --> No  --> Use ordinal regression
+
+Does proportional odds hold?
+  --> Yes --> Standard cumulative logit model (polr, clm)
+  --> No  --> Partial proportional odds, multinomial, or alternative models
+```
+
+### Package Quick Reference
+
+```{r}
+#| eval: false
+
+# Core ordinal regression
+library(MASS)        # polr() - standard cumulative logit
+library(ordinal)     # clm() - more flexible, allows partial proportional odds
+
+# Diagnostics
+library(brant)       # brant() - test proportional odds assumption
+
+# Marginal means and contrasts
+library(emmeans)     # emmeans() - adjusted predictions and comparisons
+
+# Visualization
+library(ggplot2)     # Plotting
+library(effects)     # effect() - effect plots for ordinal models
+```
+
+::: {.callout-tip}
+## Final Tips
+
+1. **Always verify sign convention** with predicted probabilities before interpreting
+2. **Test proportional odds assumption** before trusting a single coefficient
+3. **Report odds ratios** with confidence intervals, not just coefficients
+4. **Visualize predicted probabilities** to communicate results effectively
+5. **Use emmeans** for clean marginal predictions and treatment comparisons
+:::

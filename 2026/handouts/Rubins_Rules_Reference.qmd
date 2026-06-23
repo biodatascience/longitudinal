@@ -1,0 +1,474 @@
+---
+title: "Rubin's Rules Quick Reference"
+subtitle: "Combining Results from Multiple Imputation"
+format:
+  html:
+    theme: cosmo
+    toc: true
+    embed-resources: true
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+```{r}
+#| label: setup
+#| include: false
+set.seed(667)
+library(mice)
+library(dplyr)
+library(knitr)
+library(kableExtra)
+```
+
+## What is Multiple Imputation?
+
+Multiple imputation (MI) is a principled approach for handling missing data that properly accounts for uncertainty in the imputation process.
+
+**The MI Workflow:**
+
+1. **Create M imputed datasets** - Generate multiple complete datasets by imputing missing values using an appropriate imputation model
+2. **Analyze each separately** - Fit your analysis model to each imputed dataset
+3. **Combine results using Rubin's rules** - Pool the estimates and variances across imputations
+
+**Key Assumption:** Multiple imputation produces valid inferences under **MAR (Missing At Random)**, provided the imputation model is correctly specified and includes all variables related to missingness.
+
+```{mermaid}
+flowchart LR
+    A[Incomplete Data] --> B[Imputation Model]
+    B --> C1[Dataset 1]
+    B --> C2[Dataset 2]
+    B --> C3[...]
+    B --> C4[Dataset M]
+    C1 --> D1[Analysis 1]
+    C2 --> D2[Analysis 2]
+    C3 --> D3[...]
+    C4 --> D4[Analysis M]
+    D1 --> E[Rubin's Rules]
+    D2 --> E
+    D3 --> E
+    D4 --> E
+    E --> F[Combined Inference]
+```
+
+## The Three Quantities
+
+From M imputed datasets, we obtain M estimates $\hat{Q}_m$ and M variance estimates $U_m$ for $m = 1, \ldots, M$.
+
+| Symbol | Name | Formula |
+|:------:|:-----|:--------|
+| $\bar{Q}$ | Combined estimate | $\displaystyle \bar{Q} = \frac{1}{M} \sum_{m=1}^{M} \hat{Q}_m$ |
+| $\bar{U}$ | Within-imputation variance | $\displaystyle \bar{U} = \frac{1}{M} \sum_{m=1}^{M} U_m$ |
+| $B$ | Between-imputation variance | $\displaystyle B = \frac{1}{M-1} \sum_{m=1}^{M} (\hat{Q}_m - \bar{Q})^2$ |
+
+: The three fundamental quantities for Rubin's combining rules {.striped}
+
+**Interpretation:**
+
+- $\bar{Q}$: The average of the M point estimates
+- $\bar{U}$: Average variance if there were no missing data (uncertainty from sampling)
+- $B$: Extra variance due to missing data (uncertainty from imputation)
+
+## Rubin's Combining Rules
+
+::: {.callout-important}
+## Core Formulas
+
+**Combined estimate:**
+$$\bar{Q} = \frac{1}{M} \sum_{m=1}^{M} \hat{Q}_m$$
+
+**Total variance:**
+$$T = \bar{U} + \left(1 + \frac{1}{M}\right)B$$
+
+**Combined standard error:**
+$$SE = \sqrt{T}$$
+
+**Degrees of freedom:**
+$$\nu = (M-1)\left(1 + \frac{\bar{U}}{(1+1/M)B}\right)^2$$
+:::
+
+**Why the $(1 + 1/M)$ factor?**
+
+This correction accounts for the fact that we have only a finite number of imputations. As $M \to \infty$, this term approaches 1, and we would estimate the between-imputation variance perfectly.
+
+**Test statistic and confidence interval:**
+$$t = \frac{\bar{Q} - Q_0}{\sqrt{T}} \sim t_\nu$$
+
+$$\text{95% CI: } \bar{Q} \pm t_{0.975, \nu} \times \sqrt{T}$$
+
+## Worked Example
+
+Suppose we have M = 5 imputations and are estimating a regression coefficient $\beta$.
+
+### Data from 5 Imputations
+
+```{r}
+#| label: worked-example-data
+
+# Simulated results from 5 imputed datasets
+estimates <- c(0.52, 0.48, 0.55, 0.51, 0.49)  # Q_m values
+variances <- c(0.012, 0.011, 0.013, 0.012, 0.011)  # U_m values (squared SEs)
+M <- 5
+
+# Display the data
+example_df <- data.frame(
+  Imputation = 1:5,
+  Q_m = estimates,
+  U_m = variances,
+  SE_m = sqrt(variances)
+)
+
+kable(example_df,
+      col.names = c("Imputation (m)", "$\\hat{Q}_m$", "$U_m$", "$SE_m$"),
+      digits = 4,
+      caption = "Results from each imputed dataset") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+### Step-by-Step Calculation
+
+```{r}
+#| label: worked-example-calc
+
+# Step 1: Combined estimate
+Q_bar <- mean(estimates)
+cat("Step 1: Combined estimate\n")
+cat("Q̄ = (1/M) × Σ Q_m = (1/5) ×", sum(estimates), "=", Q_bar, "\n\n")
+
+# Step 2: Within-imputation variance
+U_bar <- mean(variances)
+cat("Step 2: Within-imputation variance\n")
+cat("Ū = (1/M) × Σ U_m = (1/5) ×", sum(variances), "=", U_bar, "\n\n")
+
+# Step 3: Between-imputation variance
+B <- var(estimates)  # var() uses M-1 in denominator
+cat("Step 3: Between-imputation variance\n")
+cat("B = (1/(M-1)) × Σ(Q_m - Q̄)² =", round(B, 6), "\n\n")
+
+# Step 4: Total variance
+T_total <- U_bar + (1 + 1/M) * B
+cat("Step 4: Total variance\n")
+cat("T = Ū + (1 + 1/M)B =", U_bar, "+", 1 + 1/M, "×", round(B, 6), "=", round(T_total, 6), "\n\n")
+
+# Step 5: Combined SE
+SE_combined <- sqrt(T_total)
+cat("Step 5: Combined standard error\n")
+cat("SE = √T =", round(SE_combined, 4), "\n\n")
+
+# Step 6: Degrees of freedom
+df <- (M - 1) * (1 + U_bar / ((1 + 1/M) * B))^2
+cat("Step 6: Degrees of freedom\n")
+cat("ν = (M-1) × (1 + Ū/((1+1/M)B))² =", round(df, 2), "\n\n")
+
+# Step 7: 95% Confidence interval
+t_crit <- qt(0.975, df)
+CI_lower <- Q_bar - t_crit * SE_combined
+CI_upper <- Q_bar + t_crit * SE_combined
+cat("Step 7: 95% Confidence interval\n")
+cat("CI = Q̄ ± t_{0.975,ν} × SE\n")
+cat("CI = [", round(CI_lower, 4), ",", round(CI_upper, 4), "]\n")
+```
+
+### Summary
+
+```{r}
+#| label: worked-example-summary
+#| echo: false
+
+summary_df <- data.frame(
+  Quantity = c("Combined estimate (Q̄)", "Within variance (Ū)",
+               "Between variance (B)", "Total variance (T)",
+               "Combined SE", "Degrees of freedom (ν)", "95% CI"),
+  Value = c(round(Q_bar, 4), round(U_bar, 5), round(B, 6),
+            round(T_total, 5), round(SE_combined, 4),
+            round(df, 1),
+            paste0("[", round(CI_lower, 3), ", ", round(CI_upper, 3), "]"))
+)
+
+kable(summary_df, col.names = c("Quantity", "Value")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+## Relative Efficiency
+
+The **relative efficiency** (RE) of a multiple imputation procedure measures how much information is retained compared to having complete data:
+
+$$RE = \left(1 + \frac{\lambda}{M}\right)^{-1}$$
+
+where:
+
+- $\lambda$ = fraction of missing information (related to B and T)
+- $M$ = number of imputations
+
+::: {.callout-note}
+## Fraction of Missing Information
+
+The fraction of missing information is estimated as:
+$$\hat{\lambda} = \frac{(1 + 1/M)B}{T} = \frac{(1 + 1/M)B}{\bar{U} + (1 + 1/M)B}$$
+
+This quantifies how much of the total variance is due to missingness.
+:::
+
+### How Many Imputations Do You Need?
+
+```{r}
+#| label: efficiency-table
+
+# Calculate relative efficiency
+calc_RE <- function(lambda, M) {
+  1 / (1 + lambda/M)
+}
+
+# Create table
+lambda_vals <- c(0.10, 0.20, 0.30, 0.50, 0.70)
+M_vals <- c(5, 10, 20, 50)
+
+RE_table <- expand.grid(lambda = lambda_vals, M = M_vals) %>%
+  mutate(RE = calc_RE(lambda, M),
+         RE_pct = paste0(round(RE * 100, 1), "%")) %>%
+  tidyr::pivot_wider(id_cols = lambda, names_from = M, values_from = RE_pct) %>%
+  mutate(lambda = paste0(lambda * 100, "%"))
+
+kable(RE_table,
+      col.names = c("λ (% missing info)", "M=5", "M=10", "M=20", "M=50"),
+      caption = "Relative Efficiency by Fraction of Missing Information and Number of Imputations") %>%
+  kable_styling(bootstrap_options = c("striped", "hover")) %>%
+  add_header_above(c(" " = 1, "Number of Imputations" = 4))
+```
+
+**Rules of thumb:**
+
+- For λ < 20%: M = 5-10 imputations is often sufficient
+- For λ = 20-50%: M = 20+ imputations recommended
+- For hypothesis testing or high λ: M = 50+ may be needed
+- Modern recommendation: M ≥ 20 for most applications
+
+## R Implementation
+
+### Complete Workflow with `mice`
+
+```{r}
+#| label: mice-example
+
+# Simulate longitudinal data with missing values
+set.seed(667)
+n <- 100
+time_points <- 4
+
+# Create data
+id <- rep(1:n, each = time_points)
+time <- rep(0:(time_points-1), times = n)
+group <- rep(sample(0:1, n, replace = TRUE), each = time_points)
+baseline_y <- rep(rnorm(n, 50, 10), each = time_points)
+
+# True model: y = 50 + 5*time + 3*group + 2*time*group + error
+y <- baseline_y + 5*time + 3*group + 2*time*group + rnorm(n*time_points, 0, 5)
+
+# Create missing data (MAR - depends on group and time)
+miss_prob <- plogis(-2 + 0.3*time + 0.5*group)
+y[runif(n*time_points) < miss_prob] <- NA
+
+# Create dataset
+dat <- data.frame(id = id, time = time, group = group, y = y)
+
+# Check missingness
+cat("Missing data pattern:\n")
+cat("Total observations:", nrow(dat), "\n")
+cat("Missing y values:", sum(is.na(dat$y)),
+    "(", round(100*mean(is.na(dat$y)), 1), "%)\n\n")
+```
+
+### Imputation and Analysis
+
+```{r}
+#| label: mice-imputation
+
+# Perform multiple imputation
+# M = 20 imputations, using predictive mean matching for y
+imp <- mice(dat, m = 20, method = "pmm", printFlag = FALSE, seed = 667)
+
+# Fit model to each imputed dataset
+# Using a simple mixed model approximation with GEE approach
+fit <- with(imp, lm(y ~ time * group))
+
+# Pool results using Rubin's rules
+pooled <- pool(fit)
+
+# Display pooled results
+summary(pooled)
+```
+
+### Extracting Results
+
+```{r}
+#| label: extract-results
+
+# Get detailed pooled results
+pooled_summary <- summary(pooled, conf.int = TRUE)
+
+# Create nice table
+results_table <- pooled_summary %>%
+  select(term, estimate, std.error, statistic, df, p.value, `2.5 %`, `97.5 %`) %>%
+  mutate(across(where(is.numeric), ~round(., 4)))
+
+kable(results_table,
+      col.names = c("Term", "Estimate", "SE", "t", "df", "p-value",
+                    "95% CI Lower", "95% CI Upper"),
+      caption = "Pooled regression results using Rubin's rules") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+### Checking the Fraction of Missing Information
+
+```{r}
+#| label: fmi
+
+# Extract fraction of missing information
+pool_details <- pooled$pooled
+
+fmi_table <- pool_details %>%
+  select(term, m, ubar, b, t, dfcom, df, riv, lambda, fmi) %>%
+  mutate(across(where(is.numeric), ~round(., 4)))
+
+kable(fmi_table,
+      col.names = c("Term", "M", "Ū", "B", "T", "df complete",
+                    "df MI", "RIV", "λ", "FMI"),
+      caption = "Detailed pooling statistics") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                font_size = 11)
+```
+
+::: {.callout-tip}
+## Key `mice` Functions
+
+- `mice()`: Perform multiple imputation
+- `with()`: Analyze each imputed dataset
+- `pool()`: Combine results using Rubin's rules
+- `complete()`: Extract a single imputed dataset
+- `pool.r.squared()`: Pool R-squared values
+:::
+
+## Common Mistakes
+
+::: {.callout-warning}
+## Mistakes to Avoid
+
+1. **Averaging p-values across imputations** - WRONG!
+   - P-values are not linear; averaging them is meaningless
+   - Always use the pooled test statistic and degrees of freedom
+
+2. **Forgetting the $(1 + 1/M)$ term**
+   - This inflation factor is essential
+   - Omitting it underestimates the total variance
+
+3. **Too few imputations for high missingness**
+   - M = 3-5 was an old rule of thumb
+   - Modern recommendation: M ≥ 20, especially for inference
+
+4. **Including the outcome in the imputation model for analysis model**
+   - The outcome can (and often should) be used to impute covariates
+   - But do not impute the outcome and include it in the analysis model if you are modeling that outcome
+
+5. **Ignoring imputation model congeniality**
+   - The imputation model should be at least as complex as the analysis model
+   - Include all interactions and transformations in the imputation model
+
+6. **Using complete case analysis "just to check"**
+   - Complete case results can be biased even under MCAR
+   - MI should be primary, not a sensitivity analysis to complete case
+:::
+
+### Correct vs. Incorrect Pooling
+
+```{r}
+#| label: correct-vs-incorrect
+
+# WRONG: Averaging p-values
+wrong_pvals <- c(0.048, 0.052, 0.043, 0.055, 0.047)
+wrong_avg_p <- mean(wrong_pvals)
+
+# CORRECT: Pool test statistics, then compute p-value
+# (This is what pool() does automatically)
+
+cat("INCORRECT approach:\n")
+cat("Average of p-values:", round(wrong_avg_p, 4), "\n\n")
+
+cat("CORRECT approach:\n")
+cat("Use pooled t-statistic with pooled degrees of freedom\n")
+cat("(as computed by Rubin's rules and the pool() function)\n")
+```
+
+## Checklist for Reporting
+
+When reporting multiple imputation results, include:
+
+::: {.callout-note}
+## MI Reporting Checklist
+
+1. **Number of imputations (M)**
+   - State how many imputed datasets were created
+   - Justify if M < 20
+
+2. **Imputation model specification**
+   - Variables included in imputation model
+   - Imputation method (e.g., PMM, multivariate normal)
+   - Software used (e.g., `mice`, `mi`, `Amelia`)
+
+3. **Combined estimates and standard errors**
+   - Report pooled point estimates
+   - Report pooled SEs (not averaged SEs from individual analyses)
+
+4. **Missing data summary**
+   - Percent missing for each variable
+   - Pattern of missingness if relevant
+
+5. **Fraction of missing information (optional but informative)**
+   - Report $\hat{\lambda}$ for key parameters
+   - Helps readers assess impact of missingness
+
+6. **Convergence diagnostics (if applicable)**
+   - Trace plots for MCMC-based imputation
+   - Number of iterations
+:::
+
+### Example Reporting
+
+> "Missing data were handled using multiple imputation with M = 20 imputed datasets generated using the `mice` package in R. The imputation model included all analysis variables plus auxiliary variables age and baseline score, using predictive mean matching for continuous variables and logistic regression for binary variables. Results were pooled using Rubin's rules. The fraction of missing information for the primary outcome was 0.23, indicating moderate impact of missing data on precision."
+
+## Formula Card
+
+::: {.callout-important}
+## Rubin's Rules - Quick Reference
+
+**Combined estimate:**
+$$\bar{Q} = \frac{1}{M} \sum_{m=1}^{M} \hat{Q}_m$$
+
+**Within-imputation variance:**
+$$\bar{U} = \frac{1}{M} \sum_{m=1}^{M} U_m$$
+
+**Between-imputation variance:**
+$$B = \frac{1}{M-1} \sum_{m=1}^{M} (\hat{Q}_m - \bar{Q})^2$$
+
+**Total variance:**
+$$T = \bar{U} + \left(1 + \frac{1}{M}\right)B$$
+
+**Standard error:**
+$$SE = \sqrt{T}$$
+
+**Degrees of freedom:**
+$$\nu = (M-1)\left(1 + \frac{\bar{U}}{(1+1/M)B}\right)^2$$
+
+**Fraction of missing information:**
+$$\hat{\lambda} = \frac{(1 + 1/M)B}{T}$$
+
+**Relative efficiency:**
+$$RE = \left(1 + \frac{\lambda}{M}\right)^{-1}$$
+:::
+
+## References
+
+- Rubin, D. B. (1987). *Multiple Imputation for Nonresponse in Surveys*. Wiley.
+- van Buuren, S. (2018). *Flexible Imputation of Missing Data* (2nd ed.). CRC Press.
+- Barnard, J., & Rubin, D. B. (1999). Small-sample degrees of freedom with multiple imputation. *Biometrika*, 86(4), 948-955.
+- White, I. R., Royston, P., & Wood, A. M. (2011). Multiple imputation using chained equations: Issues and guidance for practice. *Statistics in Medicine*, 30(4), 377-399.

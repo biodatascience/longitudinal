@@ -1,0 +1,1264 @@
+---
+title: "IPW-GEE Complete Implementation Guide"
+subtitle: "Inverse Probability Weighted GEE for MAR Missingness"
+format:
+  html:
+    theme: cosmo
+    toc: true
+    embed-resources: true
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+```{r}
+#| label: setup
+#| include: false
+
+library(geepack)
+library(nlme)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+
+set.seed(667)
+```
+
+## 1. Why IPW-GEE?
+
+### The Problem with Standard GEE
+
+Standard GEE (Generalized Estimating Equations) provides valid inference for **marginal** parameters when data are **Missing Completely At Random (MCAR)**. However, under **Missing At Random (MAR)**, standard GEE becomes biased.
+
+::: {.callout-important}
+## Key Insight
+Standard GEE treats all observations equally, implicitly assuming that observed data are representative of the complete data. Under MAR, this assumption fails because missingness depends on observed values.
+:::
+
+### Why Standard GEE Fails Under MAR
+
+Consider a longitudinal study where patients with higher previous outcomes are more likely to drop out:
+
+| Scenario | What GEE "sees" | Reality |
+|----------|-----------------|---------|
+| Complete data | All trajectories | True population |
+| MAR dropout | More "favorable" trajectories | Biased toward completers |
+
+Under MAR, the subjects who remain in the study are **systematically different** from those who drop out. Standard GEE naively uses the remaining data, leading to biased estimates.
+
+### The IPW Solution
+
+**Inverse Probability Weighting (IPW)** corrects this by:
+
+1. **Modeling** the probability of being observed: $\pi_{ij} = P(R_{ij} = 1 \mid \text{History})$
+2. **Weighting** each observation by $w_{ij} = 1/\pi_{ij}$
+3. **Upweighting** subjects who are similar to dropouts
+
+::: {.callout-tip}
+## Intuition
+If a subject with certain characteristics has only a 50% chance of being observed, we weight their observation by 2. This makes them "count" for themselves and for similar subjects who dropped out.
+:::
+
+### Connection to Survey Sampling
+
+IPW-GEE has a direct connection to **survey sampling weights**:
+
+| Survey Sampling | IPW-GEE |
+|-----------------|---------|
+| Sample from population with known probabilities | Subjects "sampled" into observed data |
+| Weight = 1/(selection probability) | Weight = 1/(observation probability) |
+| Makes sample representative of population | Makes observed data representative of complete data |
+
+The Horvitz-Thompson estimator in survey sampling is the direct analog of IPW in missing data contexts.
+
+## 2. The IPW-GEE Approach
+
+### Overview of the Four Steps
+
+```{r}
+#| label: fig-workflow
+#| fig-cap: "The four steps of IPW-GEE"
+#| fig-width: 10
+#| fig-height: 3
+#| echo: false
+
+workflow_data <- data.frame(
+  step = factor(1:4, labels = c(
+    "Step 1:\nModel P(Observed)",
+    "Step 2:\nCalculate Weights",
+    "Step 3:\nFit Weighted GEE",
+    "Step 4:\nRobust SEs"
+  )),
+  x = 1:4,
+  y = 1
+)
+
+ggplot(workflow_data, aes(x = x, y = y)) +
+  geom_tile(width = 0.9, height = 0.6, fill = "steelblue", alpha = 0.3, color = "steelblue") +
+  geom_text(aes(label = step), size = 4, fontface = "bold") +
+  geom_segment(aes(x = x + 0.45, xend = x + 0.55, y = y, yend = y),
+               data = workflow_data[1:3, ],
+               arrow = arrow(length = unit(0.3, "cm")),
+               color = "gray40", linewidth = 1) +
+  theme_void() +
+  xlim(0.25, 4.75) + ylim(0.4, 1.6)
+```
+
+### Step 1: Model the Probability of Being Observed
+
+Fit a model for the probability that observation $j$ for subject $i$ is observed, conditional on the history:
+
+$$\text{logit}(\pi_{ij}) = \gamma_0 + \gamma_1 X_i + \gamma_2 Y_{i,j-1} + \gamma_3 t_j + \ldots$$
+
+where:
+
+- $R_{ij}$ is the indicator that $Y_{ij}$ is observed (1 = observed, 0 = missing)
+- $X_i$ are baseline covariates
+- $Y_{i,j-1}$ is the previous outcome (if available)
+- $t_j$ is the time point
+
+::: {.callout-warning}
+## Monotone vs. Non-monotone Missingness
+For **monotone dropout** (once missing, always missing), model the probability of dropping out at time $t$ given observed through time $t-1$. For **intermittent missingness**, model the probability of being observed at each time point.
+:::
+
+### Step 2: Calculate Inverse Probability Weights
+
+For each observed response:
+
+$$w_{ij} = \frac{1}{\pi_{ij}} = \frac{1}{P(R_{ij} = 1 \mid \text{History})}$$
+
+For **monotone dropout**, the weight for observation at time $t$ is:
+
+$$w_{it} = \prod_{s=1}^{t} \frac{1}{\pi_{is}} = \frac{1}{P(\text{observed through time } t)}$$
+
+### Step 3: Fit Weighted GEE
+
+Use the weights in the GEE estimating equations:
+
+$$U(\beta) = \sum_{i=1}^{n} D_i^T V_i^{-1} W_i (Y_i - \mu_i) = 0$$
+
+where $W_i = \text{diag}(w_{i1}, w_{i2}, \ldots, w_{in_i})$ is the diagonal matrix of weights.
+
+### Step 4: Use Robust (Sandwich) Standard Errors
+
+The variance estimator must account for:
+
+1. The estimation of weights (if not accounted for, SEs are conservative)
+2. Potential misspecification of the correlation structure
+
+**Always use robust sandwich standard errors** with IPW-GEE.
+
+## 3. Weight Calculation
+
+### Standard vs. Stabilized Weights
+
+#### Standard Weights
+
+$$w_{ij} = \frac{1}{\pi_{ij}}$$
+
+**Problem**: If $\pi_{ij}$ is small (e.g., 0.05), the weight is large (e.g., 20), leading to:
+
+- High variability in estimates
+- Unstable inference
+- Sensitivity to model misspecification
+
+#### Stabilized Weights (Recommended)
+
+$$w_{ij}^{stab} = \frac{\pi_{marginal}}{\pi_{ij}} = \frac{P(R_{ij} = 1)}{P(R_{ij} = 1 \mid \text{History})}$$
+
+where $\pi_{marginal}$ is the marginal probability of being observed (not conditional on covariates).
+
+**Benefits of stabilized weights**:
+
+| Property | Standard Weights | Stabilized Weights |
+|----------|-----------------|-------------------|
+| Mean | Can be > 1 | Approximately 1 |
+| Variance | Higher | Lower |
+| Extreme values | More common | Less common |
+| Efficiency | Lower | Higher |
+
+::: {.callout-tip}
+## Rule of Thumb
+Stabilized weights should have a mean close to 1. If the mean is substantially different from 1, there may be issues with the weight model.
+:::
+
+### Weight Formula for Monotone Dropout
+
+For monotone (sequential) dropout where subjects drop out and never return:
+
+$$\pi_{it} = P(D_i > t \mid D_i > t-1, \text{History}_{t-1})$$
+
+where $D_i$ is the dropout time for subject $i$.
+
+The cumulative weight for observation at time $t$:
+
+$$w_{it} = \prod_{s=1}^{t} \frac{1}{\pi_{is}}$$
+
+### Code: Weight Calculation
+
+```{r}
+#| label: weight-calculation-example
+#| eval: false
+
+# Step 1: Fit logistic model for P(observed)
+weight_model <- glm(
+  observed ~ time + lag_outcome + treatment + baseline_severity,
+  data = data_for_weights,
+  family = binomial(link = "logit")
+)
+
+# Step 2: Get predicted probabilities
+data$pi_ij <- predict(weight_model, type = "response")
+
+# Step 3: Calculate standard weights
+data$weight <- 1 / data$pi_ij
+
+# Step 4: Calculate stabilized weights
+# Marginal probability of being observed at each time
+marginal_pi <- data |>
+  group_by(time) |>
+  summarize(pi_marginal = mean(observed)) |>
+  ungroup()
+
+data <- left_join(data, marginal_pi, by = "time")
+data$weight_stabilized <- data$pi_marginal / data$pi_ij
+```
+
+## 4. Complete R Implementation
+
+### Step-by-Step Code
+
+```{r}
+#| label: complete-implementation
+
+# ============================================================
+# IPW-GEE: Complete Implementation
+# ============================================================
+
+# --- Step 1: Create Example Data with MAR Dropout ---
+
+set.seed(667)
+
+n_subjects <- 200
+n_times <- 5
+
+# Generate complete data
+data_complete <- expand.grid(
+  time = 1:n_times,
+  subject = 1:n_subjects
+) |>
+  arrange(subject, time) |>
+  mutate(
+    treatment = rep(rbinom(n_subjects, 1, 0.5), each = n_times)
+  ) |>
+  group_by(subject) |>
+  mutate(
+    b0 = rnorm(1, 0, sd = 3)[1],  # Random intercept
+    y_complete = 10 + 2*time + 3*treatment + b0 + rnorm(n(), 0, 2)
+  ) |>
+  ungroup()
+
+# Create MAR dropout: higher previous Y -> higher dropout probability
+data_mar <- data_complete |>
+  group_by(subject) |>
+  mutate(
+    y_lag = lag(y_complete),
+    # Dropout probability depends on previous Y
+    p_dropout = ifelse(is.na(y_lag), 0, plogis(-4 + 0.2*y_lag)),
+    # Monotone dropout
+    dropped = cumsum(runif(n()) < p_dropout) > 0,
+    dropped = ifelse(time == 1, FALSE, dropped),
+    # Observed outcome
+    y_obs = ifelse(dropped, NA, y_complete),
+    # Observation indicator
+    observed = as.numeric(!is.na(y_obs))
+  ) |>
+  ungroup()
+
+cat("Observation rates by time:\n")
+data_mar |>
+  group_by(time) |>
+  summarize(pct_observed = round(100*mean(observed), 1)) |>
+  print()
+```
+
+```{r}
+#| label: step2-weight-model
+
+# --- Step 2: Fit Model for P(Observed) ---
+
+# For weight modeling, we need lagged outcome from observed data
+data_for_weights <- data_mar |>
+  group_by(subject) |>
+  mutate(
+    # Lagged observed outcome (last observed value)
+    y_lag_obs = lag(y_obs),
+    # For subjects still in study, use their lagged value
+    # Fill forward for those with missing lag
+    y_lag_filled = ifelse(is.na(y_lag_obs) & time > 1,
+                          NA, y_lag_obs)
+  ) |>
+  ungroup() |>
+  # Only include times where we can model (time > 1, and previous obs available)
+  filter(time > 1)
+
+# Remove rows where lagged outcome is missing (can't compute weight)
+data_for_weights_complete <- data_for_weights |>
+  filter(!is.na(y_lag_filled))
+
+# Fit logistic regression for observation probability
+weight_model <- glm(
+  observed ~ time + y_lag_filled + treatment,
+  data = data_for_weights_complete,
+  family = binomial(link = "logit")
+)
+
+summary(weight_model)
+```
+
+```{r}
+#| label: step3-calculate-weights
+
+# --- Step 3: Calculate Weights ---
+
+# Get predicted probabilities
+data_for_weights_complete$pi_hat <- predict(weight_model, type = "response")
+
+# Standard weights
+data_for_weights_complete$weight <- 1 / data_for_weights_complete$pi_hat
+
+# Stabilized weights
+# Calculate marginal observation probability by time
+marginal_probs <- data_for_weights_complete |>
+  group_by(time) |>
+  summarize(pi_marginal = mean(observed)) |>
+  ungroup()
+
+data_for_weights_complete <- left_join(
+  data_for_weights_complete, marginal_probs, by = "time"
+)
+
+data_for_weights_complete$weight_stab <-
+  data_for_weights_complete$pi_marginal / data_for_weights_complete$pi_hat
+
+# Summary of weights
+cat("Weight Summary:\n")
+cat("\nStandard weights:\n")
+summary(data_for_weights_complete$weight)
+
+cat("\nStabilized weights:\n")
+summary(data_for_weights_complete$weight_stab)
+```
+
+```{r}
+#| label: step4-fit-gee
+
+# --- Step 4: Fit Weighted GEE ---
+
+# Prepare data for GEE (only observed outcomes)
+gee_data <- data_for_weights_complete |>
+  filter(observed == 1) |>
+  mutate(subject = factor(subject))
+
+# Add time 1 observations (no weights needed, everyone observed)
+time1_data <- data_mar |>
+  filter(time == 1) |>
+  mutate(
+    weight = 1,
+    weight_stab = 1,
+    subject = factor(subject)
+  ) |>
+  select(subject, time, treatment, y_obs, weight, weight_stab)
+
+gee_data_final <- bind_rows(
+  time1_data,
+  gee_data |> select(subject, time, treatment, y_obs, weight, weight_stab)
+) |>
+  arrange(subject, time) |>
+  filter(!is.na(y_obs))
+
+# Fit IPW-GEE with stabilized weights
+ipw_gee_fit <- geeglm(
+  y_obs ~ time + treatment,
+  data = gee_data_final,
+  id = subject,
+  weights = weight_stab,
+  family = gaussian,
+  corstr = "independence"  # Independence is standard for IPW-GEE
+)
+
+cat("\n=== IPW-GEE Results ===\n")
+summary(ipw_gee_fit)
+```
+
+## 5. Weight Diagnostics
+
+### Why Diagnostics Matter
+
+Extreme weights can lead to:
+
+- Inflated variance
+- Unstable estimates
+- Sensitivity to individual observations
+
+::: {.callout-warning}
+## Warning Signs
+- Maximum weight > 10-20
+- Large gap between mean and median
+- Highly skewed distribution
+:::
+
+### Diagnostic Visualizations
+
+```{r}
+#| label: fig-weight-diagnostics
+#| fig-cap: "Weight distribution diagnostics"
+#| fig-width: 10
+#| fig-height: 8
+
+# Prepare diagnostic data
+diag_data <- gee_data_final |>
+  filter(time > 1)  # Weights only relevant for time > 1
+
+p1 <- ggplot(diag_data, aes(x = weight_stab)) +
+  geom_histogram(bins = 30, fill = "steelblue", color = "white", alpha = 0.7) +
+  geom_vline(xintercept = 1, linetype = "dashed", color = "red", linewidth = 1) +
+  labs(x = "Stabilized Weight",
+       y = "Count",
+       title = "Distribution of Stabilized Weights",
+       subtitle = "Red dashed line at 1 (ideal mean)") +
+  theme_minimal(base_size = 12)
+
+p2 <- ggplot(diag_data, aes(x = factor(time), y = weight_stab)) +
+  geom_boxplot(fill = "steelblue", alpha = 0.5) +
+  geom_hline(yintercept = 1, linetype = "dashed", color = "red") +
+  labs(x = "Time Point",
+       y = "Stabilized Weight",
+       title = "Weights by Time Point") +
+  theme_minimal(base_size = 12)
+
+p3 <- ggplot(diag_data, aes(x = weight, y = weight_stab)) +
+  geom_point(alpha = 0.5, color = "steelblue") +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "gray") +
+  labs(x = "Standard Weight",
+       y = "Stabilized Weight",
+       title = "Standard vs. Stabilized Weights") +
+  theme_minimal(base_size = 12)
+
+# Summary statistics
+weight_summary <- diag_data |>
+  summarize(
+    Mean = mean(weight_stab),
+    SD = sd(weight_stab),
+    Min = min(weight_stab),
+    Q1 = quantile(weight_stab, 0.25),
+    Median = median(weight_stab),
+    Q3 = quantile(weight_stab, 0.75),
+    Max = max(weight_stab),
+    `% > 5` = 100*mean(weight_stab > 5)
+  ) |>
+  pivot_longer(everything(), names_to = "Statistic", values_to = "Value") |>
+  mutate(Value = round(Value, 3))
+
+p4 <- ggplot(weight_summary, aes(x = Statistic, y = Value)) +
+  geom_col(fill = "steelblue", alpha = 0.7) +
+  geom_text(aes(label = Value), vjust = -0.5, size = 3) +
+  labs(title = "Weight Summary Statistics",
+       x = "", y = "Value") +
+  theme_minimal(base_size = 12) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+library(patchwork)
+(p1 + p2) / (p3 + p4)
+```
+
+### Weight Truncation Strategies
+
+When weights are extreme, consider truncation:
+
+```{r}
+#| label: weight-truncation
+
+# Method 1: Truncate at percentiles
+truncate_weights_percentile <- function(weights, lower = 0.01, upper = 0.99) {
+  bounds <- quantile(weights, c(lower, upper))
+  pmin(pmax(weights, bounds[1]), bounds[2])
+}
+
+# Method 2: Truncate at fixed values
+truncate_weights_fixed <- function(weights, max_weight = 10) {
+  pmin(weights, max_weight)
+}
+
+# Apply truncation
+gee_data_final$weight_trunc <- truncate_weights_percentile(gee_data_final$weight_stab)
+
+cat("Original weights - Max:", max(gee_data_final$weight_stab), "\n")
+cat("Truncated weights - Max:", max(gee_data_final$weight_trunc), "\n")
+```
+
+::: {.callout-tip}
+## Truncation Guidelines
+- **Percentile truncation** (1st and 99th) is often more robust
+- **Fixed truncation** at 10-20 is common in practice
+- Report sensitivity to truncation threshold
+- Truncation introduces some bias but reduces variance (bias-variance tradeoff)
+:::
+
+## 6. Worked Example: Comparing Methods
+
+### Simulation Setup
+
+We simulate longitudinal data where:
+
+- True time effect: $\beta_{time} = 2$
+- True treatment effect: $\beta_{trt} = 3$
+- Dropout depends on previous observed outcome (MAR)
+
+```{r}
+#| label: simulation-comparison
+#| cache: true
+
+set.seed(667)
+
+# Simulation parameters
+n_sims <- 200
+n_subjects <- 200
+n_times <- 5
+beta_time_true <- 2
+beta_trt_true <- 3
+
+# Storage
+results <- data.frame(
+  sim = integer(),
+  method = character(),
+  parameter = character(),
+  estimate = numeric(),
+  se = numeric()
+)
+
+for (s in 1:n_sims) {
+
+  # Generate data
+  sim_data <- expand.grid(
+    time = 1:n_times,
+    subject = 1:n_subjects
+  ) |>
+    arrange(subject, time) |>
+    mutate(
+      treatment = rep(rbinom(n_subjects, 1, 0.5), each = n_times)
+    ) |>
+    group_by(subject) |>
+    mutate(
+      b0 = rnorm(1, 0, sd = 3)[1],
+      y_complete = 10 + beta_time_true*time + beta_trt_true*treatment +
+                   b0 + rnorm(n(), 0, 2)
+    ) |>
+    ungroup()
+
+  # MAR dropout
+  sim_data <- sim_data |>
+    group_by(subject) |>
+    mutate(
+      y_lag = lag(y_complete),
+      p_dropout = ifelse(is.na(y_lag), 0, plogis(-4 + 0.2*y_lag)),
+      dropped = cumsum(runif(n()) < p_dropout) > 0,
+      dropped = ifelse(time == 1, FALSE, dropped),
+      y_obs = ifelse(dropped, NA, y_complete),
+      observed = as.numeric(!is.na(y_obs))
+    ) |>
+    ungroup()
+
+  # ========================================
+  # Method 1: Unweighted GEE (BIASED)
+  # ========================================
+  gee_data_unweighted <- sim_data |>
+    filter(!is.na(y_obs)) |>
+    mutate(subject = factor(subject))
+
+  fit_gee_uw <- tryCatch({
+    geeglm(y_obs ~ time + treatment, data = gee_data_unweighted,
+           id = subject, family = gaussian, corstr = "independence")
+  }, error = function(e) NULL)
+
+  if (!is.null(fit_gee_uw)) {
+    coefs <- summary(fit_gee_uw)$coefficients
+    results <- rbind(results, data.frame(
+      sim = s,
+      method = "Unweighted GEE",
+      parameter = c("time", "treatment"),
+      estimate = coefs[c("time", "treatment"), "Estimate"],
+      se = coefs[c("time", "treatment"), "Std.err"]
+    ))
+  }
+
+  # ========================================
+  # Method 2: IPW-GEE (APPROXIMATELY UNBIASED)
+  # ========================================
+
+  # Weight model data
+  weight_data <- sim_data |>
+    group_by(subject) |>
+    mutate(y_lag_obs = lag(y_obs)) |>
+    ungroup() |>
+    filter(time > 1, !is.na(y_lag_obs))
+
+  if (nrow(weight_data) > 50) {
+    weight_mod <- tryCatch({
+      glm(observed ~ time + y_lag_obs + treatment,
+          data = weight_data, family = binomial)
+    }, error = function(e) NULL)
+
+    if (!is.null(weight_mod)) {
+      weight_data$pi_hat <- predict(weight_mod, type = "response")
+      weight_data$weight <- 1 / pmax(weight_data$pi_hat, 0.05)  # Truncate
+
+      # Stabilize
+      marg <- weight_data |>
+        group_by(time) |>
+        summarize(pi_marg = mean(observed))
+      weight_data <- left_join(weight_data, marg, by = "time")
+      weight_data$weight_stab <- weight_data$pi_marg /
+                                  pmax(weight_data$pi_hat, 0.05)
+
+      # GEE data
+      gee_ipw <- weight_data |>
+        filter(observed == 1) |>
+        mutate(subject = factor(subject))
+
+      # Add time 1
+      t1 <- sim_data |>
+        filter(time == 1) |>
+        mutate(weight_stab = 1, subject = factor(subject)) |>
+        select(subject, time, treatment, y_obs, weight_stab)
+
+      gee_ipw_final <- bind_rows(
+        t1,
+        gee_ipw |> select(subject, time, treatment, y_obs, weight_stab)
+      ) |>
+        arrange(subject, time)
+
+      fit_ipw <- tryCatch({
+        geeglm(y_obs ~ time + treatment, data = gee_ipw_final,
+               id = subject, weights = weight_stab,
+               family = gaussian, corstr = "independence")
+      }, error = function(e) NULL)
+
+      if (!is.null(fit_ipw)) {
+        coefs <- summary(fit_ipw)$coefficients
+        results <- rbind(results, data.frame(
+          sim = s,
+          method = "IPW-GEE",
+          parameter = c("time", "treatment"),
+          estimate = coefs[c("time", "treatment"), "Estimate"],
+          se = coefs[c("time", "treatment"), "Std.err"]
+        ))
+      }
+    }
+  }
+
+  # ========================================
+  # Method 3: Mixed Model (APPROXIMATELY UNBIASED)
+  # ========================================
+  fit_mm <- tryCatch({
+    lme(y_obs ~ time + treatment,
+        random = ~ 1 | subject,
+        data = sim_data,
+        na.action = na.omit,
+        method = "REML")
+  }, error = function(e) NULL)
+
+  if (!is.null(fit_mm)) {
+    coefs <- summary(fit_mm)$tTable
+    results <- rbind(results, data.frame(
+      sim = s,
+      method = "Mixed Model",
+      parameter = c("time", "treatment"),
+      estimate = coefs[c("time", "treatment"), "Value"],
+      se = coefs[c("time", "treatment"), "Std.Error"]
+    ))
+  }
+}
+```
+
+### Results Summary
+
+```{r}
+#| label: simulation-results
+
+# Summarize results
+summary_results <- results |>
+  group_by(method, parameter) |>
+  summarize(
+    n_sims = n(),
+    mean_est = mean(estimate),
+    sd_est = sd(estimate),
+    mean_se = mean(se),
+    .groups = "drop"
+  ) |>
+  mutate(
+    true_value = ifelse(parameter == "time", beta_time_true, beta_trt_true),
+    bias = mean_est - true_value,
+    pct_bias = 100 * bias / true_value
+  )
+
+cat("=== SIMULATION RESULTS ===\n\n")
+cat("True values: beta_time =", beta_time_true, ", beta_trt =", beta_trt_true, "\n\n")
+
+# Display results
+summary_results |>
+  select(method, parameter, mean_est, bias, pct_bias, sd_est) |>
+  mutate(across(where(is.numeric), ~round(., 3))) |>
+  print(n = 20)
+```
+
+### Visualization
+
+```{r}
+#| label: fig-simulation-results
+#| fig-cap: "Comparison of methods under MAR dropout"
+#| fig-width: 12
+#| fig-height: 6
+
+# Create comparison plot
+true_values <- data.frame(
+  parameter = c("time", "treatment"),
+  true_value = c(beta_time_true, beta_trt_true)
+)
+
+results_plot <- results |>
+  left_join(true_values, by = "parameter")
+
+p1 <- ggplot(results_plot |> filter(parameter == "time"),
+             aes(x = estimate, fill = method)) +
+  geom_density(alpha = 0.4, color = "white") +
+  geom_vline(xintercept = beta_time_true, linetype = "dashed",
+             linewidth = 1.2, color = "black") +
+  annotate("text", x = beta_time_true + 0.1, y = 0.2,
+           label = paste("True =", beta_time_true),
+           hjust = 0, size = 4, fontface = "bold") +
+  scale_fill_manual(values = c("Unweighted GEE" = "coral",
+                               "IPW-GEE" = "steelblue",
+                               "Mixed Model" = "forestgreen")) +
+  labs(x = "Estimated Time Effect",
+       y = "Density",
+       title = "Time Effect Estimates",
+       fill = "Method") +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "bottom")
+
+p2 <- ggplot(results_plot |> filter(parameter == "treatment"),
+             aes(x = estimate, fill = method)) +
+  geom_density(alpha = 0.4, color = "white") +
+  geom_vline(xintercept = beta_trt_true, linetype = "dashed",
+             linewidth = 1.2, color = "black") +
+  annotate("text", x = beta_trt_true + 0.1, y = 0.2,
+           label = paste("True =", beta_trt_true),
+           hjust = 0, size = 4, fontface = "bold") +
+  scale_fill_manual(values = c("Unweighted GEE" = "coral",
+                               "IPW-GEE" = "steelblue",
+                               "Mixed Model" = "forestgreen")) +
+  labs(x = "Estimated Treatment Effect",
+       y = "Density",
+       title = "Treatment Effect Estimates",
+       fill = "Method") +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "bottom")
+
+p1 + p2 + plot_layout(guides = "collect") & theme(legend.position = "bottom")
+```
+
+### Bias Comparison
+
+```{r}
+#| label: fig-bias-comparison
+#| fig-cap: "Percent bias by method and parameter"
+#| fig-width: 9
+#| fig-height: 5
+
+ggplot(summary_results, aes(x = method, y = pct_bias, fill = method)) +
+  geom_col(width = 0.6, color = "black") +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "black") +
+  facet_wrap(~parameter, labeller = labeller(
+    parameter = c("time" = "Time Effect", "treatment" = "Treatment Effect")
+  )) +
+  scale_fill_manual(values = c("Unweighted GEE" = "coral",
+                               "IPW-GEE" = "steelblue",
+                               "Mixed Model" = "forestgreen")) +
+  labs(x = "",
+       y = "Percent Bias (%)",
+       title = "Bias Comparison Under MAR Dropout") +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 15, hjust = 1))
+```
+
+### Interpretation
+
+::: {.callout-important}
+## Key Findings
+
+1. **Unweighted GEE**: Shows substantial positive bias. Under MAR, subjects with higher outcomes are more likely to drop out, leaving subjects with lower trajectories. This biases the time effect upward.
+
+2. **IPW-GEE**: Approximately unbiased. By weighting observations inversely to their probability of being observed, it corrects for the selective dropout.
+
+3. **Mixed Model**: Also approximately unbiased under MAR, because it uses likelihood-based inference that is valid under MAR when the model is correctly specified.
+:::
+
+## 7. Doubly Robust Estimation
+
+### What is Doubly Robust Estimation?
+
+**Doubly robust (DR)** estimators combine:
+
+1. **Outcome model**: $E[Y \mid X]$ (like in standard regression)
+2. **Propensity model**: $P(\text{Observed} \mid X)$ (like in IPW)
+
+The estimator is consistent if **either** model is correctly specified (but not necessarily both).
+
+### Intuition
+
+| If Outcome Model Is... | And Propensity Model Is... | Then DR Estimator Is... |
+|------------------------|---------------------------|------------------------|
+| Correct | Correct | Consistent (doubly protected) |
+| Correct | Wrong | Consistent |
+| Wrong | Correct | Consistent |
+| Wrong | Wrong | Biased |
+
+### Augmented IPW-GEE (AIPW-GEE)
+
+The augmented IPW estimator adds a correction term:
+
+$$\hat{\beta}_{AIPW} = \text{IPW estimate} + \text{Augmentation term}$$
+
+The augmentation uses the outcome model to predict missing values and corrects for any bias in the IPW weights.
+
+```{r}
+#| label: aipw-conceptual
+#| eval: false
+
+# Conceptual code for AIPW-GEE (simplified)
+
+# Step 1: Fit outcome model on complete cases
+outcome_model <- lm(y ~ time + treatment + covariates,
+                    data = data_complete_cases)
+
+# Step 2: Predict for all observations
+data$y_predicted <- predict(outcome_model, newdata = data)
+
+# Step 3: Calculate augmented estimating equation
+# The augmentation term accounts for the difference between
+# observed and predicted values, weighted appropriately
+
+# Step 4: Combine IPW with augmentation
+# This is typically done using specialized software
+```
+
+::: {.callout-tip}
+## Practical Recommendation
+For most applications, either IPW-GEE or mixed models will suffice. Doubly robust methods are most valuable when:
+
+1. You are uncertain about both the outcome model and the missingness model
+2. High stakes decisions require extra protection against model misspecification
+3. The outcome and missingness models rely on different sets of covariates
+:::
+
+### Software for Doubly Robust Estimation
+
+In R, doubly robust estimation for longitudinal data is available in:
+
+- `geepack` with augmentation (manual implementation)
+- `ipw` package for simpler settings
+- `drtmle` for targeted learning approaches
+
+## 8. Common Mistakes
+
+### Mistake 1: Not Including Predictors of Missingness
+
+::: {.callout-warning}
+## Problem
+If a variable predicts missingness but is not included in the weight model, IPW will be biased.
+
+**Example**: If sicker patients drop out and you do not include severity in the weight model, the weights will not properly adjust for this.
+:::
+
+**Solution**: Include all variables that predict missingness in the weight model.
+
+### Mistake 2: Extreme Weights Without Truncation
+
+::: {.callout-warning}
+## Problem
+Observations with very low probability of being observed get extremely high weights (e.g., $w = 100$), dominating the analysis.
+:::
+
+**Solution**:
+
+- Use stabilized weights
+- Truncate weights at reasonable bounds (e.g., 1st and 99th percentiles, or max of 10-20)
+- Report sensitivity to truncation
+
+### Mistake 3: Using Model-Based Instead of Robust SEs
+
+::: {.callout-warning}
+## Problem
+Model-based standard errors assume the correlation structure is correct. With weights, this assumption is even more critical and rarely holds exactly.
+:::
+
+**Solution**: Always use robust (sandwich) standard errors with IPW-GEE. In `geepack`, these are the default.
+
+```{r}
+#| label: robust-se-example
+#| eval: false
+
+# geepack automatically provides robust SEs
+fit <- geeglm(y ~ x, data = data, id = id, weights = w,
+              family = gaussian, corstr = "independence")
+
+# The summary gives robust SEs by default
+summary(fit)
+```
+
+### Mistake 4: Forgetting to Model Monotone Dropout Correctly
+
+::: {.callout-warning}
+## Problem
+For monotone dropout, you need to model the **conditional** probability of dropping out at time $t$, **given** observed through time $t-1$.
+:::
+
+**Solution**: Model dropout hazard, not observation probability directly.
+
+```{r}
+#| label: monotone-dropout-model
+#| eval: false
+
+# WRONG: Modeling observation at each time independently
+wrong_model <- glm(observed ~ time + y_lag, data = data, family = binomial)
+
+# CORRECT: Modeling dropout given still in study
+# Only include subjects who were observed at t-1
+dropout_data <- data |>
+  filter(lag_observed == 1)  # Still in study at t-1
+
+correct_model <- glm(
+  dropout ~ time + y_lag + treatment,
+  data = dropout_data,
+  family = binomial
+)
+```
+
+### Mistake 5: Ignoring Weight Model Diagnostics
+
+::: {.callout-warning}
+## Problem
+A poor weight model leads to biased estimates. Common issues:
+
+- Model fails to converge
+- Predicted probabilities near 0 or 1
+- Weights have extreme outliers
+:::
+
+**Solution**: Always check:
+
+- Weight distribution (histogram, boxplot)
+- Mean of stabilized weights (should be near 1)
+- Extreme weight percentages
+- Model fit statistics (AIC, deviance)
+
+## 9. When to Use IPW-GEE vs Mixed Models
+
+### Decision Framework
+
+| Situation | Recommended Approach | Rationale |
+|-----------|---------------------|-----------|
+| MAR, interest in **marginal** effects | **IPW-GEE** | Directly estimates population-averaged effects |
+| MAR, interest in **conditional** (subject-specific) effects | **Mixed Model** | Estimates conditional effects accounting for random effects |
+| MAR, **both approaches** | **Sensitivity check** | Agreement provides confidence; disagreement suggests model issues |
+| Substantial dropout (>30%) | **Both + sensitivity** | Heavy dropout makes assumptions harder to verify |
+| Covariates predict both outcome and missingness | **Doubly robust** | Protection against misspecification |
+
+### Key Distinctions
+
+```{r}
+#| label: effect-comparison
+#| echo: false
+#| fig-width: 8
+#| fig-height: 4
+#| fig-cap: "Marginal vs. conditional effects: what IPW-GEE and mixed models estimate"
+
+# Illustrate marginal vs conditional
+set.seed(667)
+
+# Simulate two groups with different random effects
+group_data <- data.frame(
+  x = rep(1:5, 20),
+  group = rep(1:10, each = 10)
+) |>
+  mutate(
+    b0 = rep(rnorm(10, 0, 2), each = 10),  # Random intercept by group
+    y = 2 + 0.5*x + b0 + rnorm(100, 0, 0.5)
+  )
+
+# Calculate marginal and conditional fits
+marginal_fit <- lm(y ~ x, data = group_data)
+conditional_slopes <- group_data |>
+  group_by(group) |>
+  summarize(slope = coef(lm(y ~ x))[2], .groups = "drop") |>
+  pull(slope)
+
+ggplot(group_data, aes(x = x, y = y, group = group)) +
+  geom_line(alpha = 0.5, color = "steelblue") +
+  geom_point(alpha = 0.5, color = "steelblue") +
+  geom_abline(intercept = coef(marginal_fit)[1],
+              slope = coef(marginal_fit)[2],
+              color = "red", linewidth = 1.5, linetype = "dashed") +
+  annotate("text", x = 4.5, y = max(group_data$y) - 0.5,
+           label = "Marginal (population-averaged)\neffect: IPW-GEE estimates this",
+           color = "red", hjust = 1, size = 3.5, fontface = "bold") +
+  annotate("text", x = 1.5, y = min(group_data$y) + 1,
+           label = "Subject-specific trajectories:\nMixed model estimates\nconditional effect",
+           color = "steelblue", hjust = 0, size = 3.5, fontface = "bold") +
+  labs(x = "Time", y = "Outcome",
+       title = "IPW-GEE vs Mixed Models: Different Estimands") +
+  theme_minimal(base_size = 12)
+```
+
+::: {.callout-note}
+## Summary of Method Choice
+
+- **IPW-GEE**: Use when you want **marginal** (population-averaged) effects and have a good understanding of the missingness mechanism
+
+- **Mixed Model**: Use when you want **conditional** (subject-specific) effects or when the likelihood-based approach is more natural for your research question
+
+- **Both**: When possible, fit both and compare. Similar results increase confidence; different results warrant investigation
+:::
+
+## 10. Code Template
+
+### Complete Copy-Paste Function
+
+```{r}
+#| label: code-template
+
+#' Fit IPW-GEE for Longitudinal Data with MAR Dropout
+#'
+#' @param data Data frame with longitudinal data
+#' @param outcome_formula Formula for outcome model (e.g., y ~ time + treatment)
+#' @param weight_formula Formula for weight model (e.g., observed ~ time + lag_y + treatment)
+#' @param id_var Character string naming the subject ID variable
+#' @param time_var Character string naming the time variable
+#' @param observed_var Character string naming the observation indicator (1=observed, 0=missing)
+#' @param outcome_var Character string naming the outcome variable
+#' @param weight_truncation Upper percentile for weight truncation (default 0.99)
+#' @param corstr Correlation structure for GEE (default "independence")
+#'
+#' @return List containing:
+#'   - gee_fit: The fitted GEE object
+#'   - weight_model: The logistic regression for weights
+#'   - weight_summary: Summary statistics for weights
+#'   - data: The data with weights attached
+#'
+fit_ipw_gee <- function(data,
+                        outcome_formula,
+                        weight_formula,
+                        id_var,
+                        time_var,
+                        observed_var,
+                        outcome_var,
+                        weight_truncation = 0.99,
+                        corstr = "independence") {
+
+  # Load required packages
+  require(geepack)
+  require(dplyr)
+
+  # =========================================
+  # Step 1: Fit weight model
+  # =========================================
+
+  # Get weight model data (exclude first time point if modeling conditional dropout)
+  weight_data <- data |>
+    filter(!is.na(data[[all.vars(weight_formula[[3]])[
+      grepl("lag", all.vars(weight_formula[[3]]))
+    ][1]]])) # Filter for non-missing lagged variables
+
+  # Fit logistic regression for observation probability
+  weight_model <- glm(
+    weight_formula,
+    data = weight_data,
+    family = binomial(link = "logit")
+  )
+
+  # =========================================
+  # Step 2: Calculate weights
+  # =========================================
+
+  # Predicted probabilities
+  weight_data$pi_hat <- predict(weight_model, type = "response")
+
+  # Truncate very small probabilities
+  min_pi <- 0.01
+  weight_data$pi_hat <- pmax(weight_data$pi_hat, min_pi)
+
+  # Standard weights
+  weight_data$weight <- 1 / weight_data$pi_hat
+
+  # Stabilized weights
+  marginal_probs <- weight_data |>
+    group_by(across(all_of(time_var))) |>
+    summarize(pi_marginal = mean(get(observed_var)), .groups = "drop")
+
+  weight_data <- left_join(weight_data, marginal_probs, by = time_var)
+  weight_data$weight_stab <- weight_data$pi_marginal / weight_data$pi_hat
+
+  # Truncate extreme weights
+  upper_bound <- quantile(weight_data$weight_stab, weight_truncation)
+  weight_data$weight_stab_trunc <- pmin(weight_data$weight_stab, upper_bound)
+
+  # =========================================
+  # Step 3: Prepare GEE data
+  # =========================================
+
+  # Get first time point (assume all observed, weight = 1)
+  first_time <- min(data[[time_var]])
+  first_time_data <- data |>
+    filter(get(time_var) == first_time) |>
+    mutate(
+      weight_stab_trunc = 1,
+      weight_stab = 1,
+      weight = 1
+    )
+
+  # Combine with weighted data
+  gee_data <- bind_rows(
+    first_time_data |>
+      select(all_of(c(id_var, time_var, all.vars(outcome_formula),
+                      "weight_stab_trunc", "weight_stab", "weight"))),
+    weight_data |>
+      filter(get(observed_var) == 1) |>
+      select(all_of(c(id_var, time_var, all.vars(outcome_formula),
+                      "weight_stab_trunc", "weight_stab", "weight")))
+  ) |>
+    arrange(get(id_var), get(time_var)) |>
+    filter(!is.na(get(outcome_var)))
+
+  # Convert ID to factor
+  gee_data[[id_var]] <- factor(gee_data[[id_var]])
+
+  # =========================================
+  # Step 4: Fit weighted GEE
+  # =========================================
+
+  gee_formula <- as.formula(outcome_formula)
+
+  gee_fit <- geeglm(
+    gee_formula,
+    data = gee_data,
+    id = gee_data[[id_var]],
+    weights = weight_stab_trunc,
+    family = gaussian,
+    corstr = corstr
+  )
+
+  # =========================================
+  # Step 5: Compile output
+  # =========================================
+
+  weight_summary <- data.frame(
+    Statistic = c("Mean", "SD", "Min", "Q1", "Median", "Q3", "Max", "Pct_Truncated"),
+    Value = c(
+      mean(gee_data$weight_stab_trunc),
+      sd(gee_data$weight_stab_trunc),
+      min(gee_data$weight_stab_trunc),
+      quantile(gee_data$weight_stab_trunc, 0.25),
+      median(gee_data$weight_stab_trunc),
+      quantile(gee_data$weight_stab_trunc, 0.75),
+      max(gee_data$weight_stab_trunc),
+      100 * mean(gee_data$weight_stab >= upper_bound)
+    )
+  )
+
+  result <- list(
+    gee_fit = gee_fit,
+    weight_model = weight_model,
+    weight_summary = weight_summary,
+    data = gee_data,
+    truncation_threshold = upper_bound
+  )
+
+  class(result) <- c("ipw_gee", class(result))
+
+  return(result)
+}
+
+#' Print method for ipw_gee objects
+print.ipw_gee <- function(x, ...) {
+  cat("=== IPW-GEE Results ===\n\n")
+
+  cat("Weight Summary (Stabilized, Truncated):\n")
+  print(x$weight_summary, row.names = FALSE)
+
+  cat("\nGEE Coefficients:\n")
+  print(summary(x$gee_fit)$coefficients)
+
+  cat("\nCorrelation structure:", x$gee_fit$corstr, "\n")
+  cat("Number of clusters:", length(unique(x$gee_fit$id)), "\n")
+
+  invisible(x)
+}
+```
+
+### Usage Example
+
+```{r}
+#| label: usage-example
+#| eval: false
+
+# Example usage of the function
+
+# Prepare data with lagged outcome
+example_data <- data_mar |>
+  group_by(subject) |>
+  mutate(lag_y = lag(y_obs)) |>
+  ungroup()
+
+# Fit IPW-GEE
+ipw_result <- fit_ipw_gee(
+  data = example_data,
+  outcome_formula = y_obs ~ time + treatment,
+  weight_formula = observed ~ time + lag_y + treatment,
+  id_var = "subject",
+  time_var = "time",
+  observed_var = "observed",
+  outcome_var = "y_obs",
+  weight_truncation = 0.99,
+  corstr = "independence"
+)
+
+# Print results
+print(ipw_result)
+```
+
+## Summary
+
+| Topic | Key Point |
+|-------|-----------|
+| **Why IPW-GEE** | Standard GEE is biased under MAR; IPW corrects by weighting observations |
+| **Weights** | $w = 1/P(\text{observed})$; use stabilized and truncated weights |
+| **Implementation** | Model dropout, calculate weights, fit weighted GEE with robust SEs |
+| **Diagnostics** | Check weight distribution; mean of stabilized weights should be near 1 |
+| **Comparison** | IPW-GEE and mixed models both valid under MAR; they estimate different quantities |
+| **Doubly robust** | Combines IPW with outcome modeling; protected if either model is correct |
+| **Common mistakes** | Missing predictors, extreme weights, wrong SEs, incorrect dropout model |
+
+::: {.callout-tip}
+## Final Recommendations
+
+1. **Always use stabilized weights** to reduce variance
+2. **Truncate extreme weights** and report sensitivity
+3. **Use robust (sandwich) standard errors**
+4. **Include all predictors of missingness** in the weight model
+5. **Compare with mixed models** as a sensitivity analysis
+6. **Report weight diagnostics** alongside results
+:::

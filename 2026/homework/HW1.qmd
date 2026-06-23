@@ -1,0 +1,355 @@
+---
+title: "BIOS 667 - Homework 1"
+subtitle: "Fitzmaurice, Laird & Ware (2011): Applied Longitudinal Data Analysis, Chapters 1-3"
+author: "Your Name Here"
+date: today
+format:
+  html:
+    embed-resources: true
+    toc: true
+execute:
+  warning: false
+  message: false
+---
+
+## Instructions
+
+**Collaboration Policy:** You may discuss problems with classmates, but all submitted work must be your own.
+
+**AI Use Policy:** AI tools may be used for code assistance. Disclose any AI use in your submission.
+
+**Submission:** Submit a rendered HTML file to Gradescope by the due date.
+
+**Due Date:** TBD - Check Canvas
+
+## Grading Rubric
+
+| Category | Weight | Description |
+|----------|--------|-------------|
+| Interpretation & Reasoning | 40% | Conceptual understanding, correct interpretations |
+| Analysis & Setup | 40% | Code correctness, model specification |
+| Clarity & Presentation | 20% | Writing quality, formatting, organization |
+
+## Setup
+
+```{r}
+#| label: setup
+#| include: false
+library(nlme)
+library(lme4)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+set.seed(667)
+```
+
+---
+
+## Question 1: Longitudinal vs. Cross-Sectional Data (20 points)
+
+The FEV1 dataset (`fev1.txt`) contains repeated measurements of lung function (FEV1) in children from the Six Cities Study. Each child was measured annually, with measurements taken at different ages.
+
+```{r}
+#| label: load-fev1
+# Load the FEV1 data with download fallback
+data_url <- "https://content.sph.harvard.edu/fitzmaur/ala2e/fev1.txt"
+data_file <- if (file.exists("../../data/fev1.txt")) "../../data/fev1.txt" else "data/fev1.txt"
+if (!file.exists(data_file)) {
+  dir.create("data", showWarnings = FALSE)
+  download.file(data_url, data_file)
+}
+fev <- read.table(data_file, header = TRUE)
+head(fev)
+```
+
+### Part (a) - **WRITE:** What type of study design is this? (4 pts)
+
+Explain whether this is a longitudinal or cross-sectional study and justify your answer with specific features from the data.
+
+*Your answer here*
+
+### Part (b) - **CODE:** Calculate summary statistics (4 pts)
+
+Calculate the number of observations per child. What is the range, mean, and median number of observations?
+
+```{r}
+#| label: obs-per-child
+# Your code here
+```
+
+### Part (c) - **WRITE:** Notation (6 pts)
+
+Using the notation from Chapter 1, define the following for this dataset:
+
+1. What does $Y_{ij}$ represent?
+2. What does $n_i$ represent, and why might it vary?
+3. What time-varying and time-constant covariates are present?
+
+*Your answer here*
+
+### Part (d) - **CODE:** Create a spaghetti plot (6 pts)
+
+Create a spaghetti plot showing individual trajectories of `logfev1` against `age`. Overlay the mean trajectory with a 95% confidence band.
+
+```{r}
+#| label: spaghetti-plot
+#| fig-width: 10
+#| fig-height: 6
+# Your code here
+```
+
+---
+
+## Question 2: Sources of Correlation (20 points)
+
+The dental dataset (`dental.txt`) contains measurements of dental growth (distance from pituitary to pterygomaxillary fissure) in children at ages 8, 10, 12, and 14.
+
+```{r}
+#| label: load-dental
+# Load and prepare dental data with download fallback
+dental_url <- "https://content.sph.harvard.edu/fitzmaur/ala2e/dental.txt"
+dental_file <- if (file.exists("../../data/dental.txt")) "../../data/dental.txt" else "data/dental.txt"
+if (!file.exists(dental_file)) {
+  dir.create("data", showWarnings = FALSE)
+  download.file(dental_url, dental_file)
+}
+dental_raw <- read.table(dental_file, header = FALSE, skip = 27,
+                         col.names = c("id", "gender", "age8", "age10", "age12", "age14"))
+
+# Convert to long format
+dental <- dental_raw %>%
+  pivot_longer(
+    cols = starts_with("age"),
+    names_to = "visit",
+    values_to = "distance"
+  ) %>%
+  mutate(
+    age = as.numeric(gsub("age", "", visit)),
+    gender = factor(gender, levels = c("M", "F"), labels = c("Male", "Female"))
+  )
+
+head(dental)
+```
+
+### Part (a) - **WRITE:** Identify sources of correlation (5 pts)
+
+Based on Chapter 2, describe the three sources of correlation in repeated measures data and explain which are likely present in this dental growth study.
+
+*Your answer here*
+
+### Part (b) - **CODE:** Compute and visualize the correlation matrix (5 pts)
+
+Compute the sample correlation matrix of dental measurements across the four ages. Display it as a heatmap.
+
+```{r}
+#| label: dental-correlation
+#| fig-width: 6
+#| fig-height: 5
+# Your code here
+```
+
+### Part (c) - **WRITE:** Interpret the correlation structure (5 pts)
+
+Based on the correlation matrix, what can you conclude about:
+
+1. The overall strength of within-subject correlation
+2. Whether correlation decays with increasing time separation
+3. Which covariance structure might be appropriate (compound symmetry, AR(1), or unstructured)?
+
+*Your answer here*
+
+### Part (d) - **CODE:** Compare correlations by gender (5 pts)
+
+Compute separate correlation matrices for males and females. Comment on any differences.
+
+```{r}
+#| label: cor-by-gender
+# Your code here
+```
+
+---
+
+## Question 3: Data Structures and Notation (20 points)
+
+### Part (a) - **CODE:** Wide vs. Long Format (5 pts)
+
+The dental data was originally in wide format. Demonstrate the conversion from wide to long format and explain why long format is preferred for most longitudinal analyses.
+
+```{r}
+#| label: wide-to-long
+# Your code here
+```
+
+*Your answer here*
+
+### Part (b) - **WRITE:** Design matrix construction (5 pts)
+
+For a simple linear model where dental distance depends on age and gender, write out the design matrix $\mathbf{X}_i$ for a single subject with 4 measurements.
+
+*Your answer here*
+
+### Part (c) - **CODE:** Create design matrix in R (5 pts)
+
+Write R code to construct the design matrix for subject 1 in the dental data.
+
+```{r}
+#| label: design-matrix
+# Your code here
+```
+
+### Part (d) - **WRITE:** Response vector and covariance (5 pts)
+
+Write out the response vector $\mathbf{Y}_i$ and explain what the covariance matrix $\Sigma_i = \text{Cov}(\mathbf{Y}_i)$ represents. What is the dimension of $\Sigma_i$ for a subject with 4 measurements?
+
+*Your answer here*
+
+---
+
+## Question 4: Linear Models and OLS Assumptions (20 points)
+
+### Part (a) - **CODE:** Fit naive OLS model (5 pts)
+
+Fit an ordinary least squares (OLS) regression model to the dental data, regressing distance on age and gender. Ignore the repeated measures structure.
+
+```{r}
+#| label: ols-fit
+# Your code here
+```
+
+### Part (b) - **WRITE:** OLS assumptions (5 pts)
+
+List the four key assumptions of OLS and explain which assumption is violated when applying OLS to longitudinal data.
+
+*Your answer here*
+
+### Part (c) - **WRITE:** Consequences of ignoring correlation (5 pts)
+
+Explain the consequences of ignoring within-subject correlation when fitting OLS. What happens to:
+
+1. Coefficient estimates?
+2. Standard error estimates?
+3. Hypothesis tests and confidence intervals?
+
+*Your answer here*
+
+### Part (d) - **CODE:** Compare OLS with model accounting for correlation (5 pts)
+
+Fit a model that accounts for the repeated measures structure using `gls()` from the `nlme` package with compound symmetry correlation. Compare the standard errors to the naive OLS model.
+
+```{r}
+#| label: gls-comparison
+# Your code here
+```
+
+---
+
+## Question 5: Model Comparison and Visualization (20 points)
+
+### Part (a) - **CODE:** Create comprehensive EDA (6 pts)
+
+Create a multi-panel figure that shows:
+
+1. Individual trajectories by gender (spaghetti plot)
+2. Mean trajectories with 95% CI by gender
+3. Boxplots at each age by gender
+
+```{r}
+#| label: comprehensive-eda
+#| fig-width: 12
+#| fig-height: 10
+# Your code here
+```
+
+### Part (b) - **WRITE:** Interpret visualizations (4 pts)
+
+Based on your visualizations, describe:
+
+1. The overall pattern of dental growth
+2. Differences between genders
+3. Variability within and between subjects
+
+*Your answer here*
+
+### Part (c) - **CODE:** Fit and compare models (6 pts)
+
+Fit three models to the dental data:
+
+1. Model with only age effect
+2. Model with age and gender (additive)
+3. Model with age × gender interaction
+
+Compare using AIC and interpret which model is preferred.
+
+```{r}
+#| label: model-comparison
+# Your code here
+```
+
+### Part (d) - **WRITE:** Synthesize findings (4 pts)
+
+Write a brief summary (3-4 sentences) that a clinician could understand, describing what you learned about dental growth patterns from this analysis.
+
+*Your answer here*
+
+---
+
+## Peer Review Section
+
+After submission, you will be assigned peer reviews. Use this rubric:
+
+| Criterion | Excellent (5) | Good (3-4) | Needs Work (1-2) |
+|-----------|---------------|------------|------------------|
+| Code correctness | All code runs, correct output | Minor errors | Major errors |
+| Interpretations | Clear, accurate, in context | Mostly correct | Missing key points |
+| Presentation | Well-organized, readable | Adequate | Difficult to follow |
+
+---
+
+## Reminders
+
+- [ ] Knit document before submission
+- [ ] Check that all code executes without errors
+- [ ] Ensure figures are visible and properly labeled
+- [ ] Format tables appropriately
+- [ ] Include AI disclosure if applicable
+
+---
+
+## Appendix: Complete Data Loading Code
+
+```{r}
+#| label: appendix-data
+#| eval: false
+# FEV1 Data with download fallback
+fev_url <- "https://content.sph.harvard.edu/fitzmaur/ala2e/fev1.txt"
+fev_file <- if (file.exists("../../data/fev1.txt")) "../../data/fev1.txt" else "data/fev1.txt"
+if (!file.exists(fev_file)) {
+  dir.create("data", showWarnings = FALSE)
+  download.file(fev_url, fev_file)
+}
+fev <- read.table(fev_file, header = TRUE)
+
+# Dental Data with download fallback (note: skip header rows)
+dental_url <- "https://content.sph.harvard.edu/fitzmaur/ala2e/dental.txt"
+dental_file <- if (file.exists("../../data/dental.txt")) "../../data/dental.txt" else "data/dental.txt"
+if (!file.exists(dental_file)) {
+  dir.create("data", showWarnings = FALSE)
+  download.file(dental_url, dental_file)
+}
+dental_raw <- read.table(dental_file, header = FALSE, skip = 27,
+                         col.names = c("id", "gender", "age8", "age10",
+                                      "age12", "age14"))
+
+# Convert dental to long format
+dental_long <- dental_raw %>%
+  pivot_longer(
+    cols = c(age8, age10, age12, age14),
+    names_to = "age_var",
+    values_to = "distance"
+  ) %>%
+  mutate(
+    age = as.numeric(gsub("age", "", age_var)),
+    gender = factor(gender, levels = c("M", "F"), labels = c("Male", "Female"))
+  ) %>%
+  select(id, gender, age, distance)
+```

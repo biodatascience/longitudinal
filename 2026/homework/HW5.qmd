@@ -1,0 +1,387 @@
+---
+title: "BIOS 667 - Homework 5"
+subtitle: "Fitzmaurice, Laird & Ware (2011) - Applied Longitudinal Data Analysis, Chapters 14-16"
+author: "Your Name Here"
+date: today
+format:
+  html:
+    embed-resources: true
+    toc: true
+    toc-depth: 2
+    number-sections: true
+    code-fold: true
+execute:
+  warning: false
+  message: false
+---
+
+## Instructions
+
+**Collaboration Policy:** You may discuss problems with classmates, but all submitted work must be your own.
+
+**AI Use Policy:** AI tools may be used for code assistance. Disclose any AI use in your submission.
+
+**Submission:** Submit a rendered HTML file to Gradescope by the due date.
+
+**Due Date:** See Canvas for due date
+
+## Grading Rubric
+
+| Category | Weight | Description |
+|----------|--------|-------------|
+| Interpretation & Reasoning | 40% | Conceptual understanding, correct interpretations |
+| Analysis & Setup | 40% | Code correctness, model specification |
+| Clarity & Presentation | 20% | Writing quality, formatting, organization |
+
+## Setup
+
+```{r}
+#| label: setup
+#| include: false
+
+# Load required packages
+suppressPackageStartupMessages({
+  library(nlme)
+  library(lme4)
+  library(geepack)
+  library(ggplot2)
+  library(dplyr)
+  library(tidyr)
+  library(broom)
+  library(broom.mixed)
+  library(scales)
+  library(knitr)
+})
+
+set.seed(667)
+
+# Set theme for plots
+theme_set(theme_minimal(base_size = 12))
+```
+
+---
+
+## Question 1: Foundations of GLMMs (20 points)
+
+The epilepsy dataset from Thall and Vail (1990) contains seizure counts for 59 epileptics in a placebo-controlled clinical trial of progabide. Patients were randomized to receive either progabide or placebo as an adjuvant to standard anti-epileptic chemotherapy. Baseline seizure counts (8-week interval) and counts during four 2-week post-randomization intervals were recorded.
+
+```{r}
+#| label: load-epilepsy
+#| echo: true
+
+# Load and prepare epilepsy data with download fallback
+data_url <- "https://content.sph.harvard.edu/fitzmaur/ala2e/epilepsy.txt"
+data_file <- if (file.exists("../../data/epilepsy.txt")) "../../data/epilepsy.txt" else "data/epilepsy.txt"
+if (!file.exists(data_file)) {
+  dir.create("data", showWarnings = FALSE)
+  download.file(data_url, data_file)
+}
+
+epilepsy_raw <- read.table(data_file,
+                           skip = 35,  # Skip header text
+                           col.names = c("id", "trt", "age", "base",
+                                        "y1", "y2", "y3", "y4"))
+
+# Convert to long format
+epilepsy <- epilepsy_raw %>%
+  pivot_longer(cols = y1:y4,
+               names_to = "visit",
+               values_to = "seizures") %>%
+  mutate(
+    visit_num = as.numeric(gsub("y", "", visit)),
+    time = (visit_num - 1) * 2,  # weeks since randomization
+    trt = factor(trt, levels = c(0, 1), labels = c("Placebo", "Progabide")),
+    log_base = log(base / 4),  # log baseline rate per 2 weeks
+    age_c = age - mean(age)    # centered age
+  )
+
+glimpse(epilepsy)
+```
+
+### Part (a) - **WRITE:** Define the GLMM and explain random effects (5 pts)
+
+Write the mathematical formulation for a Poisson GLMM with a random intercept for the epilepsy seizure count data. Define each component of the model clearly.
+
+*Your answer here*
+
+### Part (b) - **CODE:** Fit random-intercept Poisson GLMM (5 pts)
+
+Fit a Poisson GLMM with a random intercept using `lme4::glmer()`. Include treatment, time (in weeks), log baseline rate, and centered age as predictors.
+
+```{r}
+#| label: glmm-ri-fit
+
+# Your code here
+```
+
+### Part (c) - **WRITE:** Interpret the treatment effect (5 pts)
+
+Interpret the treatment coefficient from the GLMM. Be explicit about whether this is a marginal or conditional (subject-specific) effect.
+
+```{r}
+#| label: glmm-ri-interpret
+
+# Your code here
+```
+
+*Your answer here*
+
+### Part (d) - **CODE:** Extract and interpret variance components (5 pts)
+
+Extract the random intercept variance and calculate the implied ICC on the log scale. What does this tell us about between-subject heterogeneity?
+
+```{r}
+#| label: glmm-ri-variance
+
+# Your code here
+```
+
+*Your answer here*
+
+---
+
+## Question 2: GEE vs GLMM Comparison (20 points)
+
+### Part (a) - **CODE:** Fit GEE with exchangeable correlation (5 pts)
+
+Using the same predictor set, fit a GEE model with exchangeable working correlation and robust standard errors.
+
+```{r}
+#| label: gee-fit
+
+# Your code here
+```
+
+### Part (b) - **CODE:** Compare coefficient estimates (5 pts)
+
+Create a table comparing the treatment coefficient (on the log scale) and standard errors from GLMM and GEE.
+
+```{r}
+#| label: compare-coefficients
+
+# Your code here
+```
+
+### Part (c) - **WRITE:** Explain the coefficient differences (5 pts)
+
+Why do the GLMM coefficients differ from the GEE coefficients? Specifically address the concept of non-collapsibility and the marginal vs conditional interpretation.
+
+*Your answer here*
+
+### Part (d) - **WRITE:** When to use each approach (5 pts)
+
+Describe clinical or policy scenarios where you would prefer GEE over GLMM, and vice versa.
+
+*Your answer here*
+
+---
+
+## Question 3: Marginal Effects from GLMMs and the Attenuation Formula (20 points)
+
+### Part (a) - **WRITE:** Derive the Zeger attenuation formula for logistic models (5 pts)
+
+For a random-intercept logistic GLMM, the Zeger et al. (1988) approximation relates conditional to marginal coefficients:
+$$\beta^{\text{marg}} \approx \frac{\beta^{\text{cond}}}{\sqrt{1 + c_2^2 \cdot \sigma_b^2}}$$
+
+where, for the **logistic** link, $c_2 = 16\sqrt{3}/(15\pi) \approx 0.588$ is the single attenuation constant, so the multiplier on $\sigma_b^2$ under the root is $c_2^2 \approx 0.346$ (equivalently $(1/1.7)^2$, the probit-matching form). Explain the intuition behind this attenuation and why $\beta^{\text{marg}} < \beta^{\text{cond}}$ in magnitude.
+
+*Your answer here*
+
+### Part (b) - **CODE:** Apply attenuation to a binary outcome GLMM (7 pts)
+
+Create a binary outcome from the epilepsy data (seizure-free = 1 if seizures = 0, else 0) and fit a random-intercept logistic GLMM. Apply the Zeger approximation to obtain marginal coefficients.
+
+```{r}
+#| label: binary-glmm
+
+# Your code here
+```
+
+### Part (c) - **CODE:** Compare to GEE estimate (5 pts)
+
+Fit a GEE with the same specification and compare the marginal treatment OR to the Zeger-approximated marginal OR from the GLMM.
+
+```{r}
+#| label: binary-gee-comparison
+
+# Your code here
+```
+
+*Your answer here*
+
+### Part (d) - **WRITE:** Limitations of the Zeger approximation (3 pts)
+
+What are the limitations of the Zeger attenuation formula?
+
+*Your answer here*
+
+---
+
+## Question 4: Random-Slope Logistic GLMM (20 points)
+
+For Questions 4 and 5 we use the **toenail** dataset (De Backer et al., 1998), the canonical binary marginal-vs-mixed example from FLW Chapter 14 (Problem 14.1). In a randomized, double-blind trial, 294 patients with toenail onychomycosis received one of two oral antifungals (Itraconazole or Terbinafine) and were evaluated for the degree of onycholysis (separation of the nail plate from the nail bed) at seven scheduled visits over 48 weeks. The binary outcome is moderate-or-severe onycholysis (1) versus none-or-mild (0).
+
+```{r}
+#| label: load-toenail
+#| echo: true
+
+# Load toenail data with download fallback (clean numeric .dat, no header)
+toe_url  <- "https://content.sph.harvard.edu/fitzmaur/ala2e/toenail.dat"
+toe_file <- if (file.exists("../../data/toenail.dat")) "../../data/toenail.dat" else "data/toenail.dat"
+if (!file.exists(toe_file)) {
+  dir.create("data", showWarnings = FALSE)
+  download.file(toe_url, toe_file)
+}
+
+# Variable list (FLW Ch.14): id, response, treatment, month, visit
+# response: 0 = none/mild, 1 = moderate/severe
+# treatment: 0 = Itraconazole, 1 = Terbinafine
+toenail <- read.table(
+  toe_file,
+  col.names = c("id", "y", "treatment", "month", "visit")
+)
+
+cat("Patients:", length(unique(toenail$id)),
+    "| Measurements:", nrow(toenail), "\n")
+```
+
+### Part (a) - **WRITE:** Specify the random-slope GLMM (5 pts)
+
+Write the random-intercept-and-slope logistic GLMM for the toenail data, with a linear trend in month and a treatment-by-month interaction. Define the random-effects covariance matrix $G$ and each of its elements.
+
+*Your answer here*
+
+### Part (b) - **CODE:** Fit the random-slope GLMM (5 pts)
+
+Fit the random-slope logistic GLMM with `lme4::glmer()`. (For a random slope, `glmer` uses the Laplace approximation, `nAGQ = 1`; adaptive quadrature is restricted to a single scalar random effect.) Report the fixed effects.
+
+```{r}
+#| label: rs-glmm-fit
+
+# Your code here
+```
+
+### Part (c) - **CODE + WRITE:** Interpret the random-effects covariance $G$ (5 pts)
+
+Extract the estimated $G$ and report (i) the variance of the random intercepts, (ii) the variance of the random slopes, and (iii) the intercept-slope correlation. Interpret each.
+
+```{r}
+#| label: rs-glmm-G
+
+# Your code here
+```
+
+*Your answer here*
+
+### Part (d) - **CODE + WRITE:** Test whether the random slope is needed (5 pts)
+
+Test $H_0: \sigma_1^2 = 0,\ \sigma_{01} = 0$ (drop the random slope). Because this is a **GLMM** boundary test, do **not** use `exactRLRT` (which is valid only for the Gaussian LMM). Use a **parametric bootstrap** of the likelihood-ratio statistic, and compare with the conservative Stram-Lee $\tfrac12\chi^2_1 + \tfrac12\chi^2_2$ mixture as an approximation.
+
+::: {.callout-tip collapse="true"}
+## Hint: Parametric bootstrap of the LRT
+
+**Why not `exactRLRT`?** `exactRLRT`/`RLRsim` exploit the exact restricted-likelihood null distribution of a **Gaussian** LMM. For a logistic GLMM they are not valid; bootstrap the LRT instead.
+
+**Pseudocode:**
+```
+1. Fit the null (random-intercept) and alternative (random-slope) models.
+2. Compute the observed LRT = 2 * (logLik(alt) - logLik(null)).
+3. Repeat n_boot times:
+   a. Simulate a new response under the fitted NULL model (simulate()).
+   b. Refit BOTH the null and alternative models to the simulated data.
+   c. Record the bootstrap LRT.
+4. Bootstrap p-value = (1 + #{boot LRT >= observed}) / (1 + n_boot).
+5. Compare with the Stram-Lee mixture:
+   0.5 * pchisq(LRT, 1, lower=FALSE) + 0.5 * pchisq(LRT, 2, lower=FALSE).
+```
+
+Keep `n_boot` modest (e.g. 200) so it runs in reasonable time; `parallel::mclapply` and `glmerControl(calc.derivs = FALSE)` speed it up. Remember that dropping a random slope removes TWO parameters ($\sigma_1^2$ and $\sigma_{01}$), and $\sigma_1^2 = 0$ is on the boundary.
+:::
+
+```{r}
+#| label: rs-boundary-test
+
+# Your code here
+```
+
+*Your answer here*
+
+---
+
+## Question 5: Quadrature Sensitivity and Marginal vs Mixed Contrast (20 points)
+
+This challenge question has two parts on the same toenail data: the numerical accuracy of GLMM estimation (adaptive Gaussian quadrature, FLW Ch.14 / Problem 14.1.10) and the contrast between the marginal (GEE) and conditional (GLMM) estimands (FLW Ch.16).
+
+### Part (a) - **CODE + WRITE:** Adaptive Gaussian quadrature sensitivity (7 pts)
+
+Fit the **random-intercept** logistic GLMM (FLW Problem 14.1.5) at an increasing number of adaptive Gauss-Hermite quadrature points (`nAGQ = 1, 2, 5, 10, 20, 30, 50`) and tabulate how the variance component and fixed effects move. At how many points do the estimates stabilize?
+
+```{r}
+#| label: agq-sensitivity
+
+# Your code here
+```
+
+*Your answer here*
+
+### Part (b) - **CODE:** Marginal (GEE) vs conditional (GLMM) contrast (7 pts)
+
+Fit a GEE (exchangeable working correlation, robust SEs) and the random-intercept GLMM with the same mean model, and contrast the treatment-by-month coefficient. Then apply the Zeger logistic attenuation factor to the GLMM coefficient and compare with the GEE estimate.
+
+The Zeger logistic attenuation relates conditional to marginal coefficients as $\beta^{\text{marg}} \approx \beta^{\text{cond}}/\sqrt{1 + c_2^2\,\sigma_b^2}$, with the single constant $c_2 = 16\sqrt{3}/(15\pi) \approx 0.588$ (so the multiplier on $\sigma_b^2$ under the root is $c_2^2 \approx 0.346$).
+
+```{r}
+#| label: gee-vs-glmm
+
+# Your code here
+```
+
+### Part (c) - **WRITE:** Explain the contrast and non-collapsibility (3 pts)
+
+Interpret the gap between the marginal and conditional treatment-by-month effects. Why is the conditional effect larger in magnitude, and does the Zeger approximation recover the GEE estimate here?
+
+*Your answer here*
+
+### Part (d) - **WRITE:** Which estimand for which question? (3 pts)
+
+A clinician and a health-policy analyst each ask you to summarize the toenail trial. Which model (GEE or GLMM) answers each, and why?
+
+*Your answer here*
+---
+
+## Peer Review Section
+
+After submission, you will be assigned peer reviews. Use this rubric:
+
+| Criterion | Excellent (5) | Good (3-4) | Needs Work (1-2) |
+|-----------|---------------|------------|------------------|
+| Code correctness | All code runs, correct output | Minor errors | Major errors |
+| Interpretations | Clear, accurate, in context | Mostly correct | Missing key points |
+| Presentation | Well-organized, readable | Adequate | Difficult to follow |
+| Marginal vs Conditional | Clearly distinguishes | Sometimes confuses | Conflates the two |
+
+---
+
+## Reminders
+
+- [ ] Knit document before submission
+- [ ] Check that all code executes without errors
+- [ ] Ensure figures are visible and properly labeled
+- [ ] Format tables appropriately
+- [ ] Include AI disclosure if applicable
+- [ ] Always state whether effects are **conditional** or **marginal**
+- [ ] For a GLMM variance-component boundary test use a **parametric bootstrap**, not `exactRLRT` (Gaussian-LMM only)
+- [ ] Check `nAGQ` sensitivity; the Laplace approximation alone can be inaccurate
+
+---
+
+## Point Summary
+
+| Question | Topic | Points |
+|----------|-------|--------|
+| Q1 | Foundations of GLMMs | 20 |
+| Q2 | GEE vs GLMM Comparison | 20 |
+| Q3 | Attenuation Formula & Marginal Effects | 20 |
+| Q4 | Random-Slope Logistic GLMM | 20 |
+| Q5 | Quadrature Sensitivity & Marginal vs Mixed Contrast | 20 |
+| **Total** | | **100** |

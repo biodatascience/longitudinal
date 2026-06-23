@@ -1,0 +1,1743 @@
+---
+title: "BIOS 667 - Lecture 13: GEE Extensions (Ch. 13)"
+subtitle: "Fitzmaurice, Laird & Ware (2011) - Applied Longitudinal Data Analysis"
+author: "Naim Rashid"
+format:
+  revealjs:
+    theme: [default]
+    footer: BIOS 667 · UNC Gillings - Lecture 13 (Ch.13)
+    slide-number: true
+    hash: true
+    toc: false
+    code-overflow: wrap
+    code-line-numbers: false
+    math: mathjax
+    incremental: true
+    embed-resources: true
+    chalkboard: false
+    css: "../../unc-gillings.css"
+    scrollable: true
+execute:
+  warning: false
+  message: false
+---
+
+## Lecture Objectives
+
+- Understand **GEE estimation** for binary and count outcomes
+- Compare **working correlation** structures and their practical implications
+- Distinguish **model-based** vs **robust (sandwich)** standard errors
+- Apply **small-sample corrections** for limited cluster sizes
+- Perform **GEE diagnostics** and model assessment
+- Distinguish **standard GEE** (MCAR) from **IPW-GEE** (MAR) for missing data
+
+---
+
+## Roadmap
+
+**Day 1 (Parts I-IV):** estimation, working correlation, standard errors, small samples.
+**Day 2 (Parts V-VIII):** diagnostics, GEE vs mixed, IPW-GEE, applied case study.
+
+| Part | Topic | Day |
+|------|-------|-----|
+| I | GEE Review and Estimation | 1 |
+| II | Working Correlation Structures | 1 |
+| III | Model-Based vs Robust Standard Errors | 1 |
+| IV | Small-Sample Corrections | 1 |
+| V | GEE Diagnostics and Model Assessment | 2 |
+| VI | Comparison with Likelihood Methods | 2 |
+| VII | IPW-GEE for MAR Missing Data | 2 |
+| VIII | Applied Case Study: Epilepsy Data | 2 |
+
+::: {.notes}
+Two 75-minute periods. Day 1 is the GEE machinery (Parts I-IV, roughly 18 min estimation, 18 min working correlation, 22 min standard errors, 17 min small samples). Day 2 is application and missing data (Parts V-VIII), with the hardest material (IPW-GEE) deliberately early in Day 2 rather than rushed at the tail of one long run. Open Day 2 with the Part V recap slide.
+:::
+
+---
+
+{{< include _notation_box.qmd >}}
+
+---
+
+## Notation (this lecture): GEE symbols
+
+::: {.notation-card style="font-size: 0.82em;"}
+
+| Symbol | Meaning |
+|:--|:--|
+| $V_i = \mathbf{A}_i^{1/2}\operatorname{Corr}_i(\alpha)\,\mathbf{A}_i^{1/2}$ | GEE **working** covariance for subject $i$ (Ch. 12-13 only) |
+| $\operatorname{Corr}_i(\alpha)$ | working **correlation** matrix, a function of $\alpha$ (FLW eq for $V_i$) |
+| $\alpha$ | working-correlation parameter(s); scalar for exchangeable/AR(1), a vector for unstructured |
+| $\mathbf{A}_i = \operatorname{diag}\{\phi\,v(\mu_{ij})\}$ | diagonal of marginal variances $\operatorname{Var}(Y_{ij})=\phi\,v(\mu_{ij})$ ($v$ = GLM variance function, $\phi$ = dispersion; Ch. 11) |
+| $\mathbf{D}_i = \partial\boldsymbol\mu_i/\partial\boldsymbol\beta$ | derivative of the mean wrt $\boldsymbol\beta$ ($n_i \times p$), the mean's sensitivity to $\boldsymbol\beta$ |
+| $\phi$ | dispersion (scale) parameter, the same $\phi$ from the Ch. 11 GLM lecture |
+| $R_{ij}$ (IPW only) | response/**observation indicator**: $R_{ij}=1$ if $Y_{ij}$ is observed. Distinct from $\operatorname{Corr}_i(\alpha)$ |
+
+:::
+
+::: {.notes}
+Three points students confuse. First, $V_i$ here is a WORKING covariance, a different object from the Gaussian marginal covariance $\Sigma_i$ in the LME chapters; we get valid inference even if it is wrong. Second, the working correlation is $\operatorname{Corr}_i(\alpha)$, a function of the parameter $\alpha$, matching FLW's $V_i = \mathbf{A}_i^{1/2}\operatorname{Corr}_i(\alpha)\mathbf{A}_i^{1/2}$. Third, late in the deck the IPW section reuses the letter $R$ as the response/observation indicator $R_{ij}$; that is FLW's missing-data notation and is NOT the working correlation. Flag this verbally when we reach Part VII.
+:::
+
+## Part I (Day 1): GEE Review and Estimation
+
+::: {.notes}
+Day 1, Part I. Budget roughly 18 minutes. Goal: students leave able to write the GEE down and say in words what each piece does. This is review from L12 plus the estimating-equation detail.
+:::
+
+---
+
+## Marginal Models Recap
+
+From Lecture 12, marginal models have three parts:
+
+**Mean:**
+$$E(Y_{ij}\mid X_{ij}) = \mu_{ij}, \quad g(\mu_{ij}) = X_{ij} \boldsymbol\beta$$
+
+**Variance:**
+$$\operatorname{Var}(Y_{ij}\mid X_{ij}) = \phi \, v(\mu_{ij})$$
+
+**Association:**
+Working correlation $\operatorname{Corr}_i(\alpha)$ for within-subject dependence
+
+::: {.notes}
+Recall from L12: a marginal model specifies the population-average mean, a mean-variance relationship through $v(\mu)$, and a working within-subject association, but it does NOT specify a full joint distribution. Stress the row-form $X_{ij}\boldsymbol\beta$ (FLW writes the covariate as a row). The association is written $\operatorname{Corr}_i(\alpha)$, a function of $\alpha$; that matches the working covariance $V_i = \mathbf{A}_i^{1/2}\operatorname{Corr}_i(\alpha)\mathbf{A}_i^{1/2}$ on the next slides.
+:::
+
+---
+
+## Why GEE?
+
+| Challenge | GEE Solution |
+|-----------|--------------|
+| Full likelihood intractable | Quasi-likelihood |
+| Unknown true correlation | Working correlation + robust SEs |
+| Binary/count data | No multivariate distribution needed |
+| Population-average inference | $\boldsymbol\beta$ interpretation unchanged |
+
+---
+
+## GEE Estimating Equations
+
+The GEE for $\boldsymbol\beta$ is:
+
+$$
+U(\boldsymbol\beta) = \sum_{i=1}^{N} \mathbf{D}_i^\top \mathbf{V}_i^{-1}(\mathbf{Y}_i - \boldsymbol\mu_i) = 0
+$$
+
+where:
+
+- $\mathbf{D}_i = \partial \boldsymbol\mu_i / \partial \boldsymbol\beta$ is the $n_i \times p$ derivative of the mean (its **sensitivity** to $\boldsymbol\beta$)
+- $\mathbf{V}_i = \mathbf{A}_i^{1/2} \operatorname{Corr}_i(\alpha)\, \mathbf{A}_i^{1/2}$ is the working covariance (**precision**)
+- $\mathbf{A}_i = \operatorname{diag}(\phi\,v(\mu_{ij}))$ contains the marginal variances $\operatorname{Var}(Y_{ij})=\phi\,v(\mu_{ij})$ ($\phi$ = dispersion, the same $\phi$ from Ch. 11)
+
+**In words:** each subject contributes a residual $(\mathbf{Y}_i - \boldsymbol\mu_i)$, weighted by how the mean responds to $\boldsymbol\beta$ ($\mathbf{D}_i$) and down-weighted by its covariance ($\mathbf{V}_i^{-1}$). The sum is set to zero:
+
+$$
+\underbrace{\mathbf{D}_i^\top}_{\text{sensitivity}}\ \underbrace{\mathbf{V}_i^{-1}}_{\text{precision}}\ \underbrace{(\mathbf{Y}_i - \boldsymbol\mu_i)}_{\text{residual}}
+$$
+
+::: {.notes}
+This is the single most important slide of Part I. Read the equation left to right as sensitivity x precision x residual. $\mathbf{D}_i = \partial\boldsymbol\mu_i/\partial\boldsymbol\beta$ is the derivative of the mean, NOT a covariance (that is why the course never reuses $D$ for a covariance). The residual is the raw $\mathbf{Y}_i - \boldsymbol\mu_i$. $\phi$ is the same dispersion parameter from the Ch. 11 GLM lecture, so this is continuous with what they already know. Emphasize: there is no likelihood here, just this moment condition, which is why it is called quasi-likelihood / estimating equations.
+:::
+
+---
+
+## GEE Algorithm (FLW two-stage)
+
+FLW (p. 357) fits GEE by alternating two stages until convergence:
+
+1. Initialize $\hat{\boldsymbol\beta}^{(0)}$ (e.g., from the independence fit)
+2. **Given** $\hat\alpha, \hat\phi$: update $\hat{\boldsymbol\beta}$ by solving the estimating equation (iteratively reweighted least squares)
+3. **Given** $\hat{\boldsymbol\beta}$: update $\hat\alpha, \hat\phi$ from the standardized residuals $e_{ij}$
+4. Iterate steps 2-3 until convergence
+
+**Key insight:** $\hat{\boldsymbol\beta}$ converges to a consistent estimate even if $\operatorname{Corr}_i(\alpha)$ is wrong (so long as the mean model is correct).
+
+::: {.notes}
+This is FLW's actual algorithm (p. 357): a two-stage alternation, NOT a black box. Stage 2 is just iteratively reweighted least squares with the current weights; stage 3 uses standardized Pearson residuals $e_{ij}$ to update the working-correlation parameter $\alpha$ and the scale $\phi$. The headline is consistency of $\hat{\boldsymbol\beta}$ under working-correlation misspecification, which is what makes GEE attractive. The technical Fisher-scoring vs Newton-Raphson distinction is background and lives in the appendix; do not spend class time on it.
+:::
+
+---
+
+## Setup: Load Packages and Data
+
+```{r}
+#| label: setup
+#| echo: true
+#| output-location: slide
+suppressPackageStartupMessages({
+  library(dplyr)
+  library(tidyr)
+  library(ggplot2)
+  library(geepack)
+  library(lme4)
+  library(broom)
+})
+
+# Read epilepsy data
+epi_raw <- read.table(
+  "../../data/epilepsy.txt",
+  skip = 36,
+  col.names = c("id", "trt", "age", "base", "y1", "y2", "y3", "y4")
+)
+
+# Reshape to long format
+epi <- epi_raw |>
+  pivot_longer(
+    cols = y1:y4,
+    names_to = "visit",
+    values_to = "seizures"
+  ) |>
+  mutate(
+    visit = as.integer(gsub("y", "", visit)),
+    trt = factor(trt, levels = c(0, 1), labels = c("Placebo", "Progabide")),
+    log_base = log(base / 4),  # log baseline rate per 2 weeks
+    log_age = log(age)
+  )
+
+head(epi, 8)
+```
+
+---
+
+## Epilepsy Trial Data (case study)
+
+Clinical trial of **progabide** for epilepsy:
+
+- 59 patients randomized to treatment or placebo
+- Baseline: seizure count in 8-week period before treatment
+- Outcome: seizure counts at 4 post-randomization visits (2-week intervals)
+
+**Goal:** Estimate treatment effect on seizure rate (population-average).
+
+::: {.callout-note}
+## Dataset provenance
+The epilepsy/progabide data are a **Ch. 13 problem dataset** (FLW Problem 13.2, p. 393), including the "exclude patient 49" sensitivity check (Problem 13.2.5). They are a legitimate Ch. 13 example but are not one of the chapter's three worked Section 13.4 case studies (Muscatine obesity logistic, leprosy bacilli log-linear, arthritis ordinal). We use them as our worked count-data case study.
+:::
+
+::: {.notes}
+Say up front this is a real FLW Ch. 13 dataset (Problem 13.2), so students know it is book-faithful, not invented. The outcome is a count, so we will fit a Poisson-log marginal model. The progabide question is population-average: what is the average multiplicative change in seizure rate, not what happens to any one patient. Flag now that patient 49 is an extreme outlier we will return to in the diagnostics part.
+:::
+
+---
+
+## Visualize Seizure Trajectories
+
+```{r}
+#| label: plot-trajectories
+#| echo: true
+#| output-location: slide
+ggplot(epi, aes(visit, seizures, group = id, color = trt)) +
+  geom_line(alpha = 0.3) +
+  stat_summary(aes(group = trt), fun = mean, geom = "line",
+               linewidth = 1.5) +
+  scale_y_log10() +
+  labs(
+    title = "Seizure Counts Over Time by Treatment",
+    x = "Visit (2-week period)",
+    y = "Seizure Count (log scale)",
+    color = "Treatment"
+  ) +
+  theme_minimal()
+```
+
+# Part II (Day 1): Working Correlation Structures
+
+::: {.notes}
+Day 1, Part II. Budget roughly 18 minutes. Goal: students can name the common structures, read them off a heatmap, and say what each assumes. Lead with the picture, then the matrices, then fit them.
+:::
+
+---
+
+## Common Working Correlations
+
+| Structure | $\operatorname{Corr}_{jk}(\alpha)$ | Parameters |
+|-----------|------------------|------------|
+| Independence | $I(j=k)$ | 0 |
+| Exchangeable | $\alpha$ if $j \neq k$ | 1 |
+| AR(1) | $\alpha^{\lvert j-k\rvert}$ | 1 |
+| Unstructured | $\alpha_{jk}$ | $n(n-1)/2$ |
+
+::: {.notes}
+$\operatorname{Corr}_{jk}(\alpha)$ is the $(j,k)$ entry of the working correlation matrix $\operatorname{Corr}_i(\alpha)$. Independence ignores within-subject correlation entirely (0 parameters); exchangeable assumes one common off-diagonal $\alpha$; AR(1) decays geometrically with the time lag; unstructured estimates every distinct pair. The picture on the next slide makes these shapes obvious before we write the matrices.
+:::
+
+---
+
+## Picture First: Three Correlation Shapes
+
+```{r}
+#| label: corr-heatmap
+#| echo: false
+suppressPackageStartupMessages({library(ggplot2); library(dplyr); library(tidyr)})
+n <- 4; alpha <- 0.5
+make_corr <- function(type) {
+  M <- diag(n)
+  for (j in 1:n) for (k in 1:n) {
+    if (j != k) M[j, k] <- switch(type,
+      "Exchangeable" = alpha,
+      "AR(1)" = alpha^abs(j - k),
+      "Unstructured" = c(0.6, 0.4, 0.2, 0.5, 0.3, 0.45)[
+        match(paste(min(j,k), max(j,k)), c("1 2","1 3","1 4","2 3","2 4","3 4"))])
+  }
+  as.data.frame(M) |> setNames(1:n) |> mutate(row = 1:n) |>
+    pivot_longer(-row, names_to = "col", values_to = "corr") |>
+    mutate(col = as.integer(col), type = type)
+}
+df <- bind_rows(make_corr("Exchangeable"), make_corr("AR(1)"), make_corr("Unstructured")) |>
+  mutate(type = factor(type, levels = c("Exchangeable", "AR(1)", "Unstructured")))
+ggplot(df, aes(col, row, fill = corr)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = sprintf("%.2f", corr)), size = 3) +
+  scale_y_reverse(breaks = 1:n) + scale_x_continuous(breaks = 1:n) +
+  scale_fill_gradient(low = "white", high = "#4575b4", limits = c(0, 1)) +
+  facet_wrap(~ type) +
+  labs(title = "Working Correlation Shapes (alpha = 0.5)",
+       x = "Occasion", y = "Occasion", fill = "Corr") +
+  theme_minimal() + theme(panel.grid = element_blank())
+```
+
+::: {.notes}
+Read the three panels: exchangeable is FLAT off the diagonal (every pair equally correlated); AR(1) DECAYS as you move off the diagonal (neighbors more correlated than far-apart visits); unstructured is IRREGULAR (each pair its own value). This is the single most useful visual in Part II: students who can recognize these shapes can pick a starting structure and read a fitted correlation matrix. Then show the algebra on the next slides.
+:::
+
+---
+
+## Exchangeable Correlation
+
+$$
+\operatorname{Corr}_i(\alpha) = \begin{pmatrix}
+1 & \alpha & \alpha & \alpha \\
+\alpha & 1 & \alpha & \alpha \\
+\alpha & \alpha & 1 & \alpha \\
+\alpha & \alpha & \alpha & 1
+\end{pmatrix}
+$$
+
+**Use when:** No natural time ordering; cluster members similar.
+
+---
+
+## AR(1) Correlation
+
+$$
+\operatorname{Corr}_i(\alpha) = \begin{pmatrix}
+1 & \alpha & \alpha^2 & \alpha^3 \\
+\alpha & 1 & \alpha & \alpha^2 \\
+\alpha^2 & \alpha & 1 & \alpha \\
+\alpha^3 & \alpha^2 & \alpha & 1
+\end{pmatrix}
+$$
+
+**Use when:** Correlation decays with time lag.
+
+---
+
+## Unstructured Correlation
+
+$$
+\operatorname{Corr}_i(\alpha) = \begin{pmatrix}
+1 & \alpha_{12} & \alpha_{13} & \alpha_{14} \\
+\alpha_{12} & 1 & \alpha_{23} & \alpha_{24} \\
+\alpha_{13} & \alpha_{23} & 1 & \alpha_{34} \\
+\alpha_{14} & \alpha_{24} & \alpha_{34} & 1
+\end{pmatrix}
+$$
+
+**Use when:** Small $n_i$, enough subjects, no assumed pattern.
+
+::: {.notes}
+Tie each matrix back to the heatmap panel students just saw. Exchangeable = one $\alpha$ everywhere off-diagonal. AR(1) = powers of $\alpha$, so correlation halves and halves again as the lag grows. Unstructured = $n(n-1)/2$ free parameters, flexible but data-hungry. The "use when" lines are the practical takeaway.
+:::
+
+---
+
+## GEE with Different Correlations
+
+```{r}
+#| label: gee-correlations
+#| echo: true
+#| output-location: slide
+# Independence
+gee_ind <- geeglm(
+  seizures ~ trt + log_base + log_age + visit,
+  id = id,
+  data = epi,
+  family = poisson(link = "log"),
+  corstr = "independence"
+)
+
+# Exchangeable
+gee_exch <- geeglm(
+  seizures ~ trt + log_base + log_age + visit,
+  id = id,
+  data = epi,
+  family = poisson(link = "log"),
+  corstr = "exchangeable"
+)
+
+# AR(1)
+gee_ar1 <- geeglm(
+  seizures ~ trt + log_base + log_age + visit,
+  id = id,
+  data = epi,
+  family = poisson(link = "log"),
+  corstr = "ar1"
+)
+
+# Unstructured
+gee_unstr <- geeglm(
+  seizures ~ trt + log_base + log_age + visit,
+  id = id,
+  data = epi,
+  family = poisson(link = "log"),
+  corstr = "unstructured"
+)
+```
+
+---
+
+## Compare Coefficient Estimates
+
+```{r}
+#| label: compare-coefs
+#| echo: true
+#| output-location: slide
+extract_coefs <- function(fit, name) {
+  coef(summary(fit)) |>
+    as.data.frame() |>
+    tibble::rownames_to_column("term") |>
+    mutate(model = name) |>
+    select(model, term, Estimate, `Std.err`)
+}
+
+bind_rows(
+  extract_coefs(gee_ind, "Independence"),
+  extract_coefs(gee_exch, "Exchangeable"),
+  extract_coefs(gee_ar1, "AR(1)"),
+  extract_coefs(gee_unstr, "Unstructured")
+) |>
+  filter(term == "trtProgabide") |>
+  knitr::kable(digits = 4)
+```
+
+---
+
+## Key Observation
+
+Treatment effect estimates are **similar** across working correlations.
+
+Standard errors **differ** -- efficiency depends on how close working correlation is to truth.
+
+**Robust SEs** (default in geepack) protect against misspecification.
+
+---
+
+::: {.callout-note collapse="true"}
+## Check Your Understanding: Working Correlations
+
+1. If you specify exchangeable correlation but the true correlation is AR(1), what happens to your coefficient estimates? What about standard errors?
+
+2. When would you prefer AR(1) over exchangeable correlation?
+
+3. Why is unstructured correlation not always the best choice?
+
+**Answers:**
+
+1. **Coefficient estimates** remain consistent (they converge to the correct population-average values). **Standard errors** may be inefficient (larger than optimal) if you use the model-based SEs. With robust (sandwich) SEs, inference remains valid even if the working correlation is misspecified.
+
+2. Choose AR(1) when observations closer in time are more strongly correlated than distant observations (e.g., disease progression, daily measurements). AR(1) assumes correlation decays exponentially with time lag.
+
+3. Unstructured correlation estimates $n(n-1)/2$ parameters, which can be problematic with: (a) limited subjects (parameters may be poorly estimated), (b) unbalanced data (not all pairs observed), (c) overfitting concerns. Simpler structures (exchangeable, AR(1)) are more efficient when they approximately hold.
+:::
+
+---
+
+## Estimated Working Correlations
+
+```{r}
+#| label: show-alpha
+#| echo: true
+#| output-location: slide
+cat("Exchangeable alpha:", gee_exch$geese$alpha, "\n")
+cat("AR(1) alpha:", gee_ar1$geese$alpha, "\n")
+cat("Unstructured alpha:\n")
+print(gee_unstr$geese$alpha)
+```
+
+::: {.notes}
+These are the fitted $\hat\alpha$ values, the off-diagonal entries of $\operatorname{Corr}_i(\hat\alpha)$. Exchangeable is one number; AR(1) is one number raised to lag powers; unstructured is the full set of distinct pairwise correlations. Compare the unstructured estimates to a single exchangeable $\alpha$: if they are all similar, exchangeable is a reasonable simplification.
+:::
+
+---
+
+## Modeling the Association (binary data)
+
+For **binary** outcomes, FLW Ch. 13 treats the within-subject association as something to MODEL, not just a nuisance:
+
+- Correlations are awkward for binary data (bounded by the means)
+- Better target: pairwise **odds ratios** $\operatorname{OR}_{jk}$
+- **Alternating Logistic Regression (ALR):** a second estimating equation for the association parameters $\alpha$, solved alongside the mean equation for $\boldsymbol\beta$
+
+So $\alpha$ can be a **target of inference** (how does dependence change over time?), not only a working-correlation nuisance.
+
+::: {.callout-note}
+## Beyond our worked example
+We fit a Poisson (count) case study, so we use a working correlation. The OR/ALR association model is the FLW Ch. 13 extension for binary data (FLW Section 13.4, Muscatine logistic example); R support is in the `geepack` `geese()` / `alr` machinery and the `multgee` package. We flag it here as the defining "extension" of the chapter.
+:::
+
+::: {.notes}
+This is the genuine Ch. 13 content gap we are closing: the chapter is literally about GEE EXTENSIONS, and one defining extension is modeling the within-subject ASSOCIATION for discrete data via odds ratios and alternating logistic regression. For binary data, correlation is a poor association measure because its range depends on the marginal means; the odds ratio is cleaner. ALR adds a second estimating equation for the association parameters $\alpha$ and solves it alternately with the mean equation. We do not run a full ALR example (our case study is count data), but students should know $\alpha$ can be scientifically interesting, not just a nuisance.
+:::
+
+# Part III (Day 1): Model-Based vs Robust Standard Errors
+
+::: {.notes}
+Day 1, Part III. Budget roughly 22 minutes. The conceptual heart of GEE: why we usually trust the sandwich, what the bread and meat are, and when the sandwich fails. This sets up Part IV (small samples).
+:::
+
+---
+
+## Two Types of Standard Errors
+
+| Type | Formula | Assumption |
+|------|---------|------------|
+| Model-based (naive) | $\mathbf{B}^{-1}$ | Correct $\mathbf{V}_i$ |
+| Robust (sandwich) | $\mathbf{B}^{-1} \mathbf{M} \mathbf{B}^{-1}$ | Mean model correct |
+
+**Bread** (sensitivity): $\ \mathbf{B} = \sum_i \mathbf{D}_i^\top \mathbf{V}_i^{-1} \mathbf{D}_i$
+
+**Meat** (observed variability): $\ \mathbf{M} = \sum_i \mathbf{D}_i^\top \mathbf{V}_i^{-1} (\mathbf{Y}_i - \boldsymbol\mu_i)(\mathbf{Y}_i - \boldsymbol\mu_i)^\top \mathbf{V}_i^{-1} \mathbf{D}_i$
+
+::: {.callout-note}
+## Why is the sandwich robust?
+$\mathbf{M}$ uses the **observed** residual products $(\mathbf{Y}_i - \boldsymbol\mu_i)(\mathbf{Y}_i - \boldsymbol\mu_i)^\top$, so it does not trust the working $\mathbf{V}_i$. If the working correlation is wrong, $\mathbf{M}$ still estimates the true variability. The model-based SE $\mathbf{B}^{-1}$ is correct only if $\mathbf{V}_i$ is correct.
+:::
+
+::: {.notes}
+Name the parts so the "sandwich" sticks: $\mathbf{B}$ is the bread (appears twice, outside), $\mathbf{M}$ is the meat (in the middle). The robustness comes entirely from $\mathbf{M}$ using the empirical residual products rather than the assumed covariance. Note $\mathbf{B}$ is exactly the inverse of the model-based variance, which is why the naive SE is just $\mathbf{B}^{-1}$. FLW (p. 273) uses this bread/meat language directly.
+:::
+
+---
+
+## When to Use Which?
+
+| Scenario | Recommendation |
+|----------|----------------|
+| Large $N$, balanced, replicated covariate patterns | Robust (sandwich) |
+| Correlation uncertain, $N$ large | Robust (sandwich) |
+| Correlation plausibly correct | Model-based (more efficient) |
+| **Small/modest $N$, or severely unbalanced** | **Model-based $\mathbf{B}^{-1}$** (FLW pp. 360-361) |
+
+::: {.callout-warning}
+## Robust is not a blanket default
+The sandwich estimator's robustness is an **asymptotic** (large-$N$) property. With few independent subjects, or a severely unbalanced design with no replicated covariate patterns, the sandwich is **biased downward and highly variable** (FLW pp. 360-361). FLW's remedy is to prefer the **model-based estimator $\mathbf{B}^{-1}$** with a plausible working covariance. Robust SEs are the default only when $N$ is large and the design is well-replicated.
+:::
+
+::: {.notes}
+This is a fidelity correction to the common "always report robust SEs" advice. FLW pp. 360-361 are explicit: the sandwich is best for balanced designs with large $N$ and replicated covariate patterns; when $N$ is modest or the design is severely unbalanced, the sandwich is biased downward and unstable, and the BOOK recommends the model-based estimator $\mathbf{B}^{-1}$ instead. State it as a judgment call keyed to $N$ and balance, not a reflex. With 59 subjects and a balanced 4-visit design, the sandwich is fine here.
+:::
+
+---
+
+## Comparing SE Types in geepack
+
+```{r}
+#| label: compare-se
+#| echo: true
+#| output-location: slide
+# Model-based (naive) SEs require fitting with std.err = "jack"
+# then extracting the naive variance from the geese object
+
+# Fit model - geepack stores both variance estimates internally
+gee_exch_fit <- geeglm(
+
+  seizures ~ trt + log_base + log_age + visit,
+  id = id,
+  data = epi,
+  family = poisson(link = "log"),
+  corstr = "exchangeable"
+)
+
+# Extract robust (sandwich) SEs - this is the default in summary()
+se_robust <- sqrt(diag(gee_exch_fit$geese$vbeta))
+
+# Extract model-based (naive) SEs from vbeta.naiv
+# This is (D'V^{-1}D)^{-1}, assuming working covariance is correct
+se_naive <- sqrt(diag(gee_exch_fit$geese$vbeta.naiv))
+
+data.frame(
+  term = names(coef(gee_exch_fit)),
+  SE_robust = round(se_robust, 4),
+  SE_model_based = round(se_naive, 4),
+  ratio = round(se_robust / se_naive, 2)
+)
+```
+
+---
+
+## Interpretation of SE Comparison
+
+Read the **ratio** = robust / naive column you just saw:
+
+**Ratio > 1** (robust larger): the working correlation **overstates** the true correlation, so the naive SE is too small. Naive inference is **anti-conservative** (Type I error inflated). Trust the robust SE.
+
+**Ratio < 1** (robust smaller): the working correlation **understates** the true correlation, so the naive SE is too large. Naive inference is conservative; the robust SE is sharper.
+
+**Mechanism:** the naive SE believes the working $\mathbf{V}_i$; when $\mathbf{V}_i$ overstates correlation it credits each subject with too little independent information, flipping which SE is bigger.
+
+::: {.notes}
+Anchor this directly to the ratio column on the previous output slide, do not present it as an abstract rule. The key intuition: if your working correlation pretends observations are MORE correlated than they really are, the naive SE thinks you have less effective information than you do, so... wait, the direction students get backwards. Walk it slowly: overstating correlation makes the naive SE too small (anti-conservative), which is the dangerous case. The robust SE corrects it because the meat uses observed residuals.
+:::
+
+# Part IV (Day 1): Small-Sample Corrections
+
+::: {.notes}
+Day 1, Part IV. Budget roughly 17 minutes. The honest caveat to Part III: the sandwich is asymptotic and fails with few clusters. Cover FLW's own remedy first (model-based $\mathbf{B}^{-1}$), then the named corrections as an instructor extension.
+:::
+
+---
+
+## The Small-Sample Problem
+
+Robust SEs rely on an asymptotic (large-$N$) approximation:
+
+$$
+\hat{\boldsymbol\beta} \ \dot\sim\ N\!\left(\boldsymbol\beta,\ \mathbf{B}^{-1}\mathbf{M}\mathbf{B}^{-1}\right)
+$$
+
+With few clusters ($N < 40$), the sandwich estimator is **biased downward** (FLW pp. 360-361).
+
+This leads to:
+
+- Underestimated standard errors
+- Inflated Type I error rates
+
+::: {.callout-tip}
+## FLW's own remedy (in-chapter)
+When $N$ is small and a working covariance is plausible, FLW (p. 361) recommends using the **model-based estimator $\mathbf{B}^{-1}$** rather than the sandwich. That is the chapter's prescription; the named bias corrections on the next slide are beyond FLW Ch. 13.
+:::
+
+::: {.notes}
+Be precise: the limiting covariance is the $N$-scaled sandwich; we write the practical $\hat{\boldsymbol\beta}\sim N(\boldsymbol\beta, \mathbf{B}^{-1}\mathbf{M}\mathbf{B}^{-1})$ form students will use. The downward bias means nominal 95% intervals undercover. Emphasize FLW's in-chapter answer FIRST: prefer the model-based $\mathbf{B}^{-1}$ when $N$ is small. The KC/FG/MD corrections are useful real methods but are NOT in the chapter, so flag them as extensions on the next slide.
+:::
+
+---
+
+## Bias-Corrected Sandwich Estimators
+
+::: {.callout-note}
+## Beyond FLW Ch. 13 (instructor extension)
+These named corrections are not in FLW Ch. 13 (Kauermann & Carroll 2001; Fay & Graubard 2001; Mancl & DeRouen 2001, *Biometrics*). FLW's in-chapter small-$N$ remedy is the model-based estimator $\mathbf{B}^{-1}$ (p. 361). The corrections below inflate the under-estimated sandwich, differing mainly in aggressiveness.
+:::
+
+| Method | Correction |
+|--------|------------|
+| Kauermann-Carroll (KC) | $(\mathbf{I} - \mathbf{H}_i)^{-1/2}$ adjustment |
+| Fay-Graubard (FG) | $(\mathbf{I} - \mathbf{H}_i)^{-1}$ adjustment |
+| Mancl-DeRouen (MD) | Delete-one jackknife |
+
+$\mathbf{H}_i$ is the cluster leverage ("hat") matrix, the cluster analogue of the scalar OLS leverage $h_{ii}$.
+
+::: {.notes}
+$\mathbf{H}_i$ generalizes the OLS leverage $h_{ii}$ to a cluster: high-leverage clusters get their residual products inflated to undo the sandwich's downward bias. KC, FG, MD all do this; FG is the most aggressive, KC the mildest, MD is a jackknife. State plainly these are extensions, then note geepack does not implement them (geesmv does); we illustrate the IDEA with a cluster bootstrap on the next slides.
+:::
+
+---
+
+## Small-Sample Correction in Practice
+
+```{r}
+#| label: small-sample
+#| echo: true
+#| output-location: slide
+# geepack does not implement KC/FG/MD; those live in the geesmv package.
+# We illustrate the small-sample idea with a model-agnostic cluster bootstrap.
+set.seed(667)
+n_boot <- 200
+boot_coefs <- matrix(NA, n_boot, 5)
+
+for (b in 1:n_boot) {
+  # Resample whole CLUSTERS (subjects) with replacement
+  ids <- unique(epi$id)
+  boot_ids <- sample(ids, length(ids), replace = TRUE)
+  boot_data <- do.call(rbind, lapply(seq_along(boot_ids), function(i) {
+    d <- epi[epi$id == boot_ids[i], ]
+    d$id <- i   # LOAD-BEARING: GEE needs UNIQUE cluster ids after resampling,
+                # or a duplicated subject is merged and the SEs are wrong
+    d
+  }))
+
+  fit_b <- tryCatch(
+    geeglm(
+      seizures ~ trt + log_base + log_age + visit,
+      id = id,
+      data = boot_data,
+      family = poisson(link = "log"),
+      corstr = "exchangeable"
+    ),
+    error = function(e) NULL
+  )
+
+  if (!is.null(fit_b)) {
+    boot_coefs[b, ] <- coef(fit_b)
+  }
+}
+
+boot_se <- apply(boot_coefs, 2, sd, na.rm = TRUE)
+names(boot_se) <- names(coef(gee_exch))
+
+data.frame(
+  term = names(boot_se),
+  SE_robust = round(se_robust, 4),
+  SE_bootstrap = round(boot_se, 4)
+)
+```
+
+---
+
+## Degrees of Freedom Adjustments
+
+For small samples, also adjust test statistics:
+
+| Approach | df |
+|----------|-----|
+| Standard Wald | $\infty$ (normal) |
+| Cluster-level | $N - p$ |
+| Kenward-Roger-type | Data-dependent |
+
+Use $t_{N-p}$ or $F$ reference distributions instead of $z$ or $\chi^2$.
+
+---
+
+## Rule of Thumb
+
+| N (clusters) | Recommendation |
+|--------------|----------------|
+| $N \geq 40$ | Standard robust SEs adequate |
+| $20 \leq N < 40$ | Use bias-corrected SEs |
+| $N < 20$ | Consider mixed models or exact methods |
+
+With 59 patients here, standard robust SEs are reasonable.
+
+---
+
+::: {.callout-note collapse="true"}
+## Check Your Understanding: Standard Errors and Small Samples
+
+1. What is the difference between model-based (naive) and robust (sandwich) standard errors?
+
+2. Why do robust SEs tend to be biased downward with few clusters?
+
+3. You have a study with 25 subjects. What precautions should you take for GEE inference?
+
+**Answers:**
+
+1. **Model-based SEs** assume the working covariance structure is correctly specified; they use $(D^\top V^{-1} D)^{-1}$. **Robust SEs** use the sandwich estimator $B^{-1}MB^{-1}$, which uses the observed residuals to estimate the true covariance. Robust SEs are valid even if the working correlation is wrong.
+
+2. The sandwich estimator relies on asymptotic theory (large N). With few clusters, there is not enough information to estimate the "meat" of the sandwich ($M$) well, leading to underestimation of variance. This causes inflated Type I error rates.
+
+3. With 25 subjects (between 20 and 40), use **bias-corrected sandwich estimators** (Kauermann-Carroll, Fay-Graubard, or Mancl-DeRouen). Also consider using $t$ or $F$ distributions with $N-p$ degrees of freedom instead of normal/chi-squared for hypothesis tests.
+:::
+
+# Day 1 Recap; Part V (Day 2): Diagnostics
+
+::: {.callout-note}
+## Recap of Day 1 (Parts I-IV)
+- GEE solves $\sum_i \mathbf{D}_i^\top \mathbf{V}_i^{-1}(\mathbf{Y}_i - \boldsymbol\mu_i) = 0$; $\hat{\boldsymbol\beta}$ is consistent even if $\operatorname{Corr}_i(\alpha)$ is wrong.
+- Working correlation affects **efficiency**, not consistency (exchangeable / AR(1) / unstructured).
+- **Robust** (sandwich) SE = $\mathbf{B}^{-1}\mathbf{M}\mathbf{B}^{-1}$; **model-based** = $\mathbf{B}^{-1}$. Prefer model-based when $N$ is small or the design is unbalanced.
+:::
+
+::: {.notes}
+Open Day 2 with this recap (about 3-4 minutes). Then Part V is diagnostics, budget roughly 18 minutes. Day 2 total: Parts V-VIII. Hardest material (IPW-GEE, Part VII) is placed mid-Day-2, not at the tail.
+:::
+
+---
+
+## Diagnostic Goals for GEE
+
+| Goal | What to Check |
+|------|---------------|
+| Mean model | Residual patterns |
+| Link function | Linearity of predictors |
+| Variance function | Scale of residuals |
+| Influential clusters | Leverage, deletion |
+| Working correlation | QIC comparison |
+
+---
+
+## Pearson Residuals vs Fitted
+
+```{r}
+#| label: residuals
+#| echo: false
+epi$resid_pear <- residuals(gee_exch, type = "pearson")
+epi$fitted <- fitted(gee_exch)
+
+ggplot(epi, aes(fitted, resid_pear)) +
+  geom_point(alpha = 0.5) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  geom_smooth(method = "loess", se = FALSE, color = "red") +
+  labs(
+    title = "Pearson Residuals vs Fitted Values",
+    x = "Fitted Values",
+    y = "Pearson Residuals"
+  ) +
+  theme_minimal()
+```
+
+::: {.callout-note}
+## Reading it
+**Good:** residuals scattered evenly around 0 (dashed line), the red loess roughly flat. **Problematic:** a curved loess (mean-model / link misspecification) or a fan that widens with the fitted value (variance-function misspecification). Here, watch for a few large positive residuals from high-count subjects.
+:::
+
+::: {.notes}
+The dashed line is zero; the red loess is the local average residual. A flat loess near zero means the mean model and link are adequate. A bend would suggest the log link or linear predictor is wrong; a widening fan would suggest the Poisson variance function understates the spread (overdispersion), which we quantify later. Pearson residuals are raw residuals scaled by the model SD.
+:::
+
+---
+
+## Residuals by Visit and Treatment
+
+```{r}
+#| label: resid-time
+#| echo: false
+ggplot(epi, aes(factor(visit), resid_pear)) +
+  geom_boxplot() +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  facet_wrap(~trt) +
+  labs(
+    title = "Residuals by Visit and Treatment",
+    x = "Visit",
+    y = "Pearson Residuals"
+  ) +
+  theme_minimal()
+```
+
+::: {.callout-note}
+## Reading it
+**Good:** boxes centered on 0 (dashed line) with similar spread across visits and both arms. **Problematic:** a drift in the medians across visits (time trend the mean model missed) or boxes much wider in one arm (heteroscedasticity not captured).
+:::
+
+::: {.notes}
+This checks whether the mean model fits equally well across time and treatment. Medians should sit near zero at every visit in both panels. A systematic up-or-down drift across visits would say the linear-in-visit term is too simple. Wildly different spreads between arms would flag arm-specific overdispersion.
+:::
+
+---
+
+## Cluster-Level Residuals
+
+```{r}
+#| label: cluster-resid
+#| echo: false
+cluster_resid <- epi |>
+  group_by(id, trt) |>
+  summarize(
+    mean_resid = mean(resid_pear),
+    sum_resid = sum(resid_pear),
+    .groups = "drop"
+  )
+
+ggplot(cluster_resid, aes(id, sum_resid, fill = trt)) +
+  geom_col() +
+  geom_hline(yintercept = c(-4, 4), linetype = "dashed", color = "red") +
+  labs(
+    title = "Sum of Pearson Residuals by Subject",
+    x = "Subject ID",
+    y = "Sum of Residuals"
+  ) +
+  theme_minimal()
+```
+
+::: {.callout-note}
+## Reading it
+Each bar sums a subject's four Pearson residuals. The red dashed lines at $\pm 4$ are an informal flag: bars outside them are subjects the model fits poorly and are candidates for a sensitivity check. **Good:** most bars well inside $\pm 4$. **Problematic:** one or two bars far outside (an influential cluster, e.g. subject 49).
+:::
+
+::: {.notes}
+Summing each subject's residuals aggregates lack-of-fit to the cluster level, which is the right granularity for GEE (subjects are the independent units). The $\pm 4$ lines are a rule of thumb, not a formal cutoff. The point is to surface subjects like 49 whose extreme counts dominate; we exclude 49 in the next slides as a sensitivity analysis, matching FLW Problem 13.2.5.
+:::
+
+---
+
+## Identifying Influential Clusters
+
+Subject 49 has extremely high seizure counts:
+
+```{r}
+#| label: influential
+#| echo: true
+#| output-location: slide
+# Check extreme subjects
+epi |>
+  group_by(id, trt) |>
+  summarize(
+    total_seizures = sum(seizures),
+    mean_seizures = mean(seizures),
+    .groups = "drop"
+  ) |>
+  arrange(desc(total_seizures)) |>
+  head(5)
+```
+
+---
+
+## Sensitivity Analysis: Exclude Outlier
+
+```{r}
+#| label: sensitivity
+#| echo: true
+#| output-location: slide
+epi_no49 <- epi |> filter(id != 49)
+
+gee_no49 <- geeglm(
+  seizures ~ trt + log_base + log_age + visit,
+  id = id,
+  data = epi_no49,
+  family = poisson(link = "log"),
+  corstr = "exchangeable"
+)
+
+# Compare treatment effects
+data.frame(
+  model = c("Full data", "Exclude ID 49"),
+  trt_coef = c(coef(gee_exch)["trtProgabide"],
+               coef(gee_no49)["trtProgabide"]),
+  SE = c(summary(gee_exch)$coef["trtProgabide", "Std.err"],
+         summary(gee_no49)$coef["trtProgabide", "Std.err"])
+) |>
+  mutate(
+    RR = exp(trt_coef),
+    across(c(trt_coef, SE, RR), ~round(.x, 4))
+  )
+```
+
+---
+
+## Choosing a Working Correlation: FLW's method
+
+::: {.callout-tip}
+## In-chapter approach (FLW p. 360)
+FLW does NOT pick a working correlation by an information criterion. Its guidance: $\hat{\boldsymbol\beta}$ is consistent under any working assumption, there is often **negligible efficiency loss** from working independence, and you can **compare the empirical (sandwich) SEs across structures**. If the robust SEs are stable across choices, the choice barely matters.
+:::
+
+The fitted $\hat\alpha$ values and the robust-vs-naive SE comparison (Part III) are the in-chapter diagnostics. QIC (next slide) is a useful add-on, but it is an instructor extension.
+
+::: {.notes}
+Lead with the book's actual method so a substitute does not present QIC as FLW content. The chapter's whole point is that the working correlation is a nuisance: $\hat{\boldsymbol\beta}$ is consistent regardless, and the sandwich fixes the SEs. FLW p. 360 says compare empirical SEs across structures; if they agree, you are done. THEN introduce QIC as a convenient modern automation of the same idea, clearly flagged as beyond the chapter.
+:::
+
+---
+
+## QIC: Model Selection for GEE
+
+::: {.callout-note}
+## Beyond FLW Ch. 13 (instructor extension)
+QIC / QICu are due to **Pan (2001), *Biometrics***. They are not in FLW Ch. 13, which selects a working correlation by comparing empirical SEs (p. 360). QIC automates that comparison.
+:::
+
+- **QIC** -> compare **correlation structures** (same mean model)
+- **QICu** -> compare **mean models** (same correlation); QICu is NOT valid for selecting the correlation structure
+
+One actionable rule: smaller is better; use QIC for correlation, QICu for covariates.
+
+::: {.notes}
+Keep this slide to the concept and the one rule. The formulas live in Appendix C; do not derive them in class. The key precision point: QICu only compares mean models holding the correlation fixed, it cannot rank correlation structures (the penalty does not see the correlation). State it is an extension, give the rule, move to the code.
+:::
+
+---
+
+## QIC: Code
+
+```{r}
+#| label: qic
+#| echo: true
+#| output-location: slide
+# QIC() returns a named vector; index by NAME (positions are
+# geepack-version-dependent). "QIC" ranks correlation structures;
+# "QICu" ranks mean models (same correlation).
+qic_row <- function(fit) {
+  q <- geepack::QIC(fit)
+  c(QIC = unname(q["QIC"]), QICu = unname(q["QICu"]))
+}
+
+data.frame(
+  correlation = c("Independence", "Exchangeable", "AR(1)", "Unstructured"),
+  rbind(qic_row(gee_ind), qic_row(gee_exch),
+        qic_row(gee_ar1), qic_row(gee_unstr))
+) |>
+  arrange(QIC)
+```
+
+# Part VI (Day 2): Comparison with Likelihood Methods
+
+::: {.notes}
+Day 2, Part VI. Budget roughly 15 minutes. The marginal-vs-conditional distinction, which students find genuinely hard. The attenuation slide is the one to get exactly right (it is link-specific).
+:::
+
+---
+
+## GEE vs Mixed Models
+
+| Aspect | GEE | Mixed Models |
+|--------|-----|--------------|
+| Target | Population-average $\boldsymbol\beta$ | Subject-specific $\boldsymbol\beta$ |
+| Correlation | Working (misspecification OK) | Model-based |
+| Missing data | **Standard GEE: MCAR**; IPW-GEE: MAR | MAR with ML |
+| Efficiency | Depends on correlation | Higher if model correct |
+
+**Important:** Standard GEE requires **MCAR** for valid inference. **IPW-GEE** extends validity to **MAR** when the dropout model is correctly specified. (IPW-GEE itself is developed in FLW Ch. 17-18, not Ch. 13; we preview it in Part VII.)
+
+::: {.notes}
+The single most important row is missing data: standard GEE needs MCAR, IPW-GEE buys MAR. Be careful with the citation: FLW Ch. 13 only mentions IPW in passing (p. 359) and says it is developed in Chapters 17-18. So we frame Part VII as a forward look, not Ch. 13 content. The target row is the other key contrast: GEE estimates a population-average effect, the mixed model a subject-specific one, and for nonlinear links these are NOT the same number.
+:::
+
+---
+
+## Coefficient Interpretation: link matters
+
+For an **identity link** (continuous data): GEE and mixed-model $\boldsymbol\beta$ have the **same** interpretation.
+
+For a **nonlinear link**:
+
+- GEE $\boldsymbol\beta$: population-average (marginal) effect
+- Mixed $\boldsymbol\beta\mid \mathbf{b}$: subject-specific (conditional) effect
+
+::: {.callout-warning}
+## Attenuation is link-specific (not universal)
+- **Logit link (binary):** the marginal slope IS attenuated toward zero relative to the conditional slope. Approximately $\beta^{\text{marg}} \approx (1 + c_2^2\,\sigma_b^2)^{-1/2}\,\beta^{\text{cond}}$ with $c_2 = 16\sqrt{3}/(15\pi) \approx 0.588$, so the multiplier inside is $c_2^2 \approx 0.346$ (FLW p. 477).
+- **Log link (Poisson, our example):** random-intercept SLOPES are **NOT** attenuated. Only the intercept shifts by $\sigma_b^2/2$. Marginal and conditional slope coefficients are **equal**.
+:::
+
+::: {.notes}
+This is the HIGH-priority fix. The classic attenuation result is specific to the logistic-normal model: the marginal logit slope is shrunk by the factor $(1+c_2^2\sigma_b^2)^{-1/2}$. Note carefully: $c_2 = 16\sqrt3/(15\pi)\approx 0.588$ is the constant, and $c_2^2\approx 0.346$ is the MULTIPLIER inside the root (0.346 is c-squared, not c). For a log-link Poisson random-INTERCEPT model the slopes are identical marginally and conditionally; only the intercept moves by $\sigma_b^2/2$. So our epilepsy example will show GEE and GLMM slopes that nearly agree, which is the CORRECT behavior, not a contradiction. Say this explicitly so students do not "see" attenuation where there is none.
+:::
+
+---
+
+## Attenuation: the logistic picture
+
+For a **binary** outcome with a subject random intercept $b_i \sim N(0, \sigma_b^2)$, averaging the individual logistic curves over $b_i$ flattens the population-average curve:
+
+```{r}
+#| label: attenuation-schematic
+#| echo: false
+suppressPackageStartupMessages({library(ggplot2); library(dplyr)})
+x <- seq(-6, 6, length.out = 200)
+beta_c <- 1; sigma_b <- 2
+c2 <- 16 * sqrt(3) / (15 * pi)
+beta_m <- beta_c / sqrt(1 + c2^2 * sigma_b^2)
+df <- bind_rows(
+  data.frame(x = x, p = plogis(beta_c * x), curve = "Subject-specific (conditional)"),
+  data.frame(x = x, p = plogis(beta_m * x), curve = "Population-average (marginal)")
+)
+ggplot(df, aes(x, p, color = curve, linetype = curve)) +
+  geom_line(linewidth = 1.2) +
+  annotate("text", x = 3.5, y = 0.62,
+           label = sprintf("marginal slope ~ %.2f x conditional", beta_m / beta_c), size = 3.5) +
+  labs(title = "Marginal Curve Is Flatter (logit link, sigma_b = 2)",
+       x = "Linear predictor (centered)", y = "P(Y = 1)",
+       color = NULL, linetype = NULL) +
+  theme_minimal() + theme(legend.position = "bottom")
+```
+
+::: {.notes}
+This is the steep-individual-curve vs flatter-population-curve picture. The conditional (subject-specific) logistic curve is steeper; averaging over the random intercepts produces a flatter marginal curve, hence the attenuated marginal slope. The annotated ratio is exactly $(1+c_2^2\sigma_b^2)^{-1/2}$ with the FLW constant. Contrast with the Poisson case on the previous slide where this flattening does NOT happen to the slope. This ties "attenuation" to a picture and two real numbers, as the student review asked.
+:::
+
+---
+
+## Mixed Model for Comparison
+
+```{r}
+#| label: mixed-model
+#| echo: true
+#| output-location: slide
+# GLMM with random intercept
+glmm_fit <- glmer(
+  seizures ~ trt + log_base + log_age + visit + (1 | id),
+  data = epi,
+  family = poisson(link = "log")
+)
+
+# Compare coefficients
+data.frame(
+  term = c("(Intercept)", "trtProgabide", "log_base", "log_age", "visit"),
+  GEE = round(coef(gee_exch), 4),
+  GLMM = round(fixef(glmm_fit), 4)
+)
+```
+
+---
+
+## Marginal vs Conditional Effects
+
+```{r}
+#| label: marginal-conditional
+#| echo: true
+#| output-location: slide
+# Treatment effect comparison
+trt_gee <- coef(gee_exch)["trtProgabide"]
+trt_glmm <- fixef(glmm_fit)["trtProgabide"]
+
+data.frame(
+  Model = c("GEE (marginal)", "GLMM (conditional)"),
+  log_RR = c(trt_gee, trt_glmm),
+  RR = exp(c(trt_gee, trt_glmm)),
+  Interpretation = c("Population-average", "Subject-specific")
+) |>
+  mutate(across(c(log_RR, RR), ~round(.x, 4)))
+```
+
+::: {.callout-note}
+## Expected: slopes nearly agree here
+This is a **log-link Poisson random-intercept** model, so the marginal and conditional **slope** coefficients are equal in theory; the small numeric gap is sampling noise plus the random-intercept variance affecting the intercept. Slope attenuation would appear with a **logit** link (previous two slides), not here.
+:::
+
+::: {.notes}
+Point out that the GEE and GLMM treatment log-RRs are close, and that this is the CORRECT result for a Poisson-log random-intercept model, not evidence the methods disagree. If a student expected the marginal slope to be much smaller, redirect them to the logit case. The intercepts will differ (the GLMM intercept is conditional on $b_i = 0$, shifted by $\sigma_b^2/2$ from the marginal).
+:::
+
+---
+
+## When to Choose GEE vs GLMM
+
+| Choose GEE when | Choose GLMM when |
+|-----------------|------------------|
+| Population-average inference | Subject-specific predictions |
+| Robust to correlation misspecification | Modeling individual trajectories |
+| MCAR missing data (or MAR with IPW-GEE) | MAR missing data |
+| Scientific question is about average | Random effects are of interest |
+
+**Note on missing data:** Standard GEE is only valid under MCAR. If dropout depends on observed data (MAR), use IPW-GEE or likelihood-based methods (GLMM).
+
+# Part VII (Day 2): IPW-GEE for MAR Missing Data
+
+::: {.callout-note}
+## Beyond FLW Ch. 13 (forward look)
+Ch. 13 notes only that standard GEE needs MCAR and that IPW "is discussed in detail in Chapters 17 and 18" (FLW p. 359). IPW-GEE is developed there (and in **Robins, Rotnitzky & Zhao 1995, *JASA***), not in Ch. 13. This Part is a preview of that later material.
+:::
+
+::: {.notes}
+Day 2, Part VII. Budget roughly 18 minutes. This is the conceptually hardest block, which is why it sits mid-Day-2 and not at the tail. Open by stating clearly: this is a FORWARD look. FLW Ch. 13 (p. 359) only flags that GEE needs MCAR and points to Chapters 17-18 for IPW. Do not let students think IPW-GEE is core Ch. 13 content.
+:::
+
+---
+
+## The Missing Data Problem in GEE
+
+**Standard GEE** assumes **MCAR** (Missing Completely at Random):
+
+- Probability of dropout does not depend on outcomes or covariates
+- Example: Random equipment failure, administrative censoring
+
+**Reality:** Dropout often depends on observed data (**MAR**):
+
+- Patients with more seizures may drop out
+- Treatment side effects may cause attrition
+- This violates MCAR and **biases standard GEE**
+
+---
+
+## IPW-GEE: The Solution for MAR
+
+**Inverse Probability Weighted GEE** (Robins, Rotnitzky & Zhao, 1995):
+
+1. Model the probability of being observed: $\pi_{ij} = \Pr(R_{ij} = 1 \mid \text{history})$
+2. Weight each observation by $w_{ij} = 1/\pi_{ij}$
+3. Solve the **weighted** estimating equations
+
+$$
+U_w(\boldsymbol\beta) = \sum_{i=1}^{N} \mathbf{D}_i^\top \mathbf{W}_i \mathbf{V}_i^{-1}(\mathbf{Y}_i - \boldsymbol\mu_i) = 0
+$$
+
+where $\mathbf{W}_i = \operatorname{diag}(R_{ij}/\hat\pi_{ij})$.
+
+::: {.callout-warning}
+## Notation: $R_{ij}$ here is the observation indicator
+$R_{ij} = 1$ if $Y_{ij}$ is observed (FLW missing-data notation). This is **distinct** from the working correlation $\operatorname{Corr}_i(\alpha)$ used throughout the deck. Same letter, different object.
+:::
+
+::: {.notes}
+The intuition is sample re-weighting: a subject who survived to visit $j$ despite a low probability of doing so stands in for the similar subjects who dropped out, so we up-weight them by $1/\hat\pi_{ij}$. Flag the notation collision explicitly: $R_{ij}$ here is the response/observation indicator from FLW's missing-data chapters, NOT the working correlation. We declared this on the lecture-specific notation slide.
+:::
+
+---
+
+## IPW-GEE Validity Conditions
+
+IPW-GEE is **consistent** if:
+
+1. **MAR holds:** dropout depends only on observed data
+2. **Monotone dropout:** once a subject leaves, they do not return (FLW's weight model)
+3. **Dropout model correctly specified:** $\pi_{ij}$ estimated consistently
+4. **Positivity:** $\pi_{ij} > 0$ for all observations
+
+::: {.callout-warning}
+## FLW's weight is a cumulative product
+Under monotone MAR dropout FLW uses the **cumulative** stay-in weight
+$$w_{ij} = 1 \big/ \textstyle\prod_{k \le j} \Pr(R_{ik}=1 \mid R_{i,k-1}=1, \text{history}),$$
+and the proper **IPW sandwich variance** (which accounts for estimating the weights). Our example uses a single-visit $1/\hat\pi_{ij}$ weight, a teaching simplification.
+:::
+
+**Trade-off:** IPW-GEE is less efficient than standard GEE when MCAR actually holds.
+
+::: {.notes}
+Two refinements over the naive presentation. First, FLW's weight is a cumulative product of visit-by-visit stay-in probabilities, not a single-visit probability; under monotone dropout these multiply along each subject's observed path. Second, geeglm's weights argument supplies prior weights and does NOT produce the correct IPW sandwich variance (it ignores the fact that the weights were estimated), so the IPW SE column we show is illustrative, not the proper IPW standard error. State both so a substitute does not over-claim.
+:::
+
+---
+
+## IPW-GEE Example: Simulated Dropout
+
+```{r}
+#| label: ipw-gee-example
+#| echo: true
+#| output-location: slide
+# Create data with MAR dropout
+set.seed(667)
+epi_mar <- epi |>
+  group_by(id) |>
+  mutate(
+    # Dropout probability depends on previous seizures
+    prev_seizures = lag(seizures, default = 0),
+    # Higher seizures -> more likely to drop out
+    dropout_prob = plogis(-2 + 0.1 * prev_seizures),
+    dropout = rbinom(n(), 1, dropout_prob),
+    # Cumulative dropout
+    ever_dropped = cummax(dropout),
+    observed = 1 - ever_dropped
+  ) |>
+  ungroup()
+
+# Keep only observed data
+epi_obs <- epi_mar |> filter(observed == 1)
+
+cat("Original observations:", nrow(epi), "\n")
+cat("Observed after dropout:", nrow(epi_obs), "\n")
+cat("Dropout rate:", round(1 - nrow(epi_obs)/nrow(epi), 2) * 100, "%\n")
+```
+
+---
+
+## Fit Dropout Model
+
+```{r}
+#| label: dropout-model
+#| echo: true
+#| output-location: slide
+# Model probability of being observed given history
+dropout_fit <- glm(
+  observed ~ trt + log_base + log_age + visit + prev_seizures,
+  data = epi_mar,
+  family = binomial()
+)
+
+# Get predicted probabilities for observed subjects
+epi_obs$pi_hat <- predict(dropout_fit, newdata = epi_obs, type = "response")
+epi_obs$ipw <- 1 / epi_obs$pi_hat
+
+# Check weight distribution
+summary(epi_obs$ipw)
+```
+
+---
+
+## Compare Standard GEE vs IPW-GEE
+
+```{r}
+#| label: compare-gee-ipw
+#| echo: true
+#| output-location: slide
+# Standard GEE (ignoring dropout mechanism)
+gee_standard <- geeglm(
+  seizures ~ trt + log_base + log_age + visit,
+  id = id,
+  data = epi_obs,
+  family = poisson(link = "log"),
+  corstr = "exchangeable"
+)
+
+# IPW-GEE (accounting for MAR dropout)
+gee_ipw <- geeglm(
+  seizures ~ trt + log_base + log_age + visit,
+  id = id,
+  data = epi_obs,
+  family = poisson(link = "log"),
+  corstr = "exchangeable",
+  weights = ipw
+)
+
+# Compare treatment effects (save for inline interpretation next slide)
+ipw_compare <- data.frame(
+  Method = c("Full data (no dropout)", "Standard GEE (MAR ignored)", "IPW-GEE (MAR corrected)"),
+  trt_coef = round(c(coef(gee_exch)["trtProgabide"],
+                     coef(gee_standard)["trtProgabide"],
+                     coef(gee_ipw)["trtProgabide"]), 4),
+  SE = round(c(summary(gee_exch)$coef["trtProgabide", "Std.err"],
+               summary(gee_standard)$coef["trtProgabide", "Std.err"],
+               summary(gee_ipw)$coef["trtProgabide", "Std.err"]), 4)
+)
+ipw_compare
+```
+
+---
+
+## Interpreting the IPW-GEE Comparison
+
+```{r}
+#| label: ipw-interpret
+#| echo: false
+b_full <- ipw_compare$trt_coef[1]
+b_std  <- ipw_compare$trt_coef[2]
+b_ipw  <- ipw_compare$trt_coef[3]
+d_std  <- abs(b_std - b_full)
+d_ipw  <- abs(b_ipw - b_full)
+```
+
+With the full data, the treatment log-rate-ratio is `r round(b_full, 3)`. After MAR dropout:
+
+- **Standard GEE** (ignoring dropout) gives `r round(b_std, 3)`, a distance of `r round(d_std, 3)` from the full-data value: dropout has **biased** it.
+- **IPW-GEE** gives `r round(b_ipw, 3)`, a distance of `r round(d_ipw, 3)` from full-data, `r ifelse(d_ipw < d_std, "closer to", "not closer to")` the truth.
+
+**Takeaway:** ignoring informative dropout pulls the estimate away from the full-data target; weighting by $1/\hat\pi_{ij}$ moves it back `r ifelse(d_ipw < d_std, "toward", "(here, not all the way to)")` the full-data value.
+
+::: {.callout-note}
+## One simulated realization
+This is a single `set.seed(667)` dropout draw, so the exact distances are illustrative. The direction (standard GEE biased, IPW-GEE corrects toward the truth) is the reproducible teaching point.
+:::
+
+::: {.notes}
+All three numbers are pulled inline from the fitted objects, so the prose always matches the table on the previous slide, even if the data or seed change. The conceptual point: standard GEE under ignored MAR dropout is biased away from the full-data estimate; IPW-GEE re-weights and moves back toward it. Because this is one simulated dropout realization, do not over-interpret the exact gap; the direction is what matters and is reproducible.
+:::
+
+---
+
+## IPW-GEE: Practical Considerations
+
+| Consideration | Recommendation |
+|---------------|----------------|
+| **Weight extremes** | Stabilize or truncate weights if $\pi_{ij}$ near 0 |
+| **Dropout model** | Include predictors of both dropout AND outcome |
+| **Model misspecification** | Use doubly robust methods (AIPW) |
+| **Efficiency** | IPW less efficient; use when MAR is plausible |
+
+**Rule of thumb:** If > 10% dropout and mechanism may be MAR, consider IPW-GEE.
+
+---
+
+## Summary: GEE and Missing Data
+
+| Scenario | Appropriate Method |
+|----------|-------------------|
+| Complete data | Standard GEE |
+| MCAR dropout | Standard GEE (valid) |
+| MAR dropout | **IPW-GEE** or likelihood-based (GLMM) |
+| MNAR dropout | Sensitivity analysis, pattern-mixture, selection models |
+
+**Key point:** Standard GEE is only valid under MCAR. For MAR, use IPW-GEE with a correctly specified dropout model.
+
+# Part VIII (Day 2): Applied Case Study Summary
+
+::: {.notes}
+Day 2, Part VIII. Budget roughly 12 minutes. Pull the whole analysis together on the epilepsy case study: final model, rate ratios, interpretation, predictions, overdispersion. Every number here is pulled inline from the fitted object.
+:::
+
+---
+
+## Full GEE Analysis: Epilepsy Data
+
+```{r}
+#| label: final-model
+#| echo: true
+#| output-location: slide
+# Final model with exchangeable correlation
+summary(gee_exch)
+```
+
+```{r}
+#| label: final-model-extract
+#| echo: false
+.cf <- coef(summary(gee_exch))
+b_trt   <- .cf["trtProgabide", "Estimate"]
+se_trt  <- .cf["trtProgabide", "Std.err"]
+p_trt   <- .cf["trtProgabide", "Pr(>|W|)"]
+rr_trt  <- exp(b_trt)
+rr_lo   <- exp(b_trt - 1.96 * se_trt)
+rr_hi   <- exp(b_trt + 1.96 * se_trt)
+b_base  <- .cf["log_base", "Estimate"]
+b_age   <- .cf["log_age", "Estimate"]
+b_visit <- .cf["visit", "Estimate"]
+pct_trt <- round((1 - rr_trt) * 100, 1)
+```
+
+---
+
+## Exponentiated Coefficients (Rate Ratios)
+
+```{r}
+#| label: rate-ratios
+#| echo: true
+#| output-location: slide
+coefs <- coef(summary(gee_exch))
+
+# Compute Wald-based 95% CIs manually
+estimates <- coefs[, "Estimate"]
+se <- coefs[, "Std.err"]
+ci_lower <- estimates - 1.96 * se
+ci_upper <- estimates + 1.96 * se
+
+results <- data.frame(
+  term = rownames(coefs),
+  Estimate = estimates,
+  SE = se,
+  RR = exp(estimates),
+  RR_lower = exp(ci_lower),
+  RR_upper = exp(ci_upper),
+  p_value = coefs[, "Pr(>|W|)"]
+)
+
+results |>
+  mutate(across(c(Estimate, SE, RR, RR_lower, RR_upper), ~round(.x, 3))) |>
+  mutate(p_value = format.pval(p_value, digits = 3))
+```
+
+---
+
+## Interpreting Treatment Effect
+
+**Treatment coefficient:** $\hat\beta =$ `r round(b_trt, 3)`
+
+**Rate Ratio:** $\exp(\hat\beta) =$ `r round(rr_trt, 3)`
+
+**95% CI:** (`r round(rr_lo, 2)`, `r round(rr_hi, 2)`)
+
+**Interpretation:** On average, progabide patients have about `r abs(pct_trt)`% `r ifelse(rr_trt < 1, "lower", "higher")` seizure rates than placebo, `r ifelse(p_trt < 0.05, "a significant effect", "but this effect is not statistically significant")` (p = `r round(p_trt, 2)`).
+
+::: {.notes}
+Every number on this slide is pulled inline from the fitted exchangeable GEE, so it cannot drift from the summary() output. Walk students through: coefficient is on the log-rate scale, exponentiate to a rate ratio, the CI is Wald from the robust SE. The substantive read is a modest, non-significant reduction. This matches FLW's progabide finding.
+:::
+
+---
+
+## Plain-Language Interpretation: GEE Output
+
+```{r}
+#| label: plain-lang
+#| echo: false
+data.frame(
+  Term = c("trtProgabide", "log_base", "log_age", "visit"),
+  Coefficient = round(c(b_trt, b_base, b_age, b_visit), 3),
+  `Rate Ratio` = round(exp(c(b_trt, b_base, b_age, b_visit)), 3),
+  check.names = FALSE
+) |>
+  knitr::kable()
+```
+
+- **trtProgabide:** rate ratio `r round(rr_trt, 2)`, about `r abs(pct_trt)`% `r ifelse(rr_trt<1,"lower","higher")` (not significant)
+- **log_base:** strongest predictor; higher baseline rate -> higher rate throughout
+- **visit:** small `r ifelse(b_visit<0,"decline","increase")` per visit
+
+::: {.notes}
+The table is computed from the fit, not transcribed, so it always matches. Baseline seizure rate (log_base) is by far the strongest predictor, which is clinically sensible. Treatment is the question of interest but is modest and non-significant. Keep the verbal summary to the two or three terms that matter.
+:::
+
+---
+
+## Effect of Baseline Seizure Rate
+
+```{r}
+#| label: baseline-effect
+#| echo: false
+rr_double <- exp(b_base * log(2))
+```
+
+**log_base coefficient:** $\hat\beta =$ `r round(b_base, 3)`
+
+For each **doubling** of baseline rate:
+$$\exp(\hat\beta \times \log 2) = \exp(`r round(b_base*log(2), 3)`) = `r round(rr_double, 2)`$$
+
+Patients with higher baseline rates continue to have higher rates on treatment.
+
+::: {.notes}
+Show the doubling calculation because log_base is on the log scale: a doubling of baseline multiplies the predicted rate by about `r round(rr_double, 2)`. This is the kind of derived quantity students should be able to compute from a coefficient. Numbers are inline so they stay correct.
+:::
+
+---
+
+## Predicted Rates
+
+```{r}
+#| label: predictions
+#| echo: true
+#| output-location: slide
+# Predictions for average patient
+newdata <- expand.grid(
+  trt = levels(epi$trt),
+  log_base = log(median(epi_raw$base) / 4),
+  log_age = log(median(epi_raw$age)),
+  visit = 1:4
+)
+
+# Use the model matrix to show the linear-predictor mechanics
+# (predict(gee_exch, newdata, type = "response") would also work)
+X <- model.matrix(~ trt + log_base + log_age + visit, data = newdata)
+newdata$pred_rate <- exp(X %*% coef(gee_exch))
+
+ggplot(newdata, aes(visit, pred_rate, color = trt)) +
+  geom_line(linewidth = 1.2) +
+  geom_point(size = 3) +
+  labs(
+    title = "Predicted Seizure Rates (Median Patient)",
+    x = "Visit",
+    y = "Predicted Seizures per 2 Weeks",
+    color = "Treatment"
+  ) +
+  theme_minimal()
+```
+
+::: {.notes}
+Predicted population-average seizure rates for a median patient. The two lines are the two arms; the small vertical gap is the treatment rate ratio. Note these are marginal (population-average) predictions, appropriate for GEE. We build them from the model matrix to expose the linear-predictor mechanics, but predict() would give the same answer.
+:::
+
+---
+
+## GEE Extensions: Overdispersion
+
+For count data, we may have overdispersion ($\phi > 1$):
+
+```{r}
+#| label: overdispersion
+#| echo: true
+#| output-location: slide
+# Estimate dispersion
+pearson_stat <- sum(residuals(gee_exch, type = "pearson")^2)
+df_resid <- nrow(epi) - length(coef(gee_exch))
+phi_hat <- pearson_stat / df_resid
+
+cat("Estimated dispersion:", round(phi_hat, 2), "\n")
+cat("Evidence of overdispersion:", ifelse(phi_hat > 1.5, "Yes", "Moderate/No"))
+```
+
+---
+
+## Handling Overdispersion
+
+Options for overdispersed count data:
+
+1. **Scale parameter:** Multiply variance by $\hat\phi$
+2. **Negative binomial:** Different variance function
+3. **Robust SEs:** Already account for variance misspecification
+
+GEE with robust SEs handles overdispersion automatically.
+
+---
+
+## Summary
+
+---
+
+## Key Takeaways
+
+| Topic | Main Point |
+|-------|------------|
+| GEE estimation | Consistent $\hat\beta$ even with wrong correlation |
+| Working correlation | Affects efficiency, not consistency |
+| Robust SEs | Default; protects against misspecification |
+| Small samples | Use bias corrections for $N < 40$ |
+| Diagnostics | Residuals, QIC/QICu, sensitivity analysis |
+| Missing data | **Standard GEE requires MCAR; IPW-GEE valid under MAR** |
+| vs. Mixed models | Different interpretations for non-linear links; marginal effects attenuated |
+
+---
+
+## GEE Checklist for Practice
+
+1. Choose appropriate **link** and **variance** function
+2. Select reasonable **working correlation** (start exchangeable/AR1)
+3. Always report **robust SEs** (default in geepack)
+4. Check **QIC** to compare correlation structures
+5. Examine **residuals** and influential clusters
+6. Conduct **sensitivity analyses** for outliers
+7. Consider **small-sample corrections** if $N < 40$
+8. If dropout > 10% and MAR plausible, use **IPW-GEE**
+
+---
+
+## Common Mistakes in GEE
+
+| Mistake | Why It Is Wrong | Correct Approach |
+|---------|-----------------|------------------|
+| Using standard GEE with MAR dropout | Standard GEE only valid for MCAR | Use IPW-GEE or likelihood-based methods |
+| Ignoring small-sample issues | Sandwich SEs biased downward for N < 40 | Use bias-corrected SEs (KC, FG, MD) |
+| Using model-based SEs as default | Only valid if correlation is correct | Report robust (sandwich) SEs |
+| Comparing QIC across different mean models | QIC compares correlation structures | Use QICu for mean model comparison |
+| Forgetting to check residuals | May miss mean model misspecification | Always examine residual plots |
+| Treating GEE $\beta$ as subject-specific | GEE gives population-average effects | Use GLMM for conditional effects |
+| Using unstructured correlation with few subjects | Too many parameters to estimate | Use simpler structures (exchangeable, AR1) |
+
+---
+
+## GEE Recipe Card: A Step-by-Step Workflow
+
+::: {.callout-tip}
+## GEE Analysis in 8 Steps
+
+**Step 1: Specify the outcome distribution**
+
+- Binary: `family = binomial(link = "logit")`
+- Count: `family = poisson(link = "log")`
+- Continuous: `family = gaussian(link = "identity")`
+
+**Step 2: Start with a simple working correlation**
+
+- `corstr = "exchangeable"` for general clustering
+- `corstr = "ar1"` for time-ordered data
+
+**Step 3: Fit the model**
+
+```r
+fit <- geeglm(y ~ x1 + x2 + time, id = subject_id,
+              data = mydata, family = ..., corstr = "exchangeable")
+```
+
+**Step 4: Check diagnostics**
+
+- Residuals vs fitted
+- Residuals by time
+- Cluster-level residuals for outliers
+
+**Step 5: Compare correlation structures via QIC**
+
+```r
+QIC(fit_exch); QIC(fit_ar1); QIC(fit_unstr)
+```
+
+**Step 6: Assess standard errors**
+
+- Always report robust SEs (default in geepack)
+- If N < 40, consider bias-corrected SEs or bootstrap
+
+**Step 7: Handle missing data**
+
+- If MCAR: standard GEE is valid
+- If MAR: use IPW-GEE with weights
+
+**Step 8: Report results**
+
+- Exponentiate coefficients for OR/RR interpretation
+- Include 95% CI from robust SEs
+- Note working correlation and QIC
+:::
+
+---
+
+## The Same GEE Fit in SAS
+
+For SAS users, the exchangeable Poisson GEE is `PROC GENMOD` with a `REPEATED` statement (shown for reference, not run):
+
+```sas
+proc genmod data=epi;
+   class id trt;
+   model seizures = trt log_base log_age visit / dist=poisson link=log;
+   repeated subject=id / type=exch corrw modelse;
+run;
+```
+
+- `class id trt;` declares the cluster id and the categorical treatment
+- `dist=poisson link=log;` is the marginal Poisson-log mean model
+- `repeated subject=id / type=exch` requests the **exchangeable** working correlation (use `type=ar(1)` or `type=un` for the others)
+- `corrw` prints the estimated working correlation; `modelse` adds the model-based SEs alongside the default empirical (sandwich) SEs
+
+::: {.notes}
+This is the SAS analogue of the geeglm fits, included so a SAS-using substitute or student is not stranded. The REPEATED statement is what makes it GEE rather than an independence GLM; SUBJECT=id is the cluster. TYPE= maps directly to corstr in geepack. By default PROC GENMOD reports the empirical (sandwich) SEs; modelse adds the model-based ones for comparison, which is exactly the Part III comparison. Not executed here, reference only.
+:::
+
+---
+
+## For Next Time
+
+- Chapter 14: Transition models
+- Modeling dependence on previous outcomes
+- Comparison: marginal vs transition interpretations
+
+**Reading:** FLW Chapter 14
+
+---
+
+## Further Reading
+
+- **FLW Ch. 13** (this chapter): marginal models, GEE, working correlation, sandwich SEs, the Section 13.4 case studies (Muscatine, leprosy, arthritis)
+- **FLW Ch. 17-18:** inverse probability weighting and IPW-GEE for MAR dropout (the proper development of Part VII)
+- **Liang & Zeger (1986):** the original GEE paper
+- **Pan (2001):** QIC for GEE model selection (the Part V extension)
+
+---
+
+## References
+
+- Fitzmaurice, Laird, Ware (2011). *Applied Longitudinal Analysis*. Ch. 13 (GEE, pp. 354-393); IPW-GEE developed in Ch. 17-18.
+- Liang, Zeger (1986). Longitudinal data analysis using generalized linear models. *Biometrika*.
+- Pan (2001). Akaike's information criterion in generalized estimating equations. *Biometrics*. (QIC; beyond Ch. 13)
+- Kauermann, Carroll (2001); Fay, Graubard (2001); Mancl, DeRouen (2001). Small-sample sandwich corrections. *JASA / Biometrics*. (beyond Ch. 13)
+- Robins, Rotnitzky, Zhao (1995). Semiparametric regression with missing data. *JASA*. (IPW)
+
+---
+
+## Appendix A: GEE Derivation and Fisher Scoring
+
+The generalized estimating equation:
+
+$$
+U(\boldsymbol\beta) = \sum_{i=1}^{N} \mathbf{D}_i^\top \mathbf{V}_i^{-1}(\mathbf{Y}_i - \boldsymbol\mu_i) = 0
+$$
+
+is solved by an iterative update (Fisher scoring, using the expected information):
+
+$$
+\hat{\boldsymbol\beta}^{(t+1)} = \hat{\boldsymbol\beta}^{(t)} + \left(\sum_i \mathbf{D}_i^\top \mathbf{V}_i^{-1} \mathbf{D}_i\right)^{-1} \sum_i \mathbf{D}_i^\top \mathbf{V}_i^{-1}(\mathbf{Y}_i - \boldsymbol\mu_i^{(t)})
+$$
+
+**Fisher scoring vs Newton-Raphson:** Fisher scoring uses the *expected* information (model-based, more stable); Newton-Raphson uses the *observed* information (data-based). They coincide for GLMs with a canonical link in the IRLS sense, but that exact equivalence does not carry over to GEE with a non-identity working correlation. The update above is iteratively reweighted least squares with the current weights.
+
+---
+
+## Appendix B: Sandwich Variance
+
+The robust variance estimator:
+
+$$
+\widehat{\operatorname{Var}}(\hat{\boldsymbol\beta}) = \mathbf{B}^{-1} \mathbf{M} \mathbf{B}^{-1}
+$$
+
+where (bread):
+
+$$
+\mathbf{B} = \sum_i \mathbf{D}_i^\top \mathbf{V}_i^{-1} \mathbf{D}_i
+$$
+
+and (meat):
+
+$$
+\mathbf{M} = \sum_i \mathbf{D}_i^\top \mathbf{V}_i^{-1} (\mathbf{Y}_i - \hat{\boldsymbol\mu}_i)(\mathbf{Y}_i - \hat{\boldsymbol\mu}_i)^\top \mathbf{V}_i^{-1} \mathbf{D}_i
+$$
+
+---
+
+## Appendix C: QIC Formula (Pan 2001; beyond Ch. 13)
+
+$$
+\operatorname{QIC}(R) = -2Q(\hat{\boldsymbol\beta}_R; I) + 2\operatorname{trace}(\hat{\boldsymbol\Omega}_I^{-1} \hat{\mathbf{V}}_R)
+$$
+
+For comparing mean models with the same correlation:
+
+$$
+\operatorname{QICu} = -2Q(\hat{\boldsymbol\beta}; I) + 2p
+$$
+
+- $Q(\hat{\boldsymbol\beta}; I)$ is the quasi-likelihood evaluated under the **independence** working model
+- $\hat{\boldsymbol\Omega}_I$ is the independence-model (naive) variance
+- Smaller QIC indicates a better model

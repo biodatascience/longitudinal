@@ -1,0 +1,48 @@
+---
+title: "BIOS 667: Applied Longitudinal Data Analysis"
+---
+
+Course materials for BIOS 667 at the UNC Gillings School of Global Public Health,
+based on Fitzmaurice, Laird & Ware (2011), *Applied Longitudinal Analysis* (2nd ed.).
+
+### Course information
+
+Department of Biostatistics, UNC Chapel Hill.
+
+To work with the source files, clone the
+[course repository](https://github.com/biodatascience/longitudinal) and open it in
+RStudio (or any Quarto-aware editor). Install the R packages once with
+`Rscript 2026/setup.R`; see the repository `README.md` for setup details.
+
+### Schedule and materials
+
+Lecture links open the rendered slides (RevealJS). Homework and quiz links open the
+student versions; solution keys are distributed separately.
+
+| Module | Ch. | Lecture | HW | Quiz |
+|:--|:--|:--|:--|:--|
+| **1. Foundations** | 1 | [L01 Introduction to longitudinal data](2026/lectures/BIOS667_L01_Intro_ch1.html) | | |
+| | 2 | [L02 Basic concepts](2026/lectures/BIOS667_L02_BasicConcepts_ch2.html) | | |
+| | 3 | [L03 Overview of linear models](2026/lectures/BIOS667_L03_LinearModelsOverview_ch3.html) | [HW1](2026/homework/HW1.html) | [Quiz 1](2026/quizzes/Quiz1.html) |
+| **2. The mean model** | 4 | [L04 Estimation and inference](2026/lectures/BIOS667_L04_EstimationInference_ch4.html) | | |
+| | 5 | [L05 Response profiles](2026/lectures/BIOS667_L05_ResponseProfiles_ch5.html) | | |
+| | 6 | [L06 Parametric curves](2026/lectures/BIOS667_L06_ParametricCurves_ch6.html) | [HW2](2026/homework/HW2.html) | [Quiz 2](2026/quizzes/Quiz2.html) |
+| **3. The covariance model** | 7 | [L07 Modeling the covariance](2026/lectures/BIOS667_L07_Covariance_ch7.html) | | |
+| | 8 | [L08 Linear mixed-effects models](2026/lectures/BIOS667_L08_Covariance_ch8_LME.html) | | |
+| | 9 | [L09 Fixed vs random effects](2026/lectures/BIOS667_L09_Covariance_ch9_FEvsRE.html) | [HW3](2026/homework/HW3.html) | [Quiz 3](2026/quizzes/Quiz3.html) |
+| **4. Discrete responses** | 10 | [L10 Residual analyses and diagnostics](2026/lectures/BIOS667_L10_Residual_Diagnostics.html) | | |
+| | 11 | [L11 Generalized linear models](2026/lectures/BIOS667_L11_GLMs.html) | | |
+| | 12 | [L12 Marginal models](2026/lectures/BIOS667_L12_Marginal.html) | | |
+| | 13 | [L13 GEE extensions](2026/lectures/BIOS667_L13_GEE_Extensions_ch13.html) | [HW4](2026/homework/HW4.html) | [Quiz 4](2026/quizzes/Quiz4.html) |
+| **5. Mixed models for discrete data** | 14 | [L14 Generalized linear mixed models](2026/lectures/BIOS667_L14_GLMMs_ch14.html) | | |
+| | 14 | [L15 GLMM random slopes](2026/lectures/BIOS667_L15_GLMM_RandomSlopes_ch14.html) | | |
+| | 16 | [L16 Contrasting marginal and mixed models](2026/lectures/BIOS667_L16_ContrastingModels.html) | [HW5](2026/homework/HW5.html) | [Quiz 5](2026/quizzes/Quiz5.html) |
+| **6. Missing data and transitions** | 17 | [L17 Missing data and dropout](2026/lectures/BIOS667_L17_MissingData_ch17.html) | | |
+| | 18 | [L18 Multiple imputation and weighting](2026/lectures/BIOS667_L18_MissingData_Advanced_ch18.html) | | |
+| | * | [L19 Transition (Markov) models](2026/lectures/BIOS667_L19_TransitionModels.html) | [HW6](2026/homework/HW6.html) | [Quiz 6](2026/quizzes/Quiz6.html) |
+
+: {tbl-colwidths="[26,6,46,11,11]"}
+
+\* L19 (transition models) is an instructor topic; transition models are FLW 1st-edition Ch. 10, not a 2nd-edition chapter.
+
+This page was last updated on `r format(Sys.Date(), "%m/%d/%Y")`.

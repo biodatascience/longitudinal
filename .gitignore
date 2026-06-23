@@ -1,0 +1,20 @@
+# Quarto render outputs (the website builds to _site/; publish copies it to gh-pages)
+_site/
+.quarto/
+/.quarto/
+*_files/
+*_cache/
+**/*.quarto_ipynb
+
+# Stray standalone-render artifacts (the website project renders into _site/ only)
+/index.html
+/site_libs/
+
+# R / RStudio
+.Rproj.user/
+.Rhistory
+.RData
+.Ruserdata
+
+# OS / editor
+.DS_Store

@@ -1,0 +1,1334 @@
+---
+title: "BIOS 667 - Lecture 5: Modeling the Mean - Response Profiles (Ch. 5)"
+subtitle: "Fitzmaurice, Laird & Ware (2011) - Applied Longitudinal Data Analysis"
+author: "Naim Rashid"
+format:
+  revealjs:
+    theme: [default]
+    footer: BIOS 667 · UNC Gillings - Lecture 5 (Ch.5)
+    slide-number: true
+    hash: true
+    toc: false
+    code-overflow: wrap
+    code-line-numbers: false
+    math: mathjax
+    incremental: true
+    embed-resources: true
+    chalkboard: false
+    scrollable: true
+    css: "../../unc-gillings.css"
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+## Lecture Objectives
+
+By the end of this lecture, you will be able to:
+
+- Define response profiles and explain when they are appropriate for longitudinal data
+- Formulate and test the three key hypotheses: parallelism, flatness, and same level
+- Set up the general linear model (LM) framework for response profile analysis
+- Choose among four baseline handling strategies based on study design
+- Implement response profile analysis in R using `nlme::gls()` with unstructured covariance
+
+---
+
+## Roadmap
+
+| Section | Topic |
+|---------|-------|
+| 1 | Motivation and concept of response profiles |
+| 2 | Three hypotheses concerning profiles |
+| 3 | General linear model (LM) setup and design matrices |
+| 4 | Baseline value strategies |
+| 5 | Strengths and weaknesses |
+| 6 | R computing example (TLC trial) |
+
+**Pacing:** Spans 2 class periods. Part I (Day 1): Sections 1-3 (concept, hypotheses, LM setup), about 40-45 min. Part II (Day 2): Sections 4-6 (baseline strategies, strengths, computing), about 45-50 min.
+
+---
+
+## Recall from Lecture 4 (Ch. 4)
+
+Response profiles are the first place we **use** the estimation and inference machinery from Lecture 4:
+
+- **GLS / ML** estimation of $\boldsymbol\beta$ given a covariance $\Sigma_i$ (here left unstructured).
+- **REML** for the covariance parameters; **ML** when we compare nested mean models by likelihood-ratio test.
+- The **LRT / Wald** tests, which we use below to test parallelism, flatness, and group differences.
+
+So this lecture is "Chapter 4 applied to the mean response over time."
+
+::: {.notes}
+- One-slide bridge. Remind them Lecture 4 gave the tools (GLS/ML, REML vs ML, the LRT); this lecture is the first real application to a scientific question.
+- The key carry-over: fit the covariance by REML, but refit competing mean models by ML before a likelihood-ratio test.
+:::
+
+---
+
+{{< include _notation_box_intro.qmd >}}
+
+## Notation for this lecture (Ch. 5)
+
+::: {.callout-note .notation-card}
+## Counts and indices (FLW convention)
+
+Response profiles assume a **balanced** design: $N$ subjects, each measured at the **same** $n$ occasions, in $G$ groups.
+
+| Symbol | Meaning |
+|:--|:--|
+| $N$ | number of **subjects** ($i = 1,\dots,N$) |
+| $n$ | number of **occasions**, common to all subjects ($j = 1,\dots,n$) |
+| $G$ | number of **groups** ($g = 1,\dots,G$ indexes group) |
+| $\Sigma_i$ | marginal covariance of $\mathbf{Y}_i$: $\Sigma_i = \operatorname{Cov}(\mathbf{Y}_i)$ (FLW's letter) |
+
+This is the standard FLW convention ($N$ subjects, $n$ occasions); the running notation card uses the same $N$ for subjects and $n_i$ for occasions, which here is the constant $n$. Ch. 5 is purely marginal (no random effects), so $\Sigma_i$ is the full (unstructured) covariance of $\mathbf{Y}_i$, exactly FLW's $\operatorname{Cov}(\mathbf{Y}_i\mid\mathbf{X}_i)=\Sigma_i$; the deck sometimes drops the subscript and writes $\Sigma$. Reserved symbols ($X$, $\boldsymbol\beta$, $Z$, $b$) keep their usual roles.
+:::
+
+::: {.callout-note}
+## Sub/superscript key
+Superscript $(g)$ = group $g$; subscript $j$ = occasion $j$. So $\mu_j^{(g)}$ is the mean at occasion $j$ in group $g$.
+:::
+
+# Part I (Day 1): Concept, Hypotheses, and the LM Setup
+
+::: {.notes}
+- Day 1 covers Sections 1-3: the concept of response profiles, the three hypotheses, and the general linear model (LM) design.
+- Pace: about 40-45 minutes. Sections 1-2 are quick (concept + hypotheses); spend the back half on the LM design and contrasts.
+- Goal by end of Day 1: students can state parallelism / flatness / same-level formally and write the cell-means design matrix.
+:::
+
+# Section 1: Motivation and Concept
+
+## Why Response Profiles?
+
+**Goal:** Analyze longitudinal data with minimal structure on:
+
+- Mean response trajectory
+- Covariance among repeated measures
+
+---
+
+## What Are Response Profiles?
+
+Response profiles are sequences of group-specific mean responses over time.
+
+**Key features:**
+
+- Applies to **balanced longitudinal designs**
+- Same measurement occasions for all subjects
+- Can accommodate **missing data** (balanced but incomplete designs)
+
+---
+
+## Computing Group-Specific Means
+
+Suppose groups are defined by treatment or observational factors.
+
+At each time $t_j$, compute the group-specific mean:
+
+$$
+\hat{\mu}_g(t_j) = \frac{1}{n_g} \sum_{i \in g} Y_{ij}
+$$
+
+Plotting $\hat{\mu}_g(t_j)$ over time yields the **mean response profile**.
+
+::: {.callout-note}
+Profiles capture *patterns of change* rather than imposing parametric structure.
+:::
+
+---
+
+## Example: TLC Trial Data
+
+```{r}
+#| echo: true
+#| output-location: slide
+# Published TLC group means from FLW Table 5.6; full long data loaded later (Section 6)
+time <- c(0, 1, 4, 6)
+succimer <- c(26.5, 13.5, 15.5, 20.8)
+placebo  <- c(26.3, 24.7, 24.1, 23.6)
+
+plot(time, succimer, type="b", col="blue", pch=19, ylim=c(10,30),
+     xlab="Time (weeks)", ylab="Mean Blood Lead (µg/dL)",
+     main="TLC group means (FLW Table 5.6)")
+lines(time, placebo, type="b", col="red", pch=17)
+legend("topright", legend=c("Succimer", "Placebo"),
+       col=c("blue","red"), pch=c(19,17))
+```
+
+::: {.notes}
+- This is the motivating picture for the whole lecture: two group mean profiles over four occasions.
+- Emphasize: succimer drops sharply at week 1, then rebounds; placebo stays flat. The profiles are clearly NOT parallel.
+- These are the actual published TLC group means from FLW Table 5.6, not synthetic numbers; we load and fit the full TLC trial in Section 6.
+- Common student question: "why not just fit a line?" Answer: we are imposing no functional form, just cell means per occasion.
+- Transition: the eye sees non-parallel profiles. Next we make "parallel" a formal, testable hypothesis.
+:::
+
+---
+
+## TLC Trial Observations
+
+| Group | Pattern |
+|-------|---------|
+| Succimer | Sharp decline post-baseline, then rebound |
+| Placebo | Remains relatively stable over time |
+
+---
+
+## Discussion: Handling Baseline
+
+Baseline measurements are special:
+
+- Typically pre-randomization in trials (independent of treatment)
+- May be range-restricted or differ systematically in observational studies
+
+---
+
+## Key Question: How Should Baseline Be Handled?
+
+| Option | Description |
+|--------|-------------|
+| Include in profile | Treat baseline as part of the response vector |
+| Adjust explicitly | Use ANCOVA or contrasts |
+
+Implications for hypothesis testing, efficiency, and power.
+
+---
+
+## Think-Pair-Share
+
+::: {.callout-tip}
+**Discussion questions:**
+
+1. In a randomized trial, why is it reasonable to treat baseline as independent of treatment?
+2. How might this differ in an observational study?
+:::
+
+---
+
+::: {.callout-note collapse="true"}
+## Check Your Understanding: Response Profiles Basics
+
+1. What type of longitudinal design is response profile analysis best suited for?
+2. Why do we call them "response profiles" rather than "response curves"?
+3. In the TLC trial plot, what does the sharp drop in the Succimer group at week 1 suggest?
+
+**Answers:**
+
+1. **Balanced longitudinal designs** where all subjects have the same planned measurement occasions (though missing data is allowed)
+2. Because we estimate **discrete means at each time point** rather than assuming a continuous functional form (e.g., linear, quadratic)
+3. The treatment has an immediate, strong effect on reducing blood lead levels, but the rebound suggests the effect may not be sustained
+:::
+
+# Section 2: Hypotheses Concerning Profiles
+
+## Three Main Hypotheses
+
+Given $n$ occasions (time points) across $G$ groups, we test:
+
+| Hypothesis | Description | Degrees of Freedom |
+|------------|-------------|-------------------|
+| $H_{01}$ | Parallelism (no group $\times$ time interaction) | $(G-1)(n-1)$ |
+| $H_{02}$ | Flatness (no time effect) | $n-1$ |
+| $H_{03}$ | Same level (no group effect) | $G-1$ |
+
+::: {.callout-note}
+$G$ = number of groups, $n$ = number of occasions (Ch. 5 convention). Tiny example: $G=2$ groups, $n=4$ occasions gives parallelism df $=(G-1)(n-1) = 1 \times 3 = 3$.
+:::
+
+::: {.notes}
+- These three hypotheses are the entire inferential agenda for response profiles. Write them on the board before showing the table.
+- Re-state the Ch. 5 convention out loud: here $n$ is OCCASIONS, $N$ is subjects. This is the single most common source of confusion in this chapter.
+- Walk the df: parallelism counts the free group-by-time interaction contrasts, $(G-1)(n-1)$; flatness is $n-1$ time contrasts; same-level is $G-1$ group contrasts.
+- Common student error: reading $n$ as the sample size. Plug in $G=2, n=4$ on the board to anchor it.
+- Transition: parallelism is the gatekeeper test, so we cover the testing order next.
+:::
+
+---
+
+## Testing Order Principle
+
+**If $H_{01}$ is rejected**, main effects ($H_{02}$, $H_{03}$) are not directly interpretable due to the presence of interaction.
+
+**Takeaway:** Test parallelism first; only then consider main effects.
+
+---
+
+## Randomized vs. Observational Studies
+
+| Study Type | Baseline Property | Primary Focus |
+|------------|-------------------|---------------|
+| Randomized trial | Groups equal at baseline by design | $H_{01}$ (patterns of change) |
+| Observational | Groups may differ at baseline | $H_{02}$, $H_{03}$ meaningful if $H_{01}$ holds |
+
+---
+
+## Visual: Parallel Profiles (No Interaction)
+
+Two groups with **parallel** mean trajectories (constant difference over time).
+
+```{r}
+#| echo: true
+#| output-location: slide
+set.seed(1)
+t <- 1:5
+mu1 <- 10 + 2*t                # Group 1
+mu2 <- 12 + 2*t                # Group 2 (constant +2 offset)
+
+plot(t, mu1, type="b", pch=19, ylim=range(c(mu1, mu2)),
+     xlab="Time", ylab="Mean Response", main="(a) Parallel Mean Profiles")
+lines(t, mu2, type="b", pch=17)
+abline(v=t, col="gray90", lty=3)
+legend("topleft", legend=c("Group 1","Group 2"), pch=c(19,17), bty="n")
+```
+
+---
+
+## Visual: Flat Profiles (No Time Effect)
+
+Assuming parallelism holds, flat profiles test:
+
+$$
+H_{02}: \mu_1 = \mu_2 = \cdots = \mu_n
+$$
+
+```{r}
+#| echo: true
+#| output-location: slide
+t <- 1:5
+mu1 <- rep(15, length(t))
+mu2 <- rep(20, length(t))
+
+plot(t, mu1, type="b", pch=19, ylim=range(c(mu1, mu2)),
+     xlab="Time", ylab="Mean Response", main="(b) Flat Mean Profiles (No Time Effect)")
+lines(t, mu2, type="b", pch=17)
+abline(v=t, col="gray90", lty=3)
+legend("topleft", legend=c("Group 1","Group 2"), pch=c(19,17), bty="n")
+```
+
+---
+
+## Visual: Same Level (No Group Effect)
+
+Assuming parallelism holds, same level tests:
+
+$$
+H_{03}: \boldsymbol{\mu}^{(1)} = \boldsymbol{\mu}^{(2)} = \cdots = \boldsymbol{\mu}^{(G)}
+$$
+
+```{r}
+#| echo: true
+#| output-location: slide
+t <- 1:5
+mu  <- 10 + 1.5*t
+
+# The two group profiles coincide by construction (no group effect);
+# add a tiny vertical jitter so both series are visible.
+plot(t, mu, type="b", pch=19, ylim=range(mu),
+     xlab="Time", ylab="Mean Response", main="(c) Same Level Across Groups (No Group Effect)")
+lines(t, mu + 0.1, type="b", pch=17, col="gray40")
+abline(v=t, col="gray90", lty=3)
+legend("topleft", legend=c("Group 1","Group 2 (jittered)"), pch=c(19,17),
+       col=c("black","gray40"), bty="n")
+```
+
+---
+
+## Formal Statement: Two Groups
+
+For Treatment ($T$) vs. Control ($C$), define:
+
+$$
+\Delta_j = \mu_j^{(T)} - \mu_j^{(C)}
+$$
+
+Test parallelism:
+
+$$
+H_{01}: \Delta_1 = \Delta_2 = \cdots = \Delta_n \quad (n-1 \text{ df})
+$$
+
+::: {.notes}
+- This is the formal definition of parallelism: define the group gap $\Delta_j$ at each occasion, then ask whether that gap is constant across occasions.
+- Emphasize the picture-to-algebra bridge: "parallel profiles" means "$\Delta_j$ does not depend on $j$".
+- With two groups parallelism has $n-1$ df: there are $n$ gaps but the null sets them all equal, leaving $n-1$ free comparisons.
+- Common student error: thinking $\Delta_j = 0$ is the null. It is not; the gap can be large, it just has to be the SAME at every occasion.
+- Transition: with more than two groups we carry a $\Delta$ per non-reference group, which multiplies the df.
+:::
+
+---
+
+## Formal Statement: More Than Two Groups
+
+With reference group $G$, define:
+
+$$
+\Delta_j^{(g)} = \mu_j^{(g)} - \mu_j^{(G)}
+$$
+
+Test parallelism:
+
+$$
+H_{01}: \Delta_1^{(g)} = \cdots = \Delta_n^{(g)} \quad \forall g=1,\dots,G-1
+$$
+
+with $(G-1)(n-1)$ degrees of freedom.
+
+---
+
+::: {.callout-note collapse="true"}
+## Check Your Understanding: Profile Hypotheses
+
+1. If you have 3 groups and 5 time points, how many degrees of freedom does the parallelism test have?
+2. Why should you test parallelism ($H_{01}$) before interpreting main effects?
+3. If profiles are parallel, what does rejecting $H_{02}$ (flatness) tell you?
+
+**Answers:**
+
+1. $(G-1)(n-1) = (3-1)(5-1) = 8$ degrees of freedom
+2. If there is a group $\times$ time interaction (non-parallel profiles), the "group effect" and "time effect" vary depending on which time/group you look at - main effects are not meaningful without specifying the level of the other factor
+3. Rejecting flatness means there **is** a time effect - the mean response changes over time (at least one time point differs from the others)
+:::
+
+# Section 3: General Linear Model (LM) Setup
+
+## The General Linear Model (LM) for Response Profiles
+
+Represent mean response profiles using the general (normal-errors) linear model, the **LM**:
+
+$$
+E(\mathbf{Y}_i \mid \mathbf{X}_i) = \boldsymbol{\mu}_i = \mathbf{X}_i \boldsymbol{\beta}
+$$
+
+**Notation (Ch. 5):**
+
+| Symbol | Meaning |
+|--------|---------|
+| $n$ | Number of occasions (time points) |
+| $N$ | Number of subjects |
+| $G$ | Number of groups |
+| Total parameters | $G \times n$ |
+
+::: {.callout-note}
+"LM" here is the **general** linear model with normal errors. It is not the **generalized** linear model (GLM), which we reach in Ch. 11.
+:::
+
+::: {.notes}
+- Anchor the whole section: the cell means $\mu_j^{(g)}$ are just regression coefficients in an LM, so all our machinery (contrasts, Wald, LRT) applies.
+- Be explicit that "LM" = general linear model with normal errors; reserve "GLM" for the generalized linear model in Ch. 11. Students conflate these constantly.
+- Re-state the count: $G$ groups times $n$ occasions gives $G \times n$ free cell means in the saturated mean model.
+- Common student error: treating $X_i$ as a fixed design across subjects. It is subject-specific; rows drop out when occasions are missing.
+- Transition: make it concrete with two groups and three occasions.
+:::
+
+---
+
+## Example: Two Groups, Three Occasions
+
+Mean response profiles (column vectors):
+
+$$
+\boldsymbol{\mu}^{(1)} =
+\begin{pmatrix} \mu_1^{(1)} \\ \mu_2^{(1)} \\ \mu_3^{(1)} \end{pmatrix}, \quad
+\boldsymbol{\mu}^{(2)} =
+\begin{pmatrix} \mu_1^{(2)} \\ \mu_2^{(2)} \\ \mu_3^{(2)} \end{pmatrix}
+$$
+
+Parameter vector:
+
+$$
+\boldsymbol{\beta} = (\beta_1, \beta_2, \ldots, \beta_6)^\top
+$$
+
+---
+
+## Design Matrix Example
+
+For a subject in **group 1** with all three occasions (cell-means coding):
+
+$$
+\mathbf{X}_i =
+\begin{bmatrix}
+1 & 0 & 0 & 0 & 0 & 0 \\
+0 & 1 & 0 & 0 & 0 & 0 \\
+0 & 0 & 1 & 0 & 0 & 0
+\end{bmatrix}
+$$
+
+Columns 1-3 are the **group-1 cell means** (occasions 1, 2, 3); columns 4-6 are the **group-2 cell means**. So $\mathbf{X}_i \boldsymbol{\beta}$ picks out group 1 here. The map is:
+
+$$
+\beta_1 = \mu_1^{(1)},\ \beta_2 = \mu_2^{(1)},\ \beta_3 = \mu_3^{(1)},\quad
+\beta_4 = \mu_1^{(2)},\ \beta_5 = \mu_2^{(2)},\ \beta_6 = \mu_3^{(2)}
+$$
+
+::: {.notes}
+- This is the workhorse design: each column is one group-by-occasion cell mean, so $\boldsymbol{\beta}$ IS the vector of cell means. No intercept-plus-contrasts to decode.
+- Walk it row by row: a group-1 subject's row $j$ has a single 1 in the group-1 occasion-$j$ column, so $E(Y_{ij}) = \beta_j$.
+- Point at columns: 1-3 are group 1's three means, 4-6 are group 2's three means. A group-2 subject would have 1s in columns 4-6 instead.
+- Common student error: expecting an intercept column. Cell-means coding has none; every column is a mean.
+- Transition: hypotheses about parallelism are now just linear restrictions on this $\boldsymbol{\beta}$.
+:::
+
+---
+
+## Expressing Hypotheses via Contrasts
+
+Hypothesis of no group $\times$ time interaction:
+
+$$
+H_{01}: \mathbf{L}\boldsymbol{\beta} = \mathbf{0}
+$$
+
+Each row of $\mathbf{L}$ encodes one $\Delta_j - \Delta_{j+1} = 0$ comparison, where $\Delta_j = \mu_j^{(2)} - \mu_j^{(1)}$. With $\boldsymbol{\beta} = (\mu_1^{(1)},\mu_2^{(1)},\mu_3^{(1)},\mu_1^{(2)},\mu_2^{(2)},\mu_3^{(2)})^\top$, one row testing $\Delta_1 = \Delta_2$ is:
+
+$$
+\mathbf{L}_{\text{row 1}} = \begin{pmatrix} -1 & 1 & 0 & 1 & -1 & 0 \end{pmatrix}
+\;\Rightarrow\;
+\mathbf{L}_{\text{row 1}}\boldsymbol{\beta} = (\mu_2^{(2)} - \mu_2^{(1)}) - (\mu_1^{(2)} - \mu_1^{(1)}) = \Delta_2 - \Delta_1
+$$
+
+Setting all $n-1$ such rows to $\mathbf{0}$ forces $\Delta_1 = \cdots = \Delta_n$ (parallelism).
+
+**Testing methods:** Wald or likelihood ratio tests
+
+::: {.notes}
+- The payoff slide: every hypothesis from Section 2 is a row-set of $\mathbf{L}$ on the cell-means $\boldsymbol{\beta}$.
+- Walk the single row out loud: $\mathbf{L}_{\text{row 1}}\boldsymbol{\beta}$ equals $\Delta_2 - \Delta_1$, so setting it to zero says the gap at occasion 2 equals the gap at occasion 1.
+- Stack $n-1$ such rows for the full parallelism test, matching the $(G-1)(n-1)$ df from Section 2 (here $G=2$).
+- Common student error: sign bookkeeping. Show that the group-1 entries and group-2 entries have opposite signs because $\Delta_j$ is a difference.
+- Transition: Wald uses the fitted $\hat{\boldsymbol{\beta}}$ and its covariance; LRT refits the reduced model. We use the LRT in R later.
+:::
+
+---
+
+## Visual: Observed Means
+
+```{r}
+#| echo: true
+#| output-location: slide
+time <- 1:3
+mu_group1 <- c(10, 14, 18)
+mu_group2 <- c(11, 16, 21)  # slightly different slope
+
+plot(time, mu_group1, type="b", pch=19, col="blue", ylim=c(10,22),
+     xlab="Time", ylab="Mean Response", main="Observed Means")
+lines(time, mu_group2, type="b", pch=17, col="red")
+legend("topleft", legend=c("Group 1","Group 2"),
+       col=c("blue","red"), pch=c(19,17), bty="n")
+```
+
+---
+
+## Visual: Fitted Full Model
+
+Full model: each group $\times$ time cell estimated freely.
+
+```{r}
+#| echo: true
+#| output-location: slide
+plot(time, mu_group1, type="b", pch=19, col="blue", ylim=c(10,22),
+     xlab="Time", ylab="Mean Response", main="Fitted Means (Full Model)")
+lines(time, mu_group2, type="b", pch=17, col="red")
+legend("topleft", legend=c("Group 1","Group 2"),
+       col=c("blue","red"), pch=c(19,17), bty="n")
+```
+
+---
+
+## Visual: Fitted Under the Null
+
+Null hypothesis: group difference $\Delta$ is constant over time.
+
+```{r}
+#| echo: true
+#| output-location: slide
+delta <- mean(mu_group2 - mu_group1)   # average difference
+mu_group2_null <- mu_group1 + delta
+
+plot(time, mu_group1, type="b", pch=19, col="blue", ylim=c(10,22),
+     xlab="Time", ylab="Mean Response", main="Fitted Means (Null: Parallel Profiles)")
+lines(time, mu_group2_null, type="b", pch=17, col="red", lty=2)
+legend("topleft", legend=c("Group 1","Group 2 (Null Fit)"),
+       col=c("blue","red"), pch=c(19,17), lty=c(1,2), bty="n")
+```
+
+---
+
+## Handling Missing Data
+
+**Advantage of the LM formulation:** Flexible design matrix $\mathbf{X}_i$.
+
+If a subject is missing a time point, remove the corresponding row from $\mathbf{X}_i$.
+
+Still valid to fit model using available observations.
+
+---
+
+## Reference Group Parameterization
+
+Alternative coding: choose one group as **reference**.
+
+With $G$ groups, define group-indicator covariates $W_{ig}$ (the symbol $Z$ is reserved for random effects, Ch. 8):
+
+$$
+W_{ig} =
+\begin{cases}
+  1 & \text{if subject } i \text{ belongs to group } g \\
+  0 & \text{otherwise}
+\end{cases}
+$$
+
+---
+
+## Reference Group Interpretation
+
+If we set $\mathbf{X}_i = (1, W_{i1}, \ldots, W_{i,G-1})$, then:
+
+$$
+\mu^{(g)} =
+\begin{cases}
+  \beta_1 + \beta_{g+1}, & g=1,\ldots,G-1 \\
+  \beta_1, & g=G \quad (\text{reference group})
+\end{cases}
+$$
+
+| Parameter | Interpretation |
+|-----------|----------------|
+| $\beta_1$ | Mean of reference group |
+| $\beta_{g+1}$ | Deviation of group $g$ from reference |
+
+---
+
+## R Example: Reference Coding
+
+```{r}
+#| echo: true
+#| output-location: slide
+# Example: 3 groups, using Group 3 as reference
+group <- factor(c("G1","G2","G3","G1","G2","G3"))
+
+# Default coding in R: last group is reference
+X <- model.matrix(~ group)
+X
+```
+
+---
+
+## Reference Coding Interpretation
+
+- Intercept corresponds to Group 3 mean
+- Columns `groupG1` and `groupG2` are deviations from Group 3
+- This is the default parameterization in R
+
+---
+
+## Testing Main Effects
+
+If profiles are parallel ($H_{01}$ not rejected):
+
+| Test | Hypothesis | Degrees of Freedom |
+|------|------------|-------------------|
+| No time effect | $H_{02}: \mu_1 = \mu_2 = \cdots = \mu_n$ | $n-1$ |
+| No group effect | $H_{03}: \boldsymbol{\mu}^{(1)} = \cdots = \boldsymbol{\mu}^{(G)}$ | $G-1$ |
+
+Both tested using a reduced model (main effects only, no interaction).
+
+::: {.callout-note}
+The flat-profile and same-level pictures are the Section 2 visuals; we do not repeat them here.
+:::
+
+---
+
+## LM Framework: Key Takeaways
+
+- Encodes group $\times$ time means in $\boldsymbol{\beta}$
+- Tests hypotheses via linear contrasts ($\mathbf{L}\boldsymbol{\beta} = \mathbf{0}$)
+- Full model: exact means per cell
+- Null model: imposes parallelism (constant group difference)
+
+# Part II (Day 2): Baseline Strategies, Strengths, and Computing
+
+::: {.notes}
+- Day 2 covers Sections 4-6: baseline-handling strategies, strengths and weaknesses, and the R/SAS computing on the TLC trial.
+- Pace: about 45-50 minutes. The baseline strategies and the change-vs-ANCOVA efficiency argument deserve the most time; the computing section is demonstration.
+- Recap Day 1 in one line: response profiles are cell means in an LM, tested by contrasts on $\boldsymbol{\beta}$, parallelism first.
+- Goal by end of Day 2: students can pick a baseline strategy by design and run the gls() fit and the ANCOVA in R.
+:::
+
+# Section 4: Baseline Value Strategies
+
+## Four Strategies for Baseline Handling
+
+| Strategy | Description |
+|----------|-------------|
+| 1 | Retain baseline; no equality assumption |
+| 2 | Retain baseline; constrain groups equal at baseline (RCT) |
+| 3 | Analyze change-from-baseline: $\Delta_{ij} = Y_{ij} - Y_{i1}$ |
+| 4 | ANCOVA: use $Y_{i1}$ as covariate for post-baseline responses |
+
+::: {.notes}
+- This is the map for all of Section 4: four ways to treat the baseline measurement, from "leave it in the response vector" to "use it as a covariate".
+- Frame the spine: strategies 1-2 keep baseline as a response; strategies 3-4 use it to define or adjust the outcome.
+- The design drives the choice: strategy 2's equal-baseline constraint is only honest under randomization; strategy 4 (ANCOVA) is the efficient default in RCTs.
+- Common student error: treating change scores (3) and ANCOVA (4) as the same thing. They answer different questions (unconditional change vs. baseline-conditional difference) and differ in efficiency.
+- Transition: take them one at a time, with pros and cons, then quantify the efficiency gap.
+:::
+
+---
+
+## Strategy 1: Retain Baseline, No Equality
+
+Fit the LM with all times, no constraint at $t=1$:
+
+$$
+E(\mathbf{Y}_i \mid \mathbf{X}_i) = \mathbf{X}_i \boldsymbol{\beta}
+$$
+
+where $\mu_1^{(1)}, \ldots, \mu_1^{(G)}$ are free parameters.
+
+---
+
+## Strategy 1: Pros and Cons
+
+| Pros | Cons |
+|------|------|
+| Minimal assumptions | Main "group" effect hard to interpret if baseline levels differ |
+| Natural for observational data | May be less efficient than approaches exploiting baseline balance |
+| Uses all information | |
+
+---
+
+## Strategy 2: Constrain Equal at Baseline
+
+Appropriate in **randomized trials** (baseline pre-randomization).
+
+Add constraint:
+
+$$
+\mu_1^{(1)} = \mu_1^{(2)} = \cdots = \mu_1^{(G)}
+$$
+
+---
+
+## Strategy 2: Pros and Cons
+
+| Pros | Cons |
+|------|------|
+| Reflects randomization | Invalid if baseline equality fails |
+| Often yields greater precision | Sensitivity to constraint violation |
+| Clean interpretation of group differences | |
+
+---
+
+## Strategy 3: Change-from-Baseline
+
+Define subject-level differences:
+
+$$
+\Delta_{ij} = Y_{ij} - Y_{i1}, \quad j = 2, \ldots, n
+$$
+
+Or use a univariate summary:
+
+$$
+Y_i^* = \frac{1}{n-1}\sum_{j=2}^n (Y_{ij} - Y_{i1})
+$$
+
+---
+
+## Strategy 3: Pros and Cons
+
+| Pros | Cons |
+|------|------|
+| Intuitive change estimand | Can be less efficient than ANCOVA when $\rho < 1$ |
+| Avoids modeling baseline as covariate | Forces the baseline coefficient to exactly 1, instead of the optimal value |
+| Simpler tests ($G-1$ df) | Loses information about absolute levels |
+
+---
+
+## Strategy 4: ANCOVA
+
+Univariate ANCOVA on average post-baseline response:
+
+$$
+Y_i^* = \alpha + \beta \cdot \text{trt}_i + \gamma \cdot Y_{i1} + \varepsilon_i
+$$
+
+Or time-specific repeated-measures ANCOVA:
+
+$$
+Y_{ij} = \alpha_j + \beta_j \cdot \text{trt}_i + \gamma_j \cdot Y_{i1} + \varepsilon_{ij}, \quad j \ge 2
+$$
+
+---
+
+## Strategy 4: Pros and Cons
+
+| Pros | Cons |
+|------|------|
+| In RCTs, typically more efficient | In observational data, may induce Lord's paradox (next slide) |
+| Adjusts for random baseline variability | Requires linearity and homogeneous slopes |
+| Smaller SEs for group effect | Measurement error in $Y_{i1}$ can bias $\gamma$ |
+
+---
+
+## Lord's Paradox (beyond FLW Ch. 5)
+
+::: {.callout-warning}
+## Instructor extension, not in FLW Ch. 5
+
+**Lord's paradox:** when two groups differ at baseline, change-score analysis and ANCOVA can give **opposite-signed** group effects on the same data. Neither is "wrong"; they answer different questions (unconditional change vs. baseline-conditional difference).
+:::
+
+```
+            change score says:            ANCOVA says:
+   group A  ---- no change (flat) ----     conditional on baseline,
+   group B  ---- no change (flat) ----     A and B differ in outcome
+   (groups start at different baselines)   (regression line tilts the comparison)
+   => "no group effect"                    => "group effect" (opposite conclusion)
+```
+
+The two methods point in different directions precisely because the groups are not comparable at baseline (no randomization).
+
+::: {.aside}
+Lord, F.M. (1967). A paradox in the interpretation of group comparisons. *Psychological Bulletin* 68(5):304-305.
+:::
+
+---
+
+## Relative Efficiency: Change vs. ANCOVA
+
+Under compound symmetry with variance $\sigma^2$ and correlation $\rho$, with **one baseline and one post-baseline occasion** ($n = 2$):
+
+$$
+\text{RE} = \frac{\text{Var}(\hat\beta_{\text{Change}})}{\text{Var}(\hat\beta_{\text{ANCOVA}})} = \frac{2}{1 + \rho}
+$$
+
+This is the single-follow-up special case. The general $n$-occasion result (FLW eq. (5.3), Section 5.6) gives the efficiency of the change-score summary **relative to ANCOVA** as
+
+$$
+\frac{1}{n}\{1 + (n-1)\rho\} < 1,
+$$
+
+so ANCOVA is $\dfrac{n}{1 + (n-1)\rho}$ times as efficient (at $n = 2$ this is $2/(1+\rho)$). ANCOVA's advantage grows BOTH as $\rho$ decreases AND as the number of occasions $n$ increases (an $n$-fold gain as $\rho \to 0$).
+
+**Why ANCOVA wins:** a change score writes $Y_f - 1 \cdot Y_1$, forcing the baseline coefficient to exactly **1**. ANCOVA fits $Y_f - \gamma \cdot Y_1$ and **estimates the optimal** $\gamma$ (here $\gamma \approx \rho$), the regression-to-the-mean adjustment. Pinning $\gamma = 1$ is generally not optimal, so change scores carry extra variance.
+
+::: {.notes}
+- This is the core conceptual fix: change scores are ANCOVA with the baseline coefficient hard-wired to 1.
+- Say it plainly: ANCOVA lets the data choose how much baseline to subtract off (the optimal slope is regression to the mean, roughly $\rho$); change scores subtract all of it.
+- Tie to the formula: when $\rho \to 1$ the optimal $\gamma \to 1$ too, so the constraint is harmless and RE $\to 1$; when $\rho$ is low, forcing $\gamma=1$ is far from optimal, so RE $\to 2$.
+- Common student error (and an old slide error): blaming "measurement error" or "using baseline twice". That is wrong; the inefficiency is the suboptimal fixed coefficient.
+- Transition: read the RE off a small table next.
+:::
+
+---
+
+## Relative Efficiency: Implications
+
+The table below is the **single-follow-up ($n = 2$) special case** $\text{RE} = 2/(1+\rho)$:
+
+| Condition | Relative Efficiency ($n = 2$) |
+|-----------|---------------------|
+| $\rho = 0$ | RE = 2 (change scores twice as variable) |
+| $\rho = 0.5$ | RE = 4/3 $\approx$ 1.33 |
+| $\rho = 0.8$ | RE = 10/9 $\approx$ 1.11 |
+| $\rho \to 1$ | RE $\to$ 1 (methods become equivalent) |
+
+RE $\geq 1$ always, so ANCOVA is always at least as efficient as change scores. With more occasions the gap is larger still: by FLW eq. (5.3) ANCOVA is $n/\{1+(n-1)\rho\}$ times as efficient, up to $n$-fold as $\rho \to 0$.
+
+---
+
+## Decision Guide: When to Use Which?
+
+| Study Type | Recommended Strategy |
+|------------|---------------------|
+| Randomized trial | Strategy 4 (ANCOVA) or Strategy 2 for power and clarity |
+| Observational | Strategy 1 or Strategy 3 for unconditional change questions |
+| | Strategy 4 only if conditional estimand is intended |
+
+---
+
+## Estimand Matters
+
+::: {.callout-tip}
+- **Strategy 3** tests whether groups differ in mean change (unconditional)
+- **Strategy 4** tests whether individuals matched on baseline differ in expected outcome (conditional)
+:::
+
+---
+
+## When to Use Alternatives
+
+| Situation | Alternative Approach |
+|-----------|---------------------|
+| Irregular timing | LMM with random effects; AR(1), SP[POW] |
+| Trend focus | Parametric/spline-by-group (Ch. 6) |
+| Population-average | GEE (robust SE) |
+| Large $n$ vs. $N$ | Structured $\Sigma$ / shrinkage |
+
+---
+
+## Rule of Thumb Summary
+
+| Study Design | Recommendation |
+|--------------|----------------|
+| RCT | Strategy 2 or 4; Strategy 4 typically more efficient |
+| Observational | Strategy 1 for flexible profiling; Strategy 3 for unconditional change; Strategy 4 only when conditional estimand is intended |
+
+---
+
+## Mini Demo: Change vs. ANCOVA
+
+```{r}
+#| echo: true
+#| output-location: slide
+set.seed(7)
+n <- 120
+group <- factor(rep(c("Control","Treatment"), each=n/2))
+Y1 <- rnorm(n, 20, 4)                 # baseline
+# True model: follow-up depends on baseline + treatment effect
+Yf <- 5 + 0.6*Y1 + 2*(group=="Treatment") + rnorm(n, 0, 3)
+
+# Change score and ANCOVA
+change <- Yf - Y1
+fit_change <- lm(change ~ group)
+fit_ancova <- lm(Yf ~ group + Y1)
+
+summary(fit_change)$coef
+summary(fit_ancova)$coef
+```
+
+::: {.notes}
+- This demo makes the efficiency argument concrete: same data, two estimators of the treatment effect.
+- The data are generated with the follow-up regressing on baseline at coefficient 0.6, NOT 1. So the change score's forced coefficient of 1 is wrong, and ANCOVA's estimated coefficient will sit near 0.6.
+- Point students at the two treatment-effect rows: both estimate roughly the same effect (about 2), but the ANCOVA SE is smaller.
+- Common student error: expecting the point estimates to differ a lot. In a balanced RCT they agree; it is the SE (precision) that separates them.
+- Transition: quantify that SE gap and tie it back to RE = 2/(1+rho) on the next slide.
+:::
+
+---
+
+## Takeaway: Comparing the Two Treatment-Effect SEs
+
+```{r}
+#| echo: true
+#| output-location: slide
+se_change <- summary(fit_change)$coef["groupTreatment", "Std. Error"]
+se_ancova <- summary(fit_ancova)$coef["groupTreatment", "Std. Error"]
+rho_hat   <- cor(Y1, Yf)
+
+c(SE_change = se_change, SE_ancova = se_ancova,
+  ratio_SE2 = (se_change^2) / (se_ancova^2),   # empirical variance ratio
+  RE_formula = 2 / (1 + rho_hat))              # 2/(1+rho)
+```
+
+The change-score SE is the larger of the two. This demo has a single follow-up, so the empirical variance ratio tracks the $n = 2$ formula $\text{RE} = 2/(1+\rho)$ (the special case of FLW eq. (5.3)): ANCOVA wins because it estimates the **optimal** baseline coefficient instead of forcing it to 1. The gap is largest at low $\rho$ and vanishes as $\rho \to 1$ (decreasing in $\rho$); with more occasions the gap grows toward $n$-fold.
+
+::: {.notes}
+- Close the loop opened on the RE slide: the variance ratio computed from this one dataset should land near 2/(1+rho).
+- Same framing as the mechanism slide: ANCOVA estimates the optimal coefficient (regression to the mean); change scores pin it at 1.
+- Direction reminder: RE is decreasing in rho, so ANCOVA's advantage is biggest when baseline and follow-up are weakly correlated and disappears as they become identical.
+- Common student error: thinking more correlation helps change scores. It helps both, but it shrinks the GAP toward 1.
+:::
+
+---
+
+## Baseline Value Strategy Summary
+
+| Strategy | Key Feature |
+|----------|-------------|
+| 1 | Flexible; good for observational; may be less efficient |
+| 2 | Uses RCT baseline equality; more precise if valid |
+| 3 | Intuitive changes; simpler tests; may be inefficient |
+| 4 | Most powerful in RCTs; in observational data watch for Lord's paradox (defined earlier) |
+
+**Bottom line:** Let design + scientific question dictate the strategy.
+
+---
+
+::: {.callout-note collapse="true"}
+## Check Your Understanding: Baseline Strategies
+
+1. In a randomized trial, which baseline strategy is typically most efficient and why?
+2. What is the key assumption behind Strategy 2 (constraining groups equal at baseline)?
+3. Why might change-from-baseline (Strategy 3) be less efficient than ANCOVA (Strategy 4)?
+
+**Answers:**
+
+1. **Strategy 4 (ANCOVA)** - it adjusts for random baseline variability, reducing residual variance and yielding smaller standard errors for the treatment effect
+2. Groups have equal mean response at baseline (valid by randomization in RCTs, but potentially violated in observational studies)
+3. A change score is $Y_f - 1 \cdot Y_1$: it forces the baseline coefficient to exactly 1. ANCOVA fits $Y_f - \gamma Y_1$ and estimates the optimal $\gamma$ (the regression-to-the-mean coefficient, about $\rho$). Pinning $\gamma=1$ is generally suboptimal, so change scores carry extra variance. With a single follow-up ($n = 2$) the loss follows $\text{RE} = 2/(1+\rho)$, shrinking to nothing as $\rho \to 1$; in general (FLW eq. (5.3)) ANCOVA is $n/\{1+(n-1)\rho\}$ times as efficient, so its advantage grows as $\rho$ falls and as the number of occasions $n$ grows.
+:::
+
+# Section 5: Strengths and Weaknesses
+
+## Strengths of Response Profile Analysis
+
+- Balanced designs with common measurement times
+- Arbitrary mean structure + unstructured $\Sigma$
+- Avoids covariance misspecification by leaving $\Sigma$ unstructured (no working-correlation assumption)
+- Works with balanced-incomplete data
+- Discrete covariates via the LM; contrasts/AUC
+
+::: {.callout-note}
+Leaving $\Sigma$ free protects against COVARIANCE misspecification; the SEs here are model-based (from the fitted $\Sigma$), not sandwich/empirical. The MEAN model can still be misspecified, so this is not a blanket robustness claim.
+:::
+
+---
+
+## Comparison with MANOVA
+
+| MANOVA | Response Profiles |
+|--------|-------------------|
+| Complete cases only | Handles missing data |
+| Test-heavy approach | Estimands + estimation first |
+| | Flexible baseline handling |
+
+---
+
+## Weaknesses of Response Profile Analysis
+
+- Requires balanced timing; poor for mistimed visits
+- Ignores time ordering; omnibus tests need follow-up
+- Lower power for specific trends (prefer 1 df tests)
+- Parameter growth: $Gn + \frac{n(n+1)}{2}$
+
+---
+
+## Parameter Growth Example ($G=2$)
+
+```{r}
+#| echo: true
+#| output-location: slide
+param_counts <- function(G, n) G*n + n*(n+1)/2
+data.frame(n=c(3,10), total_params=param_counts(2, c(3,10)))
+```
+
+# Section 6: R Computing Example
+
+## Computing Goals
+
+- Replicate PROC MIXED response-profiles analysis in R
+- Model: $Y_{ij} \sim \text{group} \times \text{time}$
+- Unstructured within-subject covariance
+- Use `nlme::gls()` with `corSymm` + `varIdent`
+
+---
+
+## Read and Prepare Data
+
+```{r}
+#| echo: true
+#| output-location: slide
+library(dplyr); library(tidyr); library(nlme); library(ggplot2)
+if (requireNamespace("emmeans", quietly = TRUE)) library(emmeans)
+
+# Path to data file
+path <- "../../data/tlc.csv"
+
+# Read and rename columns
+tlc_wide <- read.csv(path, check.names = FALSE, stringsAsFactors = FALSE)
+names(tlc_wide) <- trimws(names(tlc_wide))
+
+tlc_wide <- tlc_wide %>%
+  rename(
+    id  = ID,
+    trt = `Treatment Group`,
+    w0  = `Lead Level Week 0`,
+    w1  = `Lead Level Week 1`,
+    w4  = `Lead Level Week 4`,
+    w6  = `Lead Level Week 6`
+  ) %>%
+  mutate(trt = factor(trt, levels = c("P","A"), labels = c("Placebo","Succimer")))
+
+head(tlc_wide)
+```
+
+---
+
+## Reshape: Wide to Long
+
+```{r}
+#| echo: true
+#| output-location: slide
+tlc_long <- tlc_wide %>%
+  pivot_longer(cols = c(w0, w1, w4, w6),
+               names_to = "wk", values_to = "y") %>%
+  mutate(
+    time = recode(wk, w0 = "0", w1 = "1", w4 = "4", w6 = "6"),
+    time = factor(time, levels = c("0","1","4","6")),
+    group = trt
+  ) %>%
+  arrange(id, time) %>%
+  select(id, group, time, y)
+
+head(tlc_long)
+```
+
+---
+
+## How `gls()` Builds an Unstructured Covariance
+
+::: {.callout-tip}
+## UN = `corSymm` + `varIdent`
+
+`nlme` has no single "UN" option. You build it from two pieces:
+
+- `corSymm(form = ~ as.numeric(time) | id)`: **free correlations** among occasions (the off-diagonal of the correlation matrix, all estimated separately).
+- `varIdent(form = ~ 1 | time)`: a **separate variance per occasion** (heteroscedastic diagonal).
+
+Together these give a fully unstructured $\Sigma$. The `as.numeric(time) | id` part sets the **within-subject ordering**: it tells `gls()` which occasion each row is and that rows sharing an `id` form one subject's vector. Omit it and the correlations are mis-aligned.
+:::
+
+---
+
+## Fit Response Profiles (UN Covariance)
+
+```{r}
+#| echo: true
+#| output-location: slide
+# Unstructured covariance = free correlations (corSymm) + per-occasion variances (varIdent)
+fit_un_REML <- gls(
+  y ~ group * time,
+  data = tlc_long,
+  correlation = corSymm(form = ~ as.numeric(time) | id),  # free correlations; sets within-id order
+  weights     = varIdent(form = ~ 1 | time),               # one variance per occasion
+  method = "REML",
+  na.action = na.omit
+)
+
+summary(fit_un_REML)
+```
+
+::: {.notes}
+- This is the central fit of the lecture. Read the model line out loud: group times time gives the saturated cell-means mean model.
+- Stress the two-piece UN recipe again: corSymm = free correlations, varIdent = per-occasion variances. nlme has no one-word UN.
+- The `as.numeric(time) | id` is the most error-prone piece: it sets the within-subject ordering. If students reuse this code on their own data, they must point it at their own time/id variables.
+- Common student error: forgetting `varIdent`, which silently imposes equal variances (compound-symmetry-like), not UN.
+- Use REML for the covariance estimate; switch to ML for the fixed-effect LRT on the next slide.
+- Transition: now test parallelism by comparing the full and no-interaction models.
+:::
+
+---
+
+## Test Group x Time (Parallelism)
+
+```{r}
+#| echo: true
+#| output-location: slide
+# Use ML for fixed-effect LRTs
+fit_full_ML   <- update(fit_un_REML, method = "ML")
+fit_no_int_ML <- update(fit_full_ML, . ~ group + time)
+
+anova(fit_no_int_ML, fit_full_ML)  # df = (G-1)*(n-1)
+```
+
+---
+
+## Interpreting the Parallelism Test
+
+**In plain language:** The likelihood ratio test compares:
+
+- **Full model:** Separate mean for each group-by-time combination (allows non-parallel profiles)
+- **Reduced model:** Main effects only (forces parallel profiles)
+
+A significant p-value (e.g., p < 0.05) indicates that profiles are **not parallel** - the treatment effect differs across time points. In the TLC trial, this would mean Succimer's effect is not constant over time (as suggested by the sharp drop then rebound).
+
+---
+
+## Estimated Response Profiles
+
+```{r}
+#| echo: true
+#| output-location: slide
+if (requireNamespace("emmeans", quietly = TRUE)) {
+  emm <- emmeans::emmeans(fit_un_REML, ~ group * time)
+  emm_df <- as.data.frame(emm)
+
+  print(ggplot(emm_df, aes(x = time, y = emmean, group = group, shape = group)) +
+    geom_line() + geom_point(size = 2) +
+    labs(y = "Estimated mean blood lead (µg/dL)",
+         title = "TLC Trial: Estimated Response Profiles (UN covariance)") +
+    theme_minimal())
+} else {
+  # Alternative: compute fitted values from the model
+  newdata <- expand.grid(group = levels(tlc_long$group),
+                         time = levels(tlc_long$time))
+  newdata$emmean <- predict(fit_un_REML, newdata = newdata)
+
+  print(ggplot(newdata, aes(x = time, y = emmean, group = group, shape = group)) +
+    geom_line() + geom_point(size = 2) +
+    labs(y = "Estimated mean blood lead (µg/dL)",
+         title = "TLC Trial: Estimated Response Profiles (UN covariance)") +
+    theme_minimal())
+}
+```
+
+---
+
+## Reading Off the Covariance: the $\Sigma_i = \mathbf{S}\,\mathbf{C}\,\mathbf{S}$ Identity
+
+`gls()` stores the covariance in two pieces, so we reassemble it from:
+
+$$
+\Sigma_i = \mathbf{S}\,\mathbf{C}\,\mathbf{S}
+$$
+
+- $\mathbf{S}$ = diagonal of **occasion-specific standard deviations** (from `varIdent`).
+- $\mathbf{C}$ = the **correlation matrix** among occasions (from `corSymm`).
+
+(We use $\mathbf{S}$/$\mathbf{C}$ for the SD-correlation split here so as not to collide with the reserved $G$ = random-effects covariance and $R_i$ = residual covariance of Ch. 8.)
+
+So a per-occasion SD on the diagonal times the free correlations rebuilds the full unstructured $\Sigma_i$.
+
+---
+
+## Extract UN Covariance Matrix (advanced / reference)
+
+```{r}
+#| echo: true
+#| output-location: slide
+# --- S: occasion-specific SDs (from varIdent) ---
+lev <- levels(tlc_long$time)
+# varIdent reports a multiplier for each NON-reference occasion; the
+# reference occasion (here "0") is fixed at 1 and is NOT in this vector.
+vmult <- coef(fit_un_REML$modelStruct$varStruct, unconstrained = FALSE)
+sd_mult <- setNames(rep(1, length(lev)), lev)  # start all at the reference value 1
+sd_mult[names(vmult)] <- vmult                 # fill in the estimated multipliers by NAME
+SDdiag <- diag(fit_un_REML$sigma * sd_mult)    # S = base sigma * per-occasion multiplier
+
+# --- C: correlation among occasions (from corSymm) ---
+Rhat <- corMatrix(fit_un_REML$modelStruct$corStruct)[[1]]
+
+# --- Sigma = S C S ---
+Sigma_hat <- SDdiag %*% Rhat %*% SDdiag
+dimnames(Sigma_hat) <- list(lev, lev)
+round(Sigma_hat, 2)
+```
+
+::: {.callout-warning}
+## Order-sensitivity (the part that bites)
+`varIdent` omits the reference occasion, so you must insert its multiplier of 1 **by name**, not by position; otherwise the reference occasion becomes `NA`. Likewise index everything by `levels(time)` so $\mathbf{S}$ and $\mathbf{C}$ share the same occasion order before multiplying. A positional reindex silently scrambles the rows.
+:::
+
+---
+
+## Replicate Figure 5.1: Raw Group Means
+
+```{r}
+#| echo: true
+#| output-location: slide
+means <- tlc_long %>%
+  group_by(group, time) %>%
+  summarise(mean_y = mean(y, na.rm = TRUE), .groups = "drop") %>%
+  mutate(week = as.numeric(as.character(time)))
+
+ggplot(means, aes(x = week, y = mean_y, group = group, shape = group)) +
+  geom_line() + geom_point(size = 2) +
+  scale_x_continuous(breaks = c(0,1,4,6)) +
+  labs(x = "Time (weeks)", y = "Mean blood lead (µg/dL)",
+       title = "TLC Trial: Mean Blood Lead by Group and Time") +
+  theme_minimal()
+```
+
+---
+
+## Baseline-Adjusted ANCOVA (Section 5.6)
+
+Subject-level model:
+
+$$
+Y_i^* = \frac{w1_i + w4_i + w6_i}{3}
+$$
+
+$$
+Y_i^* = \alpha + \beta \cdot \text{group}_i + \gamma \cdot w0_i + \varepsilon_i
+$$
+
+---
+
+## ANCOVA Implementation
+
+```{r}
+#| echo: true
+#| output-location: slide
+dat_subj <- tlc_wide %>%
+  transmute(
+    id,
+    group = trt,
+    w0, w1, w4, w6,
+    Ystar = rowMeans(cbind(w1, w4, w6), na.rm = TRUE)
+  )
+
+fit_ancova <- lm(Ystar ~ group + w0, data = dat_subj)
+summary(fit_ancova)$coef
+```
+
+---
+
+## ANCOVA Output: Interpretation
+
+**In plain language:** The coefficient output shows:
+
+- **Intercept:** Expected average post-baseline lead level when baseline = 0 and group = reference (Placebo)
+- **groupSuccimer:** The treatment effect - the difference in average post-baseline lead level for Succimer vs. Placebo, **adjusted for baseline**
+- **w0:** The slope relating baseline to follow-up - a positive value means higher baseline is associated with higher follow-up
+
+A negative, significant coefficient for `groupSuccimer` indicates that Succimer reduces blood lead levels compared to Placebo, after accounting for baseline differences.
+
+---
+
+## Same Analysis in SAS: Complete PROC MIXED Program
+
+The R `gls()` fit above corresponds to this standalone SAS program (static, not run here):
+
+```sas
+/* TLC response-profiles analysis: unstructured covariance */
+proc mixed data=tlc_long method=reml;
+    class id group time;
+    model y = group time group*time / s chisq;
+    repeated time / type=un subject=id r rcorr;
+run;
+```
+
+- `class` declares the categorical factors (set `id`, `group`, `time` as classification variables).
+- `model y = group time group*time` is the saturated cell-means mean model.
+- `repeated time / type=un subject=id` is the **unstructured** within-subject covariance (the `corSymm` + `varIdent` pair in R).
+- The **`group*time` row of the "Type 3 Tests of Fixed Effects" table is the parallelism test** ($(G-1)(n-1)$ df, here $1\times 3 = 3$ for 2 groups and 4 weeks). The `chisq` option (REML default, no `ddfm=`) reports this as a **Wald chi-square (CHISQ) parallelism test**, matching FLW Table 5.11. It is not a likelihood-ratio test. (No hand-written `contrast` is needed; the Type 3 test already carries the correct df.)
+- The R workflow above instead uses an **ML likelihood-ratio test** (`anova()` on two `method="ML"` fits). For an exact SAS analogue of that LRT, refit the full and no-interaction models with `method=ml` and compare $-2\log L$; the Wald chi-square and LR tests target the same hypothesis but are different statistics.
+
+---
+
+## SAS to R Cheat Sheet
+
+| SAS | R |
+|-----|---|
+| `CLASS id group time;` | Set factor levels (baseline first, Placebo as reference) |
+| `MODEL y = group time group*time / S CHISQ;` | `gls(y ~ group * time, ...)` |
+| `REPEATED time / TYPE=UN SUBJECT=id;` | `corSymm(~ as.numeric(time) | id) + varIdent(~ 1 | time)` |
+| `METHOD=ML` (for LRTs) | `method="ML"` |
+| Default REML | `method="REML"` |
+
+---
+
+## Common Mistakes to Avoid
+
+- **Interpreting main effects when interaction is significant**: If parallelism ($H_{01}$) is rejected, main effects for group and time are misleading - the effect depends on the level of the other factor
+- **Forgetting to set factor levels correctly**: R's default is to use alphabetical ordering; set the reference level explicitly (e.g., Placebo before Treatment)
+- **Using ANCOVA in observational studies without considering Lord's paradox** (defined earlier): with unequal baselines, change-score and ANCOVA conclusions can point in opposite directions
+- **Ignoring the relative efficiency of baseline strategies**: Change scores can be substantially less efficient than ANCOVA when baseline-outcome correlation is low
+- **Applying response profiles to irregular visit times**: This approach assumes common measurement occasions; use parametric curves (Ch. 6) for irregular timing
+
+---
+
+## Summary
+
+- Response profiles provide a flexible framework for balanced longitudinal data
+- Test parallelism ($H_{01}$) before interpreting main effects
+- Choose baseline handling strategy based on study design and estimand
+- The general linear model (LM) with unstructured covariance maximizes flexibility
+- R's `nlme::gls()` replicates SAS PROC MIXED functionality

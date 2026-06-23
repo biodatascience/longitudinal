@@ -1,0 +1,39 @@
+<!--
+Canonical "Notation reference" slide for BIOS 667 reference decks.
+Source of truth: 2026/NOTATION_REFERENCE.md (aligned to Fitzmaurice, Laird & Ware 2011).
+Include in any lecture with:  {{< include _notation_box.qmd >}}
+Edit ONCE here; every lecture that includes it updates. Do not fork the table into a deck.
+Convention: bold = vector/matrix; plain = scalar/index. No em-dashes.
+NO-COLLISION RULE: X_i / beta = fixed design and coefficients; Z_i / b_i = random-effect design
+and random effects ONLY. A deck must never reuse a reserved symbol for something else (e.g. do not
+write a fixed covariate as z_{ij}). Lecture-specific symbols go on a slide AFTER the include.
+REUSED-SYMBOL OVERRIDE: a deck may reuse a NON-reserved symbol with a chapter-local meaning (e.g.
+FLW Ch.5 uses n = occasions, N = subjects) only if it declares that meaning up front on the
+lecture-specific slide after this include; reserved symbols (X/beta, Z/b) are never reassigned.
+"GLM" = generalized linear model (Ch.11+); the general (normal) linear model is "LM", never "GLM".
+GRADUATED: this is the through-random-effects card (L08+). GEE/GLM symbols are NOT front-loaded here;
+the deck that introduces them adds them as a lecture-specific row after the include (L11 adds the
+binary probability pi_ij and dispersion phi; L13 adds the GEE working-correlation alpha).
+FLW SYMBOLS (source of truth 2026/NOTATION_REFERENCE.md): marginal covariance is Sigma_i (NOT V_i);
+random-effects covariance is G (NOT D); residual is R_i. V_i is reserved for the GEE working covariance
+(Ch.12-13 only). Do not reintroduce V_i or D for the Gaussian/LME covariance.
+-->
+
+## Notation reference
+
+::: {.notation-card style="font-size: 0.82em;"}
+
+| Symbol | Meaning |
+|:--|:--|
+| $Y_{ij}$ | response for subject $i$ at occasion $j$ (scalar) |
+| $\mathbf{Y}_i$ | response vector for subject $i$ $(n_i \times 1)$ |
+| $\mathbf{X}_i,\ \boldsymbol\beta$ | fixed-effect design $n_i \times p$ and coefficients |
+| $\mathbf{Z}_i,\ \mathbf{b}_i$ | random-effect design and random effects, $\mathbf{b}_i \sim N(0, G)$ |
+| $G$ | between-subject random-effects covariance (FLW's letter, Ch. 8) |
+| $R_i$ | within-subject residual covariance, $\boldsymbol\varepsilon_i \sim N(0, R_i)$ |
+| $\Sigma_i = \mathbf{Z}_i G \mathbf{Z}_i^\top + R_i$ | marginal (total) covariance $\operatorname{Cov}(\mathbf{Y}_i)$ for subject $i$ |
+| $\rho$ | correlation parameter (AR(1), exchangeable) |
+
+Indices: $i$ subject $1,\dots,N$; $j$ occasion/time $1,\dots,n_i$ ($n$ when balanced); $k$ state (transition models); $g$ group. **Bold** = vector or matrix.
+
+:::

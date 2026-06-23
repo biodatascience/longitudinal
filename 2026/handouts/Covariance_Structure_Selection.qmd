@@ -1,0 +1,842 @@
+---
+title: "Covariance Structure Selection Workflow"
+subtitle: "Choosing Between UN, CS, AR(1), and Random Effects"
+format:
+  html:
+    theme: cosmo
+    toc: true
+    embed-resources: true
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+```{r}
+#| label: setup
+#| include: false
+
+library(nlme)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(knitr)
+
+set.seed(667)
+```
+
+## 1. Available Structures
+
+The following table summarizes the most commonly used covariance structures for longitudinal data:
+
+| Structure | Parameters | Matrix Pattern | When to Use |
+|-----------|------------|----------------|-------------|
+| **Independence** | $n$ | Diagonal | Baseline comparison; rarely realistic |
+| **Compound Symmetry (CS)** | 2 | Equal correlation at all lags | Exchangeable observations; clustered data |
+| **AR(1)** | 2 | Correlation decays with lag | Equally spaced time points; decaying dependence |
+| **Exponential** | 2 | Continuous-time decay | Unequally spaced observations |
+| **Unstructured (UN)** | $n(n+1)/2$ | Any pattern allowed | Exploratory; few time points |
+| **Random Intercept** | 2 | Induces CS pattern | Subject heterogeneity; induces correlation |
+| **Random Intercept + Slope** | 4 | Nonstationary covariance | Time-varying subject effects |
+
+### Mathematical Formulations
+
+**Independence:**
+$$
+\boldsymbol{R} = \sigma^2 \boldsymbol{I}
+$$
+
+**Compound Symmetry (CS):**
+$$
+R_{jk} = \sigma^2 \begin{cases} 1 & \text{if } j = k \\ \rho & \text{if } j \neq k \end{cases}
+$$
+
+**AR(1):**
+$$
+R_{jk} = \sigma^2 \rho^{|j-k|}
+$$
+
+**Exponential (continuous time):**
+$$
+R_{jk} = \sigma^2 \exp\left(-\frac{|t_j - t_k|}{\phi}\right)
+$$
+
+**Unstructured (UN):**
+$$
+R_{jk} = \sigma_{jk} \quad \text{(all elements estimated freely)}
+$$
+
+## 2. Visual Pattern Gallery
+
+```{r}
+#| label: fig-correlation-gallery
+#| fig-cap: "Correlation matrices for different covariance structures"
+#| fig-width: 12
+#| fig-height: 8
+
+# Function to create correlation matrix for different structures
+create_corr_matrix <- function(n, type, params = list()) {
+  mat <- matrix(0, n, n)
+
+  if (type == "Independence") {
+    mat <- diag(n)
+  } else if (type == "CS") {
+    rho <- params$rho
+    mat <- matrix(rho, n, n)
+    diag(mat) <- 1
+  } else if (type == "AR1") {
+    rho <- params$rho
+    for (i in 1:n) {
+      for (j in 1:n) {
+        mat[i, j] <- rho^abs(i - j)
+      }
+    }
+  } else if (type == "Exponential") {
+    phi <- params$phi
+    times <- params$times
+    for (i in 1:n) {
+      for (j in 1:n) {
+        mat[i, j] <- exp(-abs(times[i] - times[j]) / phi)
+      }
+    }
+  } else if (type == "UN") {
+    # Generate a positive definite "random" unstructured matrix
+    set.seed(667)
+    A <- matrix(runif(n * n, 0.2, 0.8), n, n)
+    mat <- (A + t(A)) / 2
+    diag(mat) <- 1
+    # Ensure positive definite
+    eigenvals <- eigen(mat)$values
+    if (any(eigenvals <= 0)) {
+      mat <- mat + diag(n) * (abs(min(eigenvals)) + 0.1)
+      mat <- cov2cor(mat)
+    }
+  } else if (type == "Random Intercept") {
+    # Induces CS: Corr = sigma_b^2 / (sigma_b^2 + sigma_e^2)
+    rho <- params$rho
+    mat <- matrix(rho, n, n)
+    diag(mat) <- 1
+  } else if (type == "Random Slope") {
+    # Nonstationary covariance
+    sigma_b0 <- params$sigma_b0
+    sigma_b1 <- params$sigma_b1
+    sigma_e <- params$sigma_e
+    rho_b <- params$rho_b
+    times <- 1:n
+    for (i in 1:n) {
+      for (j in 1:n) {
+        cov_ij <- sigma_b0^2 + rho_b * sigma_b0 * sigma_b1 * (times[i] + times[j]) +
+                  sigma_b1^2 * times[i] * times[j]
+        if (i == j) cov_ij <- cov_ij + sigma_e^2
+        mat[i, j] <- cov_ij
+      }
+    }
+    # Convert to correlation
+    sds <- sqrt(diag(mat))
+    mat <- mat / outer(sds, sds)
+  }
+
+  return(mat)
+}
+
+# Create all correlation matrices
+n <- 5
+times_irreg <- c(0, 1, 3, 6, 12)  # Irregular time points
+
+corr_list <- list(
+  "Independence" = create_corr_matrix(n, "Independence"),
+  "Compound Symmetry" = create_corr_matrix(n, "CS", list(rho = 0.6)),
+  "AR(1)" = create_corr_matrix(n, "AR1", list(rho = 0.7)),
+  "Exponential" = create_corr_matrix(n, "Exponential", list(phi = 3, times = times_irreg)),
+  "Unstructured" = create_corr_matrix(n, "UN"),
+  "Random Int + Slope" = create_corr_matrix(n, "Random Slope",
+                                             list(sigma_b0 = 2, sigma_b1 = 0.3,
+                                                  sigma_e = 1, rho_b = 0.2))
+)
+
+# Convert to long format for plotting
+plot_data <- do.call(rbind, lapply(names(corr_list), function(name) {
+  mat <- corr_list[[name]]
+  data.frame(
+    Structure = name,
+    Row = rep(1:n, each = n),
+    Col = rep(1:n, n),
+    Correlation = as.vector(mat)
+  )
+}))
+
+# Set factor levels for ordering
+plot_data$Structure <- factor(plot_data$Structure,
+                               levels = c("Independence", "Compound Symmetry",
+                                          "AR(1)", "Exponential",
+                                          "Unstructured", "Random Int + Slope"))
+
+# Create heatmap
+ggplot(plot_data, aes(x = Col, y = Row, fill = Correlation)) +
+  geom_tile(color = "white", linewidth = 0.5) +
+  geom_text(aes(label = sprintf("%.2f", Correlation)), size = 3, color = "black") +
+  facet_wrap(~Structure, ncol = 3) +
+  scale_fill_gradient2(low = "white", mid = "steelblue", high = "darkblue",
+                       midpoint = 0.5, limits = c(0, 1)) +
+  scale_y_reverse() +
+  labs(x = "Time Point", y = "Time Point",
+       title = "Correlation Matrix Patterns by Structure",
+       subtitle = "5 time points; values shown are correlations") +
+  theme_minimal(base_size = 11) +
+  theme(panel.grid = element_blank(),
+        strip.text = element_text(face = "bold"),
+        axis.text = element_text(size = 9))
+```
+
+### Key Features by Structure
+
+```{r}
+#| label: fig-decay-comparison
+#| fig-cap: "Correlation decay patterns across structures"
+#| fig-width: 9
+#| fig-height: 5
+
+# Create decay curves
+lag <- 0:6
+rho <- 0.7
+
+decay_data <- data.frame(
+  Lag = rep(lag, 4),
+  Structure = rep(c("Independence", "Compound Symmetry (rho=0.6)",
+                    "AR(1) (rho=0.7)", "Exponential (phi=2)"), each = length(lag)),
+  Correlation = c(
+    c(1, rep(0, 6)),           # Independence
+    c(1, rep(0.6, 6)),         # CS
+    0.7^lag,                    # AR(1)
+    exp(-lag/2)                 # Exponential
+  )
+)
+
+ggplot(decay_data, aes(x = Lag, y = Correlation, color = Structure, linetype = Structure)) +
+  geom_line(linewidth = 1.2) +
+  geom_point(size = 3) +
+  scale_color_brewer(palette = "Set1") +
+  scale_y_continuous(limits = c(0, 1)) +
+  labs(x = "Lag (time units apart)",
+       y = "Correlation",
+       title = "How Correlation Decays with Lag",
+       subtitle = "Different structures assume different decay patterns") +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "bottom",
+        legend.title = element_blank(),
+        panel.grid.minor = element_blank())
+```
+
+## 3. Selection Flowchart
+
+Use the following decision tree as a starting point for selecting a covariance structure:
+
+```
+START
+  |
+  v
+How many time points (n)?
+  |
+  +---> n <= 4: Unstructured (UN) may be feasible
+  |              --> Compare UN to simpler structures
+  |
+  +---> n > 4: UN has too many parameters
+                |
+                v
+          Are time points equally spaced?
+                |
+                +---> Yes: Consider AR(1) or CS
+                |          |
+                |          v
+                |     Expect correlation to decay with lag?
+                |          |
+                |          +---> Yes: AR(1)
+                |          +---> No (constant correlation): CS
+                |
+                +---> No (irregular spacing):
+                           |
+                           v
+                      Exponential or spatial correlation
+                      OR use random effects model
+                |
+                v
+          Is there subject-level heterogeneity?
+                |
+                +---> Yes: Add random intercept (possibly random slope)
+                +---> No: Marginal model with chosen correlation
+                |
+                v
+          DIAGNOSTIC CHECK
+                |
+                +---> Plot residual semivariogram
+                +---> Compare AIC/BIC across structures
+                +---> LRT for nested models
+                |
+                v
+          SELECT FINAL MODEL
+```
+
+### Visual Decision Aid
+
+```{r}
+#| label: fig-flowchart
+#| fig-cap: "Covariance structure selection decision guide"
+#| fig-width: 10
+#| fig-height: 6
+#| echo: false
+
+# Create a simplified flowchart using ggplot
+flow_data <- data.frame(
+  x = c(5, 2, 8, 2, 8, 5),
+  y = c(6, 4, 4, 2, 2, 0),
+  label = c("Few time points?\n(n <= 4)",
+            "Yes:\nTry UN first",
+            "No:\nBalanced design?",
+            "Compare UN\nvs simpler",
+            "Yes: AR(1)/CS\nNo: Exponential/RE",
+            "Validate with\nsemivariogram & AIC")
+)
+
+arrows_data <- data.frame(
+  x = c(5, 5, 2, 8, 2, 8),
+  y = c(6, 6, 4, 4, 2, 2),
+  xend = c(2, 8, 2, 8, 5, 5),
+  yend = c(4, 4, 2, 2, 0, 0)
+)
+
+ggplot() +
+  geom_segment(data = arrows_data,
+               aes(x = x, y = y - 0.5, xend = xend, yend = yend + 0.5),
+               arrow = arrow(length = unit(0.2, "cm")),
+               color = "gray40", linewidth = 0.8) +
+  geom_label(data = flow_data, aes(x = x, y = y, label = label),
+             fill = c("lightblue", "lightgreen", "lightblue",
+                      "lightyellow", "lightyellow", "coral"),
+             size = 3.5, label.padding = unit(0.4, "lines")) +
+  scale_x_continuous(limits = c(0, 10)) +
+  scale_y_continuous(limits = c(-1, 7)) +
+  labs(title = "Covariance Structure Selection Workflow") +
+  theme_void() +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold", size = 14))
+```
+
+## 4. Parameter Count Table
+
+The number of parameters in the covariance matrix grows differently across structures:
+
+```{r}
+#| label: tbl-parameters
+#| tbl-cap: "Number of covariance parameters by structure and number of time points"
+
+# Create parameter count table
+n_visits <- c(3, 4, 5, 6, 8, 10, 15, 20)
+
+param_table <- data.frame(
+  `Time Points` = n_visits,
+  Independence = n_visits,
+  CS = rep(2, length(n_visits)),
+  `AR(1)` = rep(2, length(n_visits)),
+  Unstructured = n_visits * (n_visits + 1) / 2,
+  `Random Intercept` = rep(2, length(n_visits)),
+  `Random Int+Slope` = rep(4, length(n_visits)),
+  check.names = FALSE
+)
+
+kable(param_table, align = "c",
+      caption = "Number of covariance parameters needed")
+```
+
+```{r}
+#| label: fig-param-growth
+#| fig-cap: "Parameter count explosion with Unstructured covariance"
+#| fig-width: 8
+#| fig-height: 5
+
+param_long <- param_table |>
+  pivot_longer(cols = -`Time Points`, names_to = "Structure", values_to = "Parameters")
+
+ggplot(param_long, aes(x = `Time Points`, y = Parameters, color = Structure)) +
+  geom_line(linewidth = 1.2) +
+  geom_point(size = 3) +
+  scale_y_log10() +
+  scale_color_brewer(palette = "Set2") +
+  labs(x = "Number of Time Points",
+       y = "Number of Parameters (log scale)",
+       title = "Covariance Parameters vs. Number of Time Points",
+       subtitle = "Unstructured grows as n(n+1)/2; others remain constant") +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "right",
+        panel.grid.minor = element_blank())
+```
+
+**Key Insight:** With 10 time points, Unstructured requires 55 parameters versus only 2 for AR(1) or CS. This quickly becomes infeasible with limited sample sizes.
+
+## 5. Model Comparison Protocol
+
+Follow this systematic approach to select the optimal covariance structure:
+
+### Step 1: Fit the Maximal Mean Model
+
+Establish the fixed effects structure first (using REML is acceptable here for initial fitting).
+
+### Step 2: Fit Multiple Covariance Structures
+
+Keep the **same fixed effects** and vary only the covariance structure.
+
+### Step 3: Use REML for Comparison
+
+When comparing covariance structures with **identical fixed effects**, REML provides unbiased variance estimates.
+
+### Step 4: Compare AIC/BIC
+
+Lower values indicate better fit, accounting for model complexity.
+
+### Step 5: Check Residual Semivariogram
+
+A flat semivariogram near 1 indicates properly modeled correlation.
+
+### Step 6: Likelihood Ratio Test for Nested Structures
+
+CS is nested within UN, so you can use LRT to test whether UN significantly improves fit.
+
+```{r}
+#| label: protocol-code
+#| eval: false
+
+# Protocol implementation example
+# Step 1: Fit maximal mean model with different covariance structures
+
+# Independence (baseline)
+fit_indep <- gls(y ~ time * treatment, data = mydata,
+                 method = "REML")
+
+# Compound Symmetry
+fit_cs <- gls(y ~ time * treatment, data = mydata,
+              correlation = corCompSymm(form = ~ 1 | subject),
+              method = "REML")
+
+# AR(1)
+fit_ar1 <- gls(y ~ time * treatment, data = mydata,
+               correlation = corAR1(form = ~ time | subject),
+               method = "REML")
+
+# Unstructured
+fit_un <- gls(y ~ time * treatment, data = mydata,
+              correlation = corSymm(form = ~ 1 | subject),
+              weights = varIdent(form = ~ 1 | time),
+              method = "REML")
+
+# Step 4: Compare AIC/BIC
+AIC(fit_indep, fit_cs, fit_ar1, fit_un)
+BIC(fit_indep, fit_cs, fit_ar1, fit_un)
+
+# Step 6: LRT for nested models (CS within UN)
+anova(fit_cs, fit_un)
+```
+
+## 6. R Code Examples
+
+### Simulated Dataset
+
+```{r}
+#| label: create-data
+
+set.seed(667)
+
+# Simulate longitudinal data with AR(1) correlation
+n_subjects <- 60
+n_times <- 5
+times <- 1:n_times
+
+# Generate data
+sim_data <- expand.grid(
+  time = times,
+  subject = 1:n_subjects
+) |>
+  arrange(subject, time) |>
+  mutate(
+    treatment = factor(ifelse(subject <= n_subjects/2, "Control", "Treatment"))
+  )
+
+# Add AR(1) correlated errors
+phi_true <- 0.6
+sigma_true <- 2
+
+sim_data <- sim_data |>
+  group_by(subject) |>
+  mutate(
+    # Random intercept
+    b0 = rnorm(1, 0, 2)[1],
+    # AR(1) errors
+    error = {
+      e <- numeric(n())
+      e[1] <- rnorm(1, 0, sigma_true)
+      for (t in 2:n()) {
+        e[t] <- phi_true * e[t-1] + rnorm(1, 0, sigma_true * sqrt(1 - phi_true^2))
+      }
+      e
+    },
+    # Outcome with treatment effect
+    y = 20 + 2 * time +
+        ifelse(treatment == "Treatment", 3 + 0.5 * time, 0) +
+        b0 + error
+  ) |>
+  ungroup() |>
+  select(subject, time, treatment, y)
+
+sim_data$subject <- factor(sim_data$subject)
+
+head(sim_data, 10)
+```
+
+### Fit All Structures
+
+```{r}
+#| label: fit-all-structures
+
+# 1. Independence
+fit_indep <- gls(y ~ time * treatment,
+                 data = sim_data,
+                 method = "REML")
+
+# 2. Compound Symmetry
+fit_cs <- gls(y ~ time * treatment,
+              data = sim_data,
+              correlation = corCompSymm(form = ~ 1 | subject),
+              method = "REML")
+
+# 3. AR(1)
+fit_ar1 <- gls(y ~ time * treatment,
+               data = sim_data,
+               correlation = corAR1(form = ~ time | subject),
+               method = "REML")
+
+# 4. Unstructured
+fit_un <- gls(y ~ time * treatment,
+              data = sim_data,
+              correlation = corSymm(form = ~ 1 | subject),
+              weights = varIdent(form = ~ 1 | time),
+              method = "REML")
+
+# 5. Random Intercept Model (for comparison)
+fit_ri <- lme(y ~ time * treatment,
+              data = sim_data,
+              random = ~ 1 | subject,
+              method = "REML")
+
+# 6. Random Intercept + AR(1) residuals
+fit_ri_ar1 <- lme(y ~ time * treatment,
+                  data = sim_data,
+                  random = ~ 1 | subject,
+                  correlation = corAR1(form = ~ time | subject),
+                  method = "REML")
+```
+
+### Create Comparison Table
+
+```{r}
+#| label: tbl-comparison
+#| tbl-cap: "Model comparison for covariance structure selection"
+
+# Extract comparison metrics
+comparison <- data.frame(
+  Model = c("Independence", "Compound Symmetry", "AR(1)",
+            "Unstructured", "Random Intercept", "RI + AR(1)"),
+  AIC = c(AIC(fit_indep), AIC(fit_cs), AIC(fit_ar1),
+          AIC(fit_un), AIC(fit_ri), AIC(fit_ri_ar1)),
+  BIC = c(BIC(fit_indep), BIC(fit_cs), BIC(fit_ar1),
+          BIC(fit_un), BIC(fit_ri), BIC(fit_ri_ar1)),
+  logLik = c(logLik(fit_indep), logLik(fit_cs), logLik(fit_ar1),
+             logLik(fit_un), logLik(fit_ri), logLik(fit_ri_ar1))
+)
+
+# Add delta AIC
+comparison$deltaAIC <- comparison$AIC - min(comparison$AIC)
+
+# Round for display
+comparison[, 2:5] <- round(comparison[, 2:5], 2)
+
+kable(comparison, align = "lrrrr",
+      col.names = c("Model", "AIC", "BIC", "Log-Likelihood", "Delta AIC"))
+```
+
+### Visualize Estimated Correlation Matrices
+
+```{r}
+#| label: fig-estimated-corr
+#| fig-cap: "Estimated correlation matrices from fitted models"
+#| fig-width: 10
+#| fig-height: 6
+
+# Extract estimated correlation matrices
+extract_corr <- function(fit, n = 5) {
+  if (inherits(fit, "gls")) {
+    if (is.null(fit$modelStruct$corStruct)) {
+      return(diag(n))
+    }
+    corr_mat <- corMatrix(fit$modelStruct$corStruct)[[1]]
+  } else if (inherits(fit, "lme")) {
+    # For mixed models, need to extract from random effects
+    vc <- getVarCov(fit, type = "marginal")[[1]]
+    sds <- sqrt(diag(vc))
+    corr_mat <- vc / outer(sds, sds)
+  }
+  return(corr_mat[1:n, 1:n])
+}
+
+# Get correlation matrices
+corr_cs <- extract_corr(fit_cs)
+corr_ar1 <- extract_corr(fit_ar1)
+corr_un <- extract_corr(fit_un)
+corr_ri <- extract_corr(fit_ri)
+
+# Combine for plotting
+est_corr_list <- list(
+  "Compound Symmetry" = corr_cs,
+  "AR(1)" = corr_ar1,
+  "Unstructured" = corr_un,
+  "Random Intercept" = corr_ri
+)
+
+est_plot_data <- do.call(rbind, lapply(names(est_corr_list), function(name) {
+  mat <- est_corr_list[[name]]
+  data.frame(
+    Structure = name,
+    Row = rep(1:nrow(mat), each = ncol(mat)),
+    Col = rep(1:ncol(mat), nrow(mat)),
+    Correlation = as.vector(mat)
+  )
+}))
+
+est_plot_data$Structure <- factor(est_plot_data$Structure,
+                                   levels = names(est_corr_list))
+
+ggplot(est_plot_data, aes(x = Col, y = Row, fill = Correlation)) +
+  geom_tile(color = "white", linewidth = 0.5) +
+  geom_text(aes(label = sprintf("%.2f", Correlation)), size = 3.5, color = "black") +
+  facet_wrap(~Structure, ncol = 2) +
+  scale_fill_gradient2(low = "white", mid = "steelblue", high = "darkblue",
+                       midpoint = 0.5, limits = c(0, 1)) +
+  scale_y_reverse() +
+  labs(x = "Time Point", y = "Time Point",
+       title = "Estimated Correlation Matrices from Fitted Models",
+       subtitle = "Compare patterns to select best structure") +
+  theme_minimal(base_size = 11) +
+  theme(panel.grid = element_blank(),
+        strip.text = element_text(face = "bold"))
+```
+
+### Semivariogram Diagnostics
+
+```{r}
+#| label: fig-semivariograms
+#| fig-cap: "Residual semivariograms for model diagnostics"
+#| fig-width: 10
+#| fig-height: 8
+
+# Extract semivariograms for gls models
+vario_indep <- Variogram(fit_indep, form = ~ time | subject, resType = "normalized")
+vario_cs <- Variogram(fit_cs, form = ~ time | subject, resType = "normalized")
+vario_ar1 <- Variogram(fit_ar1, form = ~ time | subject, resType = "normalized")
+vario_un <- Variogram(fit_un, form = ~ time | subject, resType = "normalized")
+
+# Combine for plotting
+vario_indep$Model <- "Independence"
+vario_cs$Model <- "Compound Symmetry"
+vario_ar1$Model <- "AR(1)"
+vario_un$Model <- "Unstructured"
+
+vario_all <- rbind(
+  data.frame(vario_indep),
+  data.frame(vario_cs),
+  data.frame(vario_ar1),
+  data.frame(vario_un)
+)
+
+vario_all$Model <- factor(vario_all$Model,
+                           levels = c("Independence", "Compound Symmetry",
+                                      "AR(1)", "Unstructured"))
+
+ggplot(vario_all, aes(x = dist, y = variog)) +
+  geom_hline(yintercept = 1, linetype = "dashed", color = "gray50", linewidth = 0.8) +
+  geom_rect(aes(xmin = -Inf, xmax = Inf, ymin = 0.85, ymax = 1.15),
+            fill = "lightgreen", alpha = 0.3) +
+  geom_point(color = "steelblue", size = 3) +
+  geom_line(color = "steelblue", linewidth = 1) +
+  facet_wrap(~Model, ncol = 2) +
+  labs(x = "Lag (time units)",
+       y = expression(paste("Semivariance ", gamma, "(h)")),
+       title = "Residual Semivariograms by Covariance Structure",
+       subtitle = "Goal: flat near 1 (green zone indicates good fit)") +
+  theme_minimal(base_size = 12) +
+  theme(strip.text = element_text(face = "bold"),
+        panel.grid.minor = element_blank())
+```
+
+### Interpretation of Semivariograms
+
+- **Independence:** Rising pattern indicates unmodeled positive autocorrelation
+- **Compound Symmetry:** Some improvement but may not fully capture decay
+- **AR(1):** Flatter pattern if correctly specified
+- **Unstructured:** Most flexible, but may overfit
+
+### Likelihood Ratio Test for Nested Models
+
+```{r}
+#| label: lrt-nested
+
+# CS is nested within UN (test whether UN provides significant improvement)
+cat("LRT: Compound Symmetry vs. Unstructured\n")
+cat("H0: CS is adequate\n")
+cat("H1: UN provides significantly better fit\n\n")
+
+# Refit with ML for valid LRT
+fit_cs_ml <- gls(y ~ time * treatment,
+                 data = sim_data,
+                 correlation = corCompSymm(form = ~ 1 | subject),
+                 method = "ML")
+
+fit_un_ml <- gls(y ~ time * treatment,
+                 data = sim_data,
+                 correlation = corSymm(form = ~ 1 | subject),
+                 weights = varIdent(form = ~ 1 | time),
+                 method = "ML")
+
+# LRT
+lrt_result <- anova(fit_cs_ml, fit_un_ml)
+print(lrt_result)
+```
+
+## 7. Common Mistakes
+
+### Mistake 1: Using UN with Too Many Time Points
+
+```{r}
+#| label: mistake-un
+#| eval: false
+
+# BAD: Trying UN with 15 time points
+# This requires 15*16/2 = 120 covariance parameters!
+fit_bad <- gls(y ~ time * treatment,
+               data = mydata_15visits,
+               correlation = corSymm(form = ~ 1 | subject),
+               weights = varIdent(form = ~ 1 | time),
+               method = "REML")
+# Will likely fail to converge or produce unstable estimates
+
+# GOOD: Use AR(1) or random effects instead
+fit_good <- lme(y ~ time * treatment,
+                random = ~ 1 | subject,
+                correlation = corAR1(form = ~ time | subject),
+                data = mydata_15visits,
+                method = "REML")
+```
+
+### Mistake 2: Comparing ML vs REML Fitted Models
+
+```{r}
+#| label: mistake-ml-reml
+#| eval: false
+
+# BAD: Comparing models fit with different methods
+fit_cs_reml <- gls(y ~ ..., method = "REML")
+fit_ar1_ml <- gls(y ~ ..., method = "ML")
+AIC(fit_cs_reml, fit_ar1_ml)  # INVALID comparison!
+
+# GOOD: Use same method for all models being compared
+fit_cs <- gls(y ~ ..., method = "REML")
+fit_ar1 <- gls(y ~ ..., method = "REML")
+AIC(fit_cs, fit_ar1)  # Valid comparison
+```
+
+### Mistake 3: Ignoring Convergence Warnings
+
+```{r}
+#| label: mistake-convergence
+
+# Always check for convergence!
+# If you see warnings like:
+# "iteration limit reached"
+# "Hessian is not positive definite"
+#
+# DO NOT trust the results - try:
+# 1. Simpler covariance structure
+# 2. Better starting values
+# 3. Different optimizer
+# 4. Check for data issues (outliers, insufficient variation)
+```
+
+### Mistake 4: Over-parameterizing with Small Samples
+
+**Rule of thumb:** Need approximately 10-20 observations per covariance parameter for stable estimation.
+
+| Structure | Parameters (5 times) | Min Sample Size |
+|-----------|---------------------|-----------------|
+| CS | 2 | 20-40 subjects |
+| AR(1) | 2 | 20-40 subjects |
+| UN | 15 | 150-300 subjects |
+
+## 8. Quick Reference Card
+
+### Situation-Based Recommendations
+
+| Situation | Recommended Structure | Rationale |
+|-----------|----------------------|-----------|
+| Few time points (n <= 4), exploratory | UN | Can afford the parameters; most flexible |
+| Regular visits, expect correlation decay | AR(1) | Parsimonious; captures decay pattern |
+| Irregular visit times | Exponential | Handles unequal spacing |
+| Clustered data (e.g., schools, clinics) | CS or Random Intercept | Exchangeable within cluster |
+| Subject heterogeneity in trajectories | Random Intercept + Slope | Allows individual trends |
+| Unknown pattern | Start with CS | Simple baseline; compare alternatives |
+| Model comparison inconclusive | Random Intercept + AR(1) | Combines subject effects and serial correlation |
+
+### nlme Function Reference
+
+```{r}
+#| label: nlme-reference
+#| eval: false
+
+# Correlation structures in gls()
+corCompSymm(form = ~ 1 | subject)       # Compound symmetry
+corAR1(form = ~ time | subject)         # AR(1)
+corSymm(form = ~ 1 | subject)           # Unstructured correlation
+corExp(form = ~ time | subject)         # Exponential
+corGaus(form = ~ time | subject)        # Gaussian
+corLin(form = ~ time | subject)         # Linear
+
+# Heterogeneous variances
+weights = varIdent(form = ~ 1 | time)   # Different variance per time
+weights = varPower(form = ~ time)       # Variance as power of time
+
+# Mixed models with correlation
+lme(y ~ time,
+    random = ~ 1 | subject,                    # Random intercept
+    correlation = corAR1(form = ~ time | subject),  # Plus AR(1)
+    data = mydata)
+```
+
+### Decision Checklist
+
+Before finalizing your covariance structure:
+
+- [ ] Checked number of parameters vs. sample size
+- [ ] Fit multiple candidate structures with same fixed effects
+- [ ] Used REML for all models being compared
+- [ ] Compared AIC and BIC values
+- [ ] Examined residual semivariograms
+- [ ] Performed LRT for nested structures (if applicable)
+- [ ] Checked convergence of all models
+- [ ] Verified estimated parameters are reasonable (e.g., 0 < rho < 1)
+
+## Summary
+
+Selecting an appropriate covariance structure is crucial for valid inference in longitudinal data analysis:
+
+1. **Start simple:** Begin with CS or AR(1) as baseline
+2. **Consider the science:** What pattern of correlation makes biological/practical sense?
+3. **Balance fit and parsimony:** UN fits better but costs more parameters
+4. **Use diagnostics:** Semivariograms reveal unmodeled correlation
+5. **Check assumptions:** Equal spacing for AR(1), sample size for UN
+6. **Validate selection:** AIC/BIC and LRT provide statistical guidance
+
+When in doubt, start with a parsimonious structure (CS or AR(1)) and add complexity only if diagnostics indicate poor fit.

@@ -1,0 +1,1492 @@
+---
+title: "BIOS 667 - Lecture 16: Contrasting Marginal and Mixed Effects Models"
+subtitle: "Fitzmaurice, Laird & Ware (2011) - Applied Longitudinal Data Analysis"
+author: "Naim Rashid"
+date: "2026-10-06"
+format:
+  revealjs:
+    theme: [default]
+    footer: BIOS 667 · UNC Gillings - Lecture 16 (Ch.16)
+    slide-number: true
+    hash: true
+    toc: false
+    code-overflow: wrap
+    code-line-numbers: false
+    math: mathjax
+    incremental: true
+    embed-resources: true
+    chalkboard: false
+    css: "../../unc-gillings.css"
+    scrollable: true
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+## Lecture Objectives
+
+- Distinguish between **population-average** (marginal) and **subject-specific** (conditional) estimands
+- Explain why marginal and mixed models yield identical fixed effects for **linear** models but diverge for **non-linear** link functions
+- Apply the **attenuation formula** to relate GLMM coefficients to GEE coefficients in logistic models
+- Analyze the **ECG crossover case study** using both GEE and GLMM, interpreting differences in treatment effect estimates
+- Select the appropriate modeling framework based on the **research question and audience**
+
+::: {.notes}
+Ch. 16 is the synthesis chapter for Part III: it contrasts the marginal (GEE, L12-13) and mixed (GLMM, L14-15) models students already know. The single thread: GEE and GLMM target different ESTIMANDS (population-average beta vs subject-specific beta-star), identical for linear models but divergent under a non-linear link. The ECG crossover case study (FLW Section 16.5) is the worked real-data example. Two-class lecture; Part I concepts, Part II case study and decision-making.
+:::
+
+---
+
+## Roadmap
+
+1. Key terminology and conceptual framework
+2. The linear model special case (equivalence)
+3. Non-linear links and the attenuation phenomenon
+4. ECG crossover case study (GEE vs GLMM)
+5. Decision framework: when to use which approach
+6. Common misconceptions and best practices
+
+---
+
+{{< include _notation_box.qmd >}}
+
+::: {.notes}
+Standard through-random-effects card. This lecture adds three symbols on the next slide that the shared card does not front-load: the conditional coefficient beta-star, the random-intercept variance, and a single name for the inverse link. Walk students through that lecture-specific slide before any model is fit.
+:::
+
+---
+
+## Notation (this lecture)
+
+::: {.notation-card style="font-size: 0.82em;"}
+
+| Symbol | Meaning |
+|:--|:--|
+| $\boldsymbol\beta$ | marginal / population-average coefficients: $g(\mu_i)=\mathbf{X}_i\boldsymbol\beta$ |
+| $\boldsymbol\beta^*$ | conditional / subject-specific coefficients: $g\{\operatorname{E}(Y_i\mid \mathbf{b}_i)\}=\mathbf{X}_i\boldsymbol\beta^* + \mathbf{Z}_i\mathbf{b}_i$ |
+| $\sigma_b^2$ | random-intercept variance ($=g_{11}$, the single element of $G$ with one random intercept) |
+| $h(\cdot)$ | inverse link $h=g^{-1}$; for logistic $h=\operatorname{expit}=\operatorname{logit}^{-1}=\texttt{plogis}$ |
+| $c$ | attenuation factor relating $\boldsymbol\beta$ to $\boldsymbol\beta^*$ (logistic random intercept) |
+| $\pi_{ij}$ | $P(Y_{ij}=1)$, binary success probability (from L11) |
+| $\alpha$ | GEE working-correlation / log-OR association parameter (from L13) |
+
+:::
+
+::: {.notes}
+This is the lecture-specific notation slide the notation rules require after the shared include. beta is the population-average coefficient (what GEE targets); beta-star is the subject-specific coefficient (what a GLMM targets). They are NOT the same once the link is non-linear. We use ONE name for the inverse link throughout: h. For the logistic model h is expit, also written logit-inverse, computed in R as plogis. Do not switch names slide to slide.
+:::
+
+---
+
+## Key Terminology
+
+| Term | Definition |
+|------|------------|
+| **Estimand** | The population quantity we seek to estimate (e.g., population odds ratio) |
+| **Estimator** | The statistical method/procedure that produces a number (e.g., GEE coefficient) |
+| **Estimate** | The actual number obtained from applying the estimator to data |
+| **Non-collapsibility**$^\dagger$ | Marginal OR $\neq$ conditional OR even without confounding (binary outcomes) |
+| **Attenuation** | Reduction in marginal effect magnitude vs conditional effect due to averaging over random effects |
+
+$^\dagger$ Beyond FLW Ch. 16 (the chapter frames the same gap purely as different *targets of inference* plus attenuation of $\boldsymbol\beta^*$ relative to $\boldsymbol\beta$). "Non-collapsibility" is the standard term from Greenland, Robins & Pearl (1999) and Agresti (2002, Section 12.2, which FLW cites); we use it as a labeled aside.
+
+::: {.notes}
+Estimand / estimator / estimate is the spine of the lecture: the difference between GEE and GLMM is a difference of estimands, not a right-vs-wrong of estimators. Non-collapsibility is an instructor extension, flagged with a dagger: FLW never uses the word, it explains the marginal-vs-conditional OR gap through targets of inference and the attenuation relationship. Attenuation is the chapter's own mechanism (FLW p. 477).
+:::
+
+---
+
+## Visual Decision Framework
+
+```
+                    Research Question
+                           |
+                 What is the target of inference?
+                    /                \
+          Population Effect?     Individual Effect?
+                 |                      |
+          Marginal Model (GEE)    Mixed Model (GLMM)
+                 |                      |
+         Population OR/RR         Subject-specific OR/RR
+```
+
+**Key insight**: Choose your estimand BEFORE choosing your software.
+
+---
+
+## The Fundamental Distinction
+
+Imagine 1000 patients with hypertension starting a new drug.
+
+| Question Type | Question | Model |
+|---------------|----------|-------|
+| **Population-average** | If we give this drug to all 1000 patients, what is the average reduction in systolic BP? | Marginal (GEE) |
+| **Subject-specific** | For Patient #247 in my clinic, how much will *her* BP change? | Mixed (GLMM) |
+
+---
+
+## When Differences Are Largest
+
+**These are different questions requiring different models.**
+
+Divergence is greatest when:
+
+- Outcomes are **non-linear** (binary, count data)
+- There is **high between-subject heterogeneity** ($\sigma_b^2$ is large)
+
+---
+
+## Concrete Example: Smoking Cessation
+
+A new smoking cessation program is being evaluated:
+
+| Model | Odds Ratio | Interpretation |
+|-------|------------|----------------|
+| GLMM | 3.0 | Individual's odds of quitting triple |
+| GEE | 2.0 | Population odds of quitting double |
+
+**Why the difference?** High variability in individual responses.
+
+::: {.notes}
+A clean toy contrast before the real data: the GLMM OR (3.0, subject-specific) exceeds the GEE OR (2.0, population-average) because of attenuation, the GLMM is always farther from the null. Both numbers are correct; they answer different questions. This previews the ECG result where the gap is much larger (1.77 vs 6.4) because the random-intercept variance there is enormous.
+:::
+
+---
+
+## Concrete Example: Who Uses Which?
+
+| Stakeholder | Uses OR | Reason |
+|-------------|---------|--------|
+| FDA | 2.0 (GEE) | "What's the population benefit?" |
+| Clinician | 3.0 (GLMM) | "Will this help my patient?" |
+
+Both estimates are correct for their intended purpose.
+
+---
+
+## Packages for Today
+
+```{r}
+#| label: pkg-load
+#| output-location: slide
+required_pkgs <- c("dplyr", "tidyr", "ggplot2", "geepack", "lme4", "broom.mixed", "survival")
+missing_pkgs <- required_pkgs[!vapply(required_pkgs, requireNamespace, logical(1), quietly = TRUE)]
+if (length(missing_pkgs) > 0) {
+  stop(
+    "Please install the following packages before rendering: ",
+    paste(missing_pkgs, collapse = ", ")
+  )
+}
+invisible(lapply(required_pkgs, library, character.only = TRUE))
+```
+
+---
+
+## Connecting to Earlier Lectures
+
+| Lecture | Topic | Key Point |
+|---------|-------|-----------|
+| L08-10 | Linear Mixed Models | $\beta$ has marginal interpretation; GLS and LMM give same population inference |
+| L12-13 | GEE | Population-average approach; focus on $\mu_i = \operatorname{E}(Y_i)$ |
+| L14-15 | GLMMs | Subject-specific approach; focus on $\operatorname{E}(Y_i \mid b_i)$ |
+| **Today** | Contrast | Why these yield DIFFERENT answers for non-linear models |
+
+---
+
+## The Key Realization
+
+The "equivalence" we enjoyed with linear models (GLS $\approx$ LME for $\beta$) **BREAKS DOWN** completely once we introduce non-linear link functions.
+
+**Central question**: When do population-average and subject-specific parameters diverge, by how much, and which one should you report?
+
+# Part I: Concepts and the Linear Special Case
+
+::: {.notes}
+Timing: Part I is roughly the first class period (about 40 minutes). It covers the estimand framework, why linear models hide the marginal-vs-conditional difference, and the attenuation phenomenon for non-linear links. Part II (next divider) is the ECG case study, decision framework, and back matter. This is a two-class lecture (dense); aim to reach the ECG case study at the start of the second class.
+:::
+
+---
+
+## 16.1 The Main Idea
+
+- Marginal and mixed models differ **beyond** correlation handling; they answer different questions.
+
+- Linear models mask this difference because $\operatorname{E}(Y_i)=X_i\beta$ either way.
+
+- Once the link is non-linear, $\beta$ (population) and $\beta^*$ (subject) diverge.
+
+- Always start by writing down the estimand **before** picking software.
+
+---
+
+## 16.2 Linear Special Case: Why Equivalence Holds
+
+With identity link, both GLS and LME imply $\operatorname{E}(Y_i)=X_i\beta$.
+
+**Why?** Averaging a linear function of $b_i$ is straightforward:
+$$\operatorname{E}[Z_i b_i] = Z_i \operatorname{E}(b_i) = 0$$
+
+Random effects only restructure the covariance:
+$$\boldsymbol\Sigma_i = \mathbf{Z}_i G \mathbf{Z}_i^\top + \sigma^2 \mathbf{I}$$
+
+where $G$ is the between-subject random-effects covariance and $\sigma^2 \mathbf{I}$ is the within-subject measurement (error) covariance.
+
+Therefore $\boldsymbol\beta$ retains a marginal interpretation in linear mixed models: here $\boldsymbol\beta = \boldsymbol\beta^*$.
+
+::: {.notes}
+This is FLW eq (16.1)-(16.2) and the derivation on p. 474. The point students must take away: in a LINEAR mixed model beta has BOTH a conditional and a marginal reading, because expectation is a linear operator and E(Z b) = 0. G is the between-subject covariance (FLW's letter, from Ch. 8); sigma-squared I is the within-subject error. This is the one place in the whole lecture where beta and beta-star coincide. Everything after this slide is about what breaks when the link is non-linear.
+:::
+
+---
+
+## 16.2 Quick Derivation
+
+Start from the LME conditional mean:
+$$\operatorname{E}(\mathbf{Y}_i \mid \mathbf{b}_i) = \mathbf{X}_i\boldsymbol\beta + \mathbf{Z}_i \mathbf{b}_i$$
+
+Apply law of total expectation:
+$$\operatorname{E}(\mathbf{Y}_i) = \operatorname{E}\big[\operatorname{E}(\mathbf{Y}_i \mid \mathbf{b}_i)\big]$$
+
+Substitute:
+$$\operatorname{E}(\mathbf{Y}_i) = \mathbf{X}_i\boldsymbol\beta + \mathbf{Z}_i \operatorname{E}(\mathbf{b}_i) = \mathbf{X}_i\boldsymbol\beta$$
+
+when $\operatorname{E}(\mathbf{b}_i) = \mathbf{0}$.
+
+::: {.notes}
+The whole derivation rests on one fact: the conditional mean is a LINEAR function of b, so its expectation passes through to E(Z b) = Z E(b) = 0. That linearity is exactly what fails for a logit or log link on the next slides. FLW p. 474 makes this explicit.
+:::
+
+---
+
+## Why Non-Linearity Breaks Equivalence
+
+**Mathematical reason**: Expectation is a linear operator.
+
+| Operation | Result |
+|-----------|--------|
+| $\operatorname{E}(a + b) = \operatorname{E}(a) + \operatorname{E}(b)$ | Works (linear) |
+| $\operatorname{E}[h(a + b)] \neq h[\operatorname{E}(a) + \operatorname{E}(b)]$ | Jensen's inequality |
+
+where $h = g^{-1}$ is the inverse link (for logistic, $h = \operatorname{expit}$).
+
+::: {.notes}
+Same inverse-link name as the notation slide: h. For a convex-then-concave function like expit, Jensen's inequality says the average of the curve is not the curve of the average. That single fact is the engine of the entire chapter. FLW states it as E{h(X beta + Z b)} != h{X beta + Z E(b)} on p. 474.
+:::
+
+---
+
+## Visual Intuition
+
+| Case | What Happens |
+|------|--------------|
+| **Linear** | Individual lines (each with slope $\beta_1$) average to population line with same slope $\beta_1$ |
+| **Logistic** | Individual S-curves (each with slope parameter $\beta_1^*$) average to flatter S-curve with smaller slope parameter $\beta$ |
+
+**Plain English**: Averaging curved lines gives a different curve than the average line.
+
+---
+
+## 16.3 Link Function Consequences
+
+Define marginal model: $g(\mu_i) = \mathbf{X}_i \boldsymbol\beta$ with $\mu_i = \operatorname{E}(Y_i)$.
+
+Define GLMM: $g\{\operatorname{E}(Y_i\mid \mathbf{b}_i)\} = \mathbf{X}_i \boldsymbol\beta^* + \mathbf{Z}_i \mathbf{b}_i$.
+
+Marginal mean requires integrating the inverse link $h$ over $\mathbf{b}_i$:
+$$\mu_i = \int h(\mathbf{X}_i\boldsymbol\beta^* + \mathbf{Z}_i \mathbf{b}_i)\, f(\mathbf{b}_i)\,d\mathbf{b}_i$$
+
+**Result**: $g(\mu_i) \neq \mathbf{X}_i \boldsymbol\beta^*$ in general; the link form is not preserved.
+
+::: {.notes}
+This is FLW eq (16.3)-(16.7), p. 475-476. The marginal model puts the link on E(Y); the GLMM puts the link on E(Y|b). Recovering the marginal mean from the GLMM means integrating the inverse link h over the random-effects density: no closed form, and the result is not itself a logistic-form model. That is why a GLMM does not hand you population-average coefficients for free. Same h as before.
+:::
+
+---
+
+## 16.3 Attenuation Insight
+
+For a logistic GLMM with a random intercept:
+$$\text{logit}\{\operatorname{E}(Y_{ij}\mid b_i)\} = X_{ij}\boldsymbol\beta^* + b_i, \qquad b_i \sim N(0,\sigma_b^2)$$
+
+Approximate marginal relationship (Zeger, Liang & Albert, 1988; FLW p. 477):
+$$\text{logit}\{\operatorname{E}(Y_{ij})\} \approx c \, X_{ij}\boldsymbol\beta^*, \qquad c = \left(1 + c_2^{\,2}\,\sigma_b^2\right)^{-1/2}$$
+
+where the **named constant** is $c_2 = \dfrac{16\sqrt{3}}{15\pi} \approx 0.588$, so the **multiplier** of $\sigma_b^2$ is $c_2^{\,2} \approx 0.346$.
+
+Thus $|\boldsymbol\beta| < |\boldsymbol\beta^*|$ whenever $\sigma_b^2 > 0$; attenuation grows with heterogeneity.
+
+::: {.callout-note}
+Two numbers, one constant. $c_2 = 16\sqrt{3}/(15\pi) \approx 0.588$ is the named Zeger-Liang-Albert constant; the quantity that multiplies $\sigma_b^2$ inside the attenuation factor is $c_2^{\,2} \approx 0.346$. Some texts (and FLW p. 477) report the constant as $0.588$ and write the multiplier as $c_2^2 = 0.346$; the deck uses $0.346$ as the multiplier throughout.
+:::
+
+::: {.notes}
+This is the one precision fix flagged in review: the attenuation factor is c = (1 + c_2^2 sigma_b^2)^{-1/2} with c_2 = 16 sqrt(3)/(15 pi) ≈ 0.588 the named constant and c_2^2 ≈ 0.346 the multiplier of sigma_b^2. Do NOT call 0.346 "c_2": 0.346 is c_2 SQUARED. A student who looks up Zeger-Liang-Albert will see 0.588 as the constant. The numbers plug in identically either way (1/sqrt(1+0.346*4) = 0.65); only the labeling is being corrected. FLW p. 477 writes beta ≈ beta*/sqrt(1 + 0.346 sigma_b^2) with k = 16 sqrt(3)/(15 pi) and k^2 = 0.346.
+:::
+
+---
+
+## Important Note on the Attenuation Constant
+
+The multiplier $c_2^{\,2} \approx 0.346$ is an **approximation specific to**:
+
+- Logistic GLMMs with random intercepts
+- Normally distributed random effects
+
+Source: Zeger, Liang & Albert (1988); $c_2 = 16\sqrt{3}/(15\pi) \approx 0.588$.
+
+**Does NOT apply to**: other link functions or random-slope models.
+
+::: {.notes}
+Reinforce: the 0.346 multiplier is a probit-approximation result that holds only for the logistic random-INTERCEPT model with normal random effects. With a random slope, or a different link, the simple scalar attenuation factor no longer applies.
+:::
+
+---
+
+## Clinical Translation
+
+> "Individual treatment effects look stronger than population effects because high responders and low responders average out."
+
+---
+
+## 16.3 Attenuation Formula and Severity
+
+$$\boldsymbol\beta_{\text{marginal}} \approx \frac{\boldsymbol\beta^*_{\text{GLMM}}}{\sqrt{1 + 0.346\,\sigma_b^2}}, \qquad c = \frac{1}{\sqrt{1 + 0.346\,\sigma_b^2}}$$
+
+| $\sigma_b^2$ | Factor $c$ | Shrinkage | Severity |
+|-------------:|:----------:|----------:|:--------:|
+| 0.5 | 0.92 | 8% | Mild |
+| 2.0 | 0.77 | 23% | Noticeable |
+| 4.0 | 0.65 | 35% | Substantial |
+| 9.0 | 0.49 | 51% | Severe |
+
+**Worked example** ($\boldsymbol\beta^* = 1.5$, $\sigma_b^2 = 4$): $\boldsymbol\beta_{\text{marg}} = 1.5/\sqrt{1 + 0.346(4)} = 1.5/1.544 \approx 0.97$ (factor $c=0.65$). Population OR $\approx 2.6$ vs individual OR $\approx 4.5$: same direction, weaker population effect.
+
+::: {.notes}
+0.346 here is the multiplier c_2^2 (see two slides back). The table is the single attenuation-severity reference; the worked example shows the arithmetic once. Direction is always preserved; only the magnitude shrinks toward the null. The population OR (2.6) and individual OR (4.5) are both correct for their estimands. This single slide replaces what were three near-duplicate attenuation slides.
+:::
+
+---
+
+## Check Your Understanding: Attenuation
+
+**Question:** A researcher reports that a GLMM for diabetes progression yields a treatment OR of 0.5 (protective effect) with random intercept variance $\sigma_b^2 = 3.0$. They conclude: "Treatment cuts the population odds in half."
+
+**What is wrong with this conclusion, and what is the correct population OR?**
+
+::: {.fragment}
+**Answer:** The researcher incorrectly interpreted the **conditional** OR as a **marginal** (population) effect.
+
+**Calculation:**
+$$\beta^{\text{marg}} = \frac{\log(0.5)}{\sqrt{1 + 0.346 \times 3.0}} = \frac{-0.693}{\sqrt{2.038}} = \frac{-0.693}{1.43} = -0.485$$
+
+**Marginal OR** = $\exp(-0.485) = 0.62$
+
+**Correct conclusion:** "Within individuals, treatment cuts odds in half (OR = 0.5). At the population level, treatment reduces odds by about 38% (OR = 0.62)."
+
+The population effect is attenuated toward the null due to averaging over heterogeneity.
+:::
+
+---
+
+## 16.3 Log Link Exception
+
+For log-link GLMMs:
+$$\log \{\operatorname{E}(Y_{ij}\mid b_i)\} = X_{ij}\boldsymbol\beta^* + Z_{ij} b_i$$
+
+Marginal mean factorizes:
+$$\mu_{ij} = \exp(X_{ij}\boldsymbol\beta^*)\, \operatorname{E}\{\exp(Z_{ij} b_i)\}$$
+
+For a single random intercept, $\log(\mu_{ij}) = X_{ij}\boldsymbol\beta^* + g_{11}/2$: fixed effects **not** in $Z_{ij}$ carry over unchanged (only the intercept shifts by $g_{11}/2$).
+
+::: {.callout-warning}
+**Qualifier (same slide, do not skip):** this clean carry-over holds **only** when the covariate has **no random slope** (it does not overlap $Z_{ij}$) **and** is independent of $b_i$. With a random slope present, fixed-effect rate ratios do **NOT** carry over unchanged.
+:::
+
+::: {.notes}
+FLW p. 477-478: the log link is the one non-identity case where SOME fixed effects survive marginalization unchanged. The exp(Z b) factor is absorbed into the intercept (g_11/2 for a single random intercept) precisely for covariates not in Z and independent of b. The qualifier sits on the SAME slide as the clean result so the unqualified claim is never on screen alone (review item L16-L16). Contrast with the logit link, where NO coefficient survives unchanged.
+:::
+
+---
+
+## Important Clarification: Marginal Predictions from GLMMs
+
+**Common misconception**: `predict(glmer_fit, re.form = NA)` gives marginal predictions.
+
+**Reality** (FLW textbook, p. 477):
+
+- `re.form = NA` gives **conditional predictions at $b_i = 0$** (the "typical" subject)
+- For non-linear links: $\operatorname{E}(Y \mid b = 0) \neq \operatorname{E}(Y)$
+- True marginal predictions require **integrating over the random effects distribution**
+
+---
+
+## Helper Function for True Marginal Predictions
+
+```{r}
+#| label: marginal-prediction-helper
+#| output-location: slide
+# CAVEAT: this helper assumes a SINGLE random intercept and a BINOMIAL family.
+# It does NOT handle random slopes or non-binomial GLMMs.
+glmm_marginal_prob <- function(fit, newdata, draws = 2000, seed = 667) {
+  stopifnot(family(fit)$family == "binomial")
+  set.seed(seed)  # reproducible Monte Carlo (course seed 667)
+  # Fixed-part linear predictor at b = 0 (re.form = NA): X*beta-star only
+  eta_fix <- predict(fit, newdata = newdata, re.form = NA, type = "link")
+  # VarCorr(fit)[[1]] is the covariance of the FIRST grouping factor; its
+  # "stddev" attribute is the random-intercept SD (a 1x1 here -> sigma_b).
+  sd_b <- as.numeric(attr(VarCorr(fit)[[1]], "stddev"))
+  # Monte Carlo integration over b ~ N(0, sigma_b^2): for each of `draws`
+  # random intercepts, push eta_fix + b through plogis (= expit = h), then
+  # average the probabilities across draws (rowMeans over the draw columns).
+  rowMeans(sapply(1:draws, function(...) plogis(eta_fix + rnorm(1, 0, sd_b))))
+}
+```
+
+::: {.notes}
+This is the "do it right" companion to the re.form = NA misconception. The function integrates the inverse link h (= plogis = expit) over the normal random-intercept density by Monte Carlo: it does NOT just plug in b = 0. The two tricky lines: (1) attr(VarCorr(fit)[[1]], "stddev") pulls sigma_b out of the fitted variance component for the first (here only) grouping factor; (2) sapply(...) draws one random intercept per replicate, adds it to the fixed linear predictor, and plogis maps to a probability, then rowMeans averages across draws. Seed 667 for reproducibility. Caveat stated in the code: single random intercept, binomial only.
+:::
+
+---
+
+## Logistic Attenuation: Simulation Setup
+
+```{r}
+#| label: logistic-sim-code
+#| output-location: slide
+set.seed(667)
+# Subject-specific parameters (conditional on random effects)
+beta0 <- -1.5        # Log-odds at time=0 for average individual
+beta1 <- 0.75        # Subject-specific slope (change per unit time)
+sigma_b <- 2         # SD of random intercepts (heterogeneity); variance = 4
+
+# Time grid for plotting
+time_grid <- seq(-4, 8, by = 0.25)
+
+# Simulate 25 individuals with varying intercepts
+subject_b <- rnorm(25, mean = 0, sd = sigma_b)
+
+# Generate subject-specific curves
+subject_curves <- tidyr::expand_grid(time = time_grid, b = subject_b) |>
+  mutate(
+    linear_predictor = beta0 + beta1 * time + b,
+    prob = plogis(linear_predictor),
+    curve_id = factor(round(b, 2))
+  )
+
+# Generate marginal curve by Monte Carlo integration
+marginal_curve <- tibble(
+  time = time_grid,
+  prob = vapply(
+    time_grid,
+    function(t) mean(plogis(beta0 + beta1 * t + rnorm(2000, 0, sigma_b))),
+    numeric(1)
+  )
+)
+```
+
+---
+
+## Logistic Attenuation: Visualization
+
+```{r}
+#| label: logistic-sim-plot
+#| output-location: slide
+#| fig-cap: "Conditional curves (blue) rise faster than the marginal mean (red). Subject-specific slope = 0.75 yields flatter population slope."
+logit_plot <- ggplot(subject_curves, aes(x = time, y = prob, group = curve_id)) +
+  geom_line(alpha = 0.35, color = "#1f77b4") +
+  geom_line(data = marginal_curve, aes(x = time, y = prob),
+            inherit.aes = FALSE, color = "#d62728", linewidth = 1.2) +
+  coord_cartesian(ylim = c(0, 1)) +
+  labs(
+    x = "Time",
+    y = "Probability of success",
+    title = "Subject-specific vs marginal logistic curves",
+    subtitle = "Random intercept variance = 4; slopes attenuate after averaging"
+  ) +
+  theme_minimal(base_size = 16)
+print(logit_plot)
+```
+
+::: {.notes}
+This reproduces FLW Figure 16.1: 25 subject-specific logistic curves (blue), each with the same conditional slope beta1-star = 0.75, and their average, the marginal curve (red). The marginal curve is visibly flatter, the slope attenuation made visual. set.seed(667). The chunk is self-contained: beta0/beta1/sigma_b here are the Figure 16.1 values and differ from the later b=0 demo (beta0=0, beta1=1), each chunk standing alone.
+:::
+
+---
+
+## Effect of Heterogeneity on Marginal Curves
+
+```{r}
+#| label: heterogeneity-comparison
+#| output-location: slide
+# Low heterogeneity (variance = 0.5)
+sigma_b_low <- sqrt(0.5)
+marginal_low <- tibble(
+  time = seq(-4, 8, 0.5),
+  prob = vapply(seq(-4, 8, 0.5),
+                function(t) mean(plogis(beta0 + beta1 * t + rnorm(1000, 0, sigma_b_low))),
+                numeric(1)),
+  heterogeneity = "Low (var=0.5)"
+)
+
+# High heterogeneity (variance = 9)
+sigma_b_high <- 3
+marginal_high <- tibble(
+  time = seq(-4, 8, 0.5),
+  prob = vapply(seq(-4, 8, 0.5),
+                function(t) mean(plogis(beta0 + beta1 * t + rnorm(1000, 0, sigma_b_high))),
+                numeric(1)),
+  heterogeneity = "High (var=9)"
+)
+
+# Plot comparison
+comparison_plot <- ggplot() +
+  geom_line(data = marginal_low, aes(x = time, y = prob),
+            color = "#2ca02c", linewidth = 1.5) +
+  geom_line(data = marginal_high, aes(x = time, y = prob),
+            color = "#ff7f0e", linewidth = 1.5) +
+  labs(title = "Impact of heterogeneity on marginal curves",
+       subtitle = "Green: Low heterogeneity (steep) | Orange: High heterogeneity (flat)",
+       x = "Time", y = "Probability") +
+  theme_minimal(base_size = 14)
+print(comparison_plot)
+```
+
+---
+
+## Logistic Attenuation: Key Observations
+
+| Observation | Explanation |
+|-------------|-------------|
+| Subject curves (blue) are steeper | They condition on individual $b_i$ |
+| Marginal curve (red) is flatter | Averaging shrinks the slope because logit is non-linear |
+| Higher $\sigma_b^2$ = more attenuation | More heterogeneity to average over |
+| Direction preserved | Magnitude shrinks toward null |
+
+---
+
+## 16.4 Simple Numerical Illustration
+
+Consider a simple setting: binary responses depend only on time with a random intercept.
+
+**GLMM (conditional model)**:
+$$\text{logit}\{P(Y_{ij} = 1 \mid b_i)\} = \beta_0^* + \beta_1^* t_{ij} + b_i, \quad b_i \sim N(0, \sigma_b^2)$$
+
+**Key insight**: The conditional slope $\beta_1^*$ describes how an *individual's* log-odds changes over time.
+
+---
+
+## 16.4 Why Marginal Slope Differs
+
+To obtain the **marginal** (population-average) probability, we must integrate:
+$$P(Y_{ij} = 1) = \int \text{expit}(\beta_0^* + \beta_1^* t_{ij} + b_i) \, \phi(b_i; 0, \sigma_b^2) \, db_i$$
+
+**Critical point**: Due to the non-linearity of expit(), this integral does NOT simplify to:
+$$\text{logit}\{P(Y_{ij} = 1)\} = \beta_0 + \beta_1 t_{ij}$$
+
+with $\beta_1 = \beta_1^*$. Instead, $|\beta_1| < |\beta_1^*|$.
+
+---
+
+## 16.4 The b=0 Misconception
+
+**Common error**: Claiming that setting $b_i = 0$ in a GLMM gives marginal predictions.
+
+**Why this is wrong** (FLW textbook, p. 477):
+$$\operatorname{E}[Y \mid b = 0] \neq \operatorname{E}[Y]$$
+
+For non-linear links, the conditional expectation at the mean of $b$ is NOT the marginal expectation.
+
+---
+
+## 16.4 Demonstration: b=0 vs True Marginal
+
+```{r}
+#| label: b0-vs-marginal-demo
+#| output-location: slide
+# Parameters
+beta0 <- 0
+beta1 <- 1
+sigma_b <- 2  # variance = 4
+
+# Time points
+t_vals <- seq(-3, 3, by = 0.5)
+
+# Prediction at b = 0 (the WRONG "marginal")
+prob_b0 <- plogis(beta0 + beta1 * t_vals)
+
+# True marginal (integrate over random effects)
+prob_marginal <- sapply(t_vals, function(t) {
+  mean(plogis(beta0 + beta1 * t + rnorm(5000, 0, sigma_b)))
+})
+
+# Compare
+comparison_df <- data.frame(
+  time = t_vals,
+  prob_b0 = prob_b0,
+  prob_marginal = prob_marginal,
+  difference = prob_b0 - prob_marginal
+)
+
+cat("Comparison of P(Y=1|b=0) vs true E[Y]:\n")
+print(round(comparison_df, 3))
+```
+
+::: {.notes}
+The numeric proof that b = 0 is NOT the marginal. Self-contained chunk: here beta0 = 0, beta1 = 1, sigma_b = 2 (differs from the Figure 16.1 demo above). The "difference" column is largest in the middle (near eta = 0, p = 0.5) and shrinks at the extremes, exactly the curvature argument. This is the computational backbone of the re.form = NA misconception.
+:::
+
+---
+
+## 16.4 Visual Comparison
+
+```{r}
+#| label: b0-vs-marginal-plot
+#| output-location: slide
+#| fig-cap: "The b=0 curve (blue dashed) is NOT the marginal curve (red solid). The difference is largest in the middle range."
+ggplot(comparison_df, aes(x = time)) +
+  geom_line(aes(y = prob_b0), color = "#1f77b4", linetype = "dashed", linewidth = 1.2) +
+  geom_line(aes(y = prob_marginal), color = "#d62728", linewidth = 1.2) +
+  annotate("text", x = 2, y = 0.9, label = "P(Y=1 | b=0)", color = "#1f77b4", size = 5) +
+  annotate("text", x = 2, y = 0.65, label = "True E[Y]", color = "#d62728", size = 5) +
+  labs(
+    x = "Time",
+    y = "Probability",
+    title = "Conditional at b=0 vs True Marginal Probability",
+    subtitle = expression(paste("GLMM with ", sigma[b], " = 2; b=0 overestimates probabilities near 0.5"))
+  ) +
+  coord_cartesian(ylim = c(0, 1)) +
+  theme_minimal(base_size = 14)
+```
+
+---
+
+## Why Is the Difference Largest Near p = 0.5?
+
+```{r}
+#| label: jensen-curvature
+#| echo: false
+#| fig-width: 6
+#| fig-height: 4.2
+library(ggplot2)
+eta <- seq(-6, 6, by = 0.05)
+curve_df <- data.frame(eta = eta, p = plogis(eta))
+ggplot(curve_df, aes(eta, p)) +
+  geom_line(linewidth = 1.2, color = "#1f65b7") +
+  geom_hline(yintercept = 0.5, linetype = "dotted", color = "gray50") +
+  geom_vline(xintercept = 0, linetype = "dotted", color = "gray50") +
+  annotate("text", x = -3.2, y = 0.55, label = "steepest at p = 0.5\n(eta = 0)", size = 4.5) +
+  annotate("text", x = 3.0, y = 0.97, label = "flat (saturated):\nb_i barely moves p", size = 4) +
+  labs(x = expression(eta == X*beta^"*" + b[i]),
+       y = "P(Y = 1)",
+       title = "expit is steepest near p = 0.5",
+       subtitle = "Curvature drives the marginal-vs-conditional gap") +
+  theme_minimal(base_size = 15)
+```
+
+::: {.callout-note}
+**Direction of bias (Jensen):** expit is concave above $p=0.5$ and convex below, so averaging over $b_i$ pulls the marginal probability **toward 0.5**. The marginal slope is therefore flatter than the subject-specific slope: $|\boldsymbol\beta| < |\boldsymbol\beta^*|$.
+:::
+
+::: {.notes}
+Replaced the ASCII curve with a real annotated plot, on its own slide (review item L16-L09). The single teaching point: where the inverse link is steep (near p = 0.5), a small change in b moves the probability a lot, so Jensen's inequality bites hardest and averaging flattens the curve; where it is saturated (near 0 or 1), b barely matters and the marginal approaches the b = 0 prediction. The callout states the DIRECTION of the bias (toward 0.5), which the old slide omitted.
+:::
+
+---
+
+## Difference Near p = 0.5: When It Matters
+
+| Region | Curve shape | Effect of averaging over $b_i$ |
+|--------|-------------|--------------------------------|
+| Near $p = 0.5$ ($\eta \approx 0$) | Steep | Large: marginal pulled toward 0.5, slope flattens |
+| Near $p = 0$ or $1$ | Flat (saturated) | Small: marginal $\approx$ prediction at $b = 0$ |
+
+**Takeaway:** the marginal-vs-conditional gap is largest for steep regions of the link **and** large $\sigma_b^2$.
+
+::: {.notes}
+This is the interpretation half of the split. Tie it forward: in the ECG case study the random-intercept variance is enormous (about 24), so the marginal and conditional ORs differ by a large factor. Large sigma_b^2 plus a non-saturated probability region equals maximal attenuation.
+:::
+
+---
+
+## 16.4 Key Takeaway
+
+| Prediction Type | What It Represents | How to Compute |
+|-----------------|-------------------|----------------|
+| `re.form = NA` | $E[Y \mid b = 0]$ (typical subject) | `predict(fit, re.form = NA)` |
+| True marginal | $E[Y]$ (population average) | Integrate over $f(b)$ |
+
+**The difference matters most when**:
+
+- $\sigma_b^2$ is large (high heterogeneity)
+- Predictions are near probability 0.5 (steepest part of logistic curve)
+
+This bridges to the ECG crossover case study where we compare GEE vs GLMM estimates.
+
+# Part II: ECG Case Study and Choosing a Model
+
+::: {.notes}
+Timing: Part II is roughly the second class period (about 40 minutes). It runs the full ECG crossover analysis (FLW Section 16.5, Tables 16.1-16.3), then the decision framework and recipe card. Recap before starting: in Part I we established that a non-linear link makes beta (marginal) and beta-star (conditional) diverge, with the attenuation factor c = (1 + 0.346 sigma_b^2)^{-1/2} for the logistic random-intercept model. Now we see that divergence in real data.
+:::
+
+---
+
+## 16.5 ECG Crossover Overview
+
+**Study design** (FLW Table 16.1; Jones & Kenward 1989):
+
+- 67 patients randomized to sequences: Placebo$\to$Active (34) or Active$\to$Placebo (33)
+- Binary response each period: abnormal ECG (1) vs normal (0)
+- Sampling zero in Sequence 1, pattern (1,0) - sparse cell issue
+
+**Goal**: Compare treatment effect estimates from marginal vs mixed models.
+
+::: {.notes}
+This is a genuine FLW chapter example (Table 16.1, a safety side-effect from a real two-period crossover trial), not a simulation: the required real-data Case Study. The sampling zero (0 patients in P->A with pattern abnormal-then-normal) is a feature of the data we will probe later. 67 subjects, exactly 2 observations each: very small clusters.
+:::
+
+---
+
+## ECG Crossover: Key Questions
+
+| Stakeholder | Question |
+|-------------|----------|
+| FDA | "What's the population risk increase if we approve this drug?" |
+| Clinician | "Should I prescribe this to my patient with cardiac history?" |
+
+---
+
+## 16.5 Crossover Design: Sequence x Period -> Treatment
+
+```
+                Period 1        Period 2
+            +-------------+   +-------------+
+ Seq P->A   |  Placebo    |   |  Active     |   treatment = 0, then 1
+ (34 pts)   |  (trt = 0)  |   |  (trt = 1)  |
+            +-------------+   +-------------+
+ Seq A->P   |  Active     |   |  Placebo    |   treatment = 1, then 0
+ (33 pts)   |  (trt = 1)  |   |  (trt = 0)  |
+            +-------------+   +-------------+
+```
+
+Each subject contributes **two** binary ECG responses; `treatment` is the active/placebo indicator for that period, decoded from (sequence, period).
+
+::: {.notes}
+The schematic shows why we cannot read treatment off period alone: it depends on the randomized sequence. In a 2-period crossover, treatment and period are linked within subject, which is exactly why the conditional (within-subject) analysis later struggles to separate them. Show this before the reshape code so students see what the case_when is decoding.
+:::
+
+---
+
+## 16.5 Data Reconstruction
+
+```{r}
+#| label: ecg-data
+#| output-location: slide
+ecg_counts <- tribble(
+  ~sequence, ~resp_p1, ~resp_p2, ~count,
+  "P-A", 1, 1, 6,
+  "P-A", 1, 0, 0,  # Sampling zero
+  "P-A", 0, 1, 6,
+  "P-A", 0, 0, 22,
+  "A-P", 1, 1, 9,
+  "A-P", 1, 0, 4,
+  "A-P", 0, 1, 2,
+  "A-P", 0, 0, 18
+)
+
+ecg_long <- ecg_counts |>
+  tidyr::uncount(count) |>
+  # one UNIQUE subject id per expanded row (67 patients, 2 rows each).
+  # Do NOT reuse uncount's within-cell .id: that repeats ids across cells.
+  mutate(id = factor(row_number())) |>
+  tidyr::pivot_longer(
+    cols = c(resp_p1, resp_p2),
+    names_to = "period",
+    values_to = "response"
+  ) |>
+  mutate(
+    period = if_else(period == "resp_p1", 1L, 2L),
+    # decode active-drug indicator from (sequence, period); see schematic
+    treatment = case_when(
+      sequence == "P-A" & period == 1L ~ 0L,
+      sequence == "P-A" & period == 2L ~ 1L,
+      sequence == "A-P" & period == 1L ~ 1L,
+      TRUE ~ 0L
+    )
+  ) |>
+  arrange(id, period)
+
+cat("Subjects:", length(unique(ecg_long$id)),
+    "| rows:", nrow(ecg_long), "\n\n")
+cat("Reshaped long table (first 6 rows):\n")
+head(ecg_long)
+```
+
+::: {.notes}
+The id assignment is load-bearing: each expanded row is one patient, so id = row_number() before pivoting gives 67 unique subjects with 2 rows each. An earlier draft reused uncount's within-cell counter, which collapsed subjects across cells, drove the random-effect variance to zero, and produced degenerate SEs. We confirm 67 subjects in the printout. This is the data behind FLW Tables 16.2/16.3.
+:::
+
+---
+
+## 16.5 Model Fits: GEE
+
+```{r}
+#| label: ecg-gee
+#| output-location: slide
+# Marginal model (GEE), exchangeable working correlation
+gee_fit <- geepack::geeglm(
+  response ~ treatment + period,
+  id = id,
+  family = binomial,
+  corstr = "exchangeable",
+  data = ecg_long
+)
+# Note: only 2 obs/subject, so robust SEs can be biased downward
+# (small-sample corrections shown later).
+summary(gee_fit)
+```
+
+::: {.callout-note}
+**Fidelity note.** FLW Table 16.2 fits the marginal model with the within-subject **association** modeled as a common **log odds ratio** $\alpha$ (an ALR-type GEE), reporting $\hat\alpha = 3.56$. We use an exchangeable working *correlation* as a close software substitute; the treatment estimate (log-odds $\approx 0.57$, OR $\approx 1.77$) reproduces FLW Table 16.2, but the association is parameterized differently.
+:::
+
+::: {.notes}
+The estimate matches FLW Table 16.2: treatment 0.5689 (SE about 0.23), OR = e^0.57 = 1.77. The honest caveat: FLW models the within-subject ASSOCIATION as a common log odds ratio alpha-hat = 3.56 (alternating logistic regression), not an exchangeable correlation. geeglm with corstr = "exchangeable" lands on the same regression coefficients here, so we keep it for software accessibility but flag the difference rather than claim an exact replication of the association model.
+:::
+
+---
+
+## 16.5 Model Fits: GLMM
+
+```{r}
+#| label: ecg-glmm
+#| output-location: slide
+# Mixed model (GLMM): 100-point adaptive Gaussian quadrature (FLW Table 16.3).
+# Laplace (nAGQ = 1) is inadequate here because Var(b) is very large (~24).
+glmm_fit <- lme4::glmer(
+  response ~ treatment + period + (1 | id),
+  family = binomial,
+  data = ecg_long,
+  nAGQ = 100,
+  control = lme4::glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 2e5))
+)
+summary(glmm_fit)
+```
+
+::: {.callout-note}
+**Fidelity note.** FLW Table 16.3 uses **100-point adaptive Gaussian quadrature** (`nAGQ = 100`). We match it. The default Laplace approximation (`nAGQ = 1`) is unreliable when $\widehat{\operatorname{Var}}(b_i)$ is as large as here (about 24), so it is not used.
+:::
+
+::: {.notes}
+The estimate matches FLW Table 16.3: treatment 1.8631 (SE about 0.93), Var(b) = 24.43, patient-specific OR = e^1.86 = 6.4. The estimation method is load-bearing: with a random-intercept variance near 24, Laplace (nAGQ = 1) does NOT reproduce these numbers, so we set nAGQ = 100 exactly as FLW does. The huge Var(b) plus only 2 obs/subject means sigma_b is weakly identified (SE about 19); we soften the point estimate accordingly on the interpretation slides.
+:::
+
+---
+
+## 16.5 The Same Two Fits in SAS
+
+::: {style="font-size: 0.75em;"}
+
+**Marginal model (GEE)** -- `PROC GENMOD` with a `REPEATED` statement:
+
+```sas
+proc genmod data=ecg descending;
+  class id period;
+  model response = treatment period / dist=bin link=logit;
+  repeated subject=id / type=exch;   /* exchangeable working correlation */
+run;
+```
+
+**Mixed model (GLMM)** -- `PROC GLIMMIX` with a `RANDOM` intercept:
+
+```sas
+proc glimmix data=ecg method=quad(qpoints=100);  /* adaptive Gaussian quadrature */
+  class id;
+  model response = treatment period / dist=bin link=logit solution;
+  random intercept / subject=id;
+run;
+```
+
+:::
+
+This slide is reference only (not executed). `qpoints=100` mirrors FLW Table 16.3; `type=exch` mirrors the working-correlation GEE.
+
+::: {.notes}
+Static SAS reference slide (not run), per the reference-deck convention of pairing the R analysis with the SAS that produces the same fits. PROC GENMOD with REPEATED SUBJECT=id is the GEE; PROC GLIMMIX with RANDOM INTERCEPT / SUBJECT=id and METHOD=QUAD(QPOINTS=100) is the GLMM at the same 100-point quadrature FLW uses. Walk students through the one-to-one mapping with the R calls on the prior two slides.
+:::
+
+---
+
+## 16.5 Extract and Compare Treatment Effects
+
+```{r}
+#| label: ecg-contrast
+#| output-location: slide
+# Extract treatment effects
+gee_coef <- broom.mixed::tidy(gee_fit) |>
+  filter(term == "treatment") |>
+  mutate(model = "Marginal (GEE)", estimand = "Population odds ratio")
+
+glmm_coef <- broom.mixed::tidy(glmm_fit, effects = "fixed") |>
+  filter(term == "treatment") |>
+  mutate(model = "Mixed (GLMM)", estimand = "Subject-specific odds ratio")
+
+# Combine results
+contrast_tbl <- bind_rows(gee_coef, glmm_coef) |>
+  transmute(
+    model, estimand,
+    log_odds = estimate,
+    se = std.error,
+    odds_ratio = exp(estimate),
+    lower = exp(estimate - 1.96 * se),
+    upper = exp(estimate + 1.96 * se)
+  )
+print(contrast_tbl)
+```
+
+---
+
+## 16.5 Demonstrating True Marginal Predictions
+
+```{r}
+#| label: marginal-vs-conditional
+#| output-location: slide
+# Create prediction data
+nd <- data.frame(treatment = c(0L, 1L), period = 1L)
+
+# Conditional prediction at b_i = 0 (typical subject)
+nd$prob_conditional <- predict(glmm_fit, newdata = nd, re.form = NA, type = "response")
+
+# True marginal prediction (averaging over random effects)
+nd$prob_marginal <- glmm_marginal_prob(glmm_fit, nd)
+
+# GEE marginal prediction for comparison
+nd$prob_gee <- predict(gee_fit, newdata = nd, type = "response")
+
+cat("Predictions for Period 1:\n")
+print(nd)
+cat("\nNote: prob_marginal < prob_conditional due to averaging over heterogeneity\n")
+```
+
+---
+
+## 16.5 Treatment Effect Comparison
+
+**Results interpretation** (from computed values):
+
+| Model | OR (approx) | Interpretation |
+|-------|----|----|
+| GEE | `r round(contrast_tbl$odds_ratio[1], 2)` | In the study population, active drug raises the odds of an abnormal ECG by roughly `r round((contrast_tbl$odds_ratio[1]-1)*100)`% |
+| GLMM | `r round(contrast_tbl$odds_ratio[2], 2)` | For a given patient, active drug raises that patient's odds by a larger factor (conditional on their propensity $b_i$) |
+
+**Why the difference?** Marginal model averages over heterogeneity; mixed model conditions on $b_i$. With $\widehat{\operatorname{Var}}(b_i)$ very large and only 2 obs/subject, the GLMM OR is a point estimate from a **weakly identified** $\sigma_b$, so read it as illustrative of direction and order of magnitude.
+
+::: {.notes}
+These reproduce FLW Tables 16.2/16.3: GEE OR about 1.77, GLMM OR about 6.4. Soften the GLMM "increases odds by X%" framing: the conditional OR sits on a huge, imprecisely estimated random-intercept variance, so emphasize direction and magnitude over a precise percentage. The contrast itself (population vs subject-specific) is the teaching point, not the exact GLMM number.
+:::
+
+---
+
+## Interpreting the ECG Results: A Template
+
+**For the FDA (population-average perspective):**
+
+> "Active drug increased the population odds of abnormal ECG by approximately `r round((contrast_tbl$odds_ratio[1]-1)*100)`% (OR = `r round(contrast_tbl$odds_ratio[1], 2)`, 95% CI: `r round(contrast_tbl$lower[1], 2)` to `r round(contrast_tbl$upper[1], 2)`). This population-level estimate accounts for the average effect across all patients regardless of their baseline cardiac status."
+
+**For the clinician (subject-specific perspective):**
+
+> "For an individual patient, the active drug raises that patient's personal odds of an abnormal ECG by a substantial factor (OR $\approx$ `r round(contrast_tbl$odds_ratio[2], 2)`, 95% CI: `r round(contrast_tbl$lower[2], 2)` to `r round(contrast_tbl$upper[2], 2)`), holding their baseline cardiac propensity constant. The wide interval reflects very large, imprecisely estimated between-patient variability."
+
+**Key point:** Neither interpretation is "wrong" -- they answer different questions! Report the conditional OR with its uncertainty, not as a precise percentage.
+
+::: {.notes}
+The clinician-facing OR is intentionally phrased as "a substantial factor" with the CI shown, not a precise percentage, because the conditional OR rests on a weakly identified sigma_b (only 2 obs/subject). FDA-facing GEE OR is more stable and can carry the percentage. Both are valid for their estimands; the uncertainty differs.
+:::
+
+---
+
+## Check Your Understanding: ECG Case Study
+
+**Question:** The ECG study shows a GEE OR of `r round(contrast_tbl$odds_ratio[1], 2)` and a GLMM OR of `r round(contrast_tbl$odds_ratio[2], 2)`. A colleague asks: "Which one is the true effect?"
+
+**How should you respond?**
+
+::: {.fragment}
+**Answer:** There is no single "true effect" -- both estimates are correct for their respective estimands.
+
+**Key points to explain:**
+
+1. **Different questions:** GEE answers "What happens on average in the population?" while GLMM answers "What happens within a given individual?"
+
+2. **Non-collapsibility:** For binary outcomes, marginal and conditional ORs are mathematically different even without confounding. This is a property of odds ratios, not a flaw in either method.
+
+3. **Practical guidance:** Report the GEE estimate for regulatory submissions (population benefit). Report the GLMM estimate for clinical decision-making (individual risk). If unsure, report both with clear interpretation.
+
+4. **The difference is expected:** The GLMM OR being larger is consistent with attenuation theory. The marginal effect is always closer to 1 (null) due to averaging over heterogeneity.
+:::
+
+---
+
+## Non-collapsibility in Numbers (no confounding)
+
+Two subgroups of equal size, conditional (within-subgroup) OR = $9$ in **both** (so nothing is confounded):
+
+| Subgroup | Treated $P(Y=1)$ | Control $P(Y=1)$ | Conditional OR |
+|----------|:----:|:----:|:----:|
+| Low-risk | 0.50 | 0.10 | $\frac{.5/.5}{.1/.9}=9$ |
+| High-risk | 0.90 | 0.50 | $\frac{.9/.1}{.5/.5}=9$ |
+| **Pooled (marginal)** | 0.70 | 0.30 | $\frac{.7/.3}{.3/.7}=5.44$ |
+
+Marginal OR $= 5.44 \neq 9 =$ conditional OR, with **no confounder**. The odds ratio is **non-collapsible**$^\dagger$.
+
+::: {.notes}
+Concrete 2x2 numeric example (review item L16-L14): equal-sized subgroups, identical conditional OR of 9 in each, no confounding by construction. Averaging the probabilities (0.70 treated, 0.30 control) gives a pooled OR of only 5.44. So the marginal OR differs from the conditional OR purely because the odds ratio does not collapse, not because of any confounder. This is the same arithmetic as the GEE-vs-GLMM gap; flagged beyond-FLW with the dagger.
+
+$^\dagger$ Beyond FLW Ch. 16 (instructor extension); see Greenland, Robins & Pearl (1999), Agresti (2002, Sec. 12.2).
+:::
+
+---
+
+## Which to Report?
+
+| Context | Report | Reason |
+|---------|--------|--------|
+| Clinical Study Report (CSR) for FDA | GEE estimate | Population-level inference |
+| Patient counseling | GLMM estimate | Individual-level inference |
+
+**Both are correct -- they answer different questions!**
+
+---
+
+## 16.5 Small-Sample GEE Variance Adjustments
+
+With only 2 observations per subject, standard GEE robust SEs can be biased downward.
+
+```{r}
+#| label: small-sample-corrections
+#| eval: false
+# Option 1: Jackknife standard errors
+gee_jack <- geepack::geeglm(
+  response ~ treatment + period, id = id,
+  family = binomial, corstr = "exchangeable",
+  data = ecg_long, std.err = "jack"
+)
+
+# Option 2: CR2 correction via clubSandwich
+library(clubSandwich)
+gee_cr2 <- coef_test(gee_fit, vcov = "CR2", cluster = ecg_long$id)
+
+# Option 3: Fay correction
+gee_fay <- geepack::geeglm(
+  response ~ treatment + period, id = id,
+  family = binomial, corstr = "exchangeable",
+  data = ecg_long, std.err = "fay"
+)
+```
+
+**Note**: These corrections typically increase SEs by 10-30% with small clusters.
+
+---
+
+## 16.5 Structured Comparison
+
+| Aspect | Marginal (GEE) | Mixed (GLMM) |
+|--------|----------------|--------------|
+| OR estimate | `r round(contrast_tbl$odds_ratio[1], 2)` | `r round(contrast_tbl$odds_ratio[2], 2)` |
+| Standard error | `r round(contrast_tbl$se[1], 2)` | `r round(contrast_tbl$se[2], 2)` |
+| Answers question | Population-level | Individual-level |
+| Interpretation | Population odds increase `r round((contrast_tbl$odds_ratio[1]-1)*100)`% | Individual odds increase `r round((contrast_tbl$odds_ratio[2]-1)*100)`% |
+| Regulatory use | Phase III efficacy claims | Personalized medicine |
+| Sensitivity to $\sigma_b^2$ | Relatively insensitive | Very sensitive |
+
+---
+
+## 16.5 OR Contrast Visualization
+
+```{r}
+#| label: ecg-or-plot
+#| output-location: slide
+#| fig-cap: "Both estimates are correct -- they answer different questions. The difference reflects attenuation theory."
+or_plot <- ggplot(contrast_tbl, aes(x = model, y = odds_ratio)) +
+  geom_pointrange(aes(ymin = lower, ymax = upper), size = 0.9, color = "#1f65b7") +
+  geom_hline(yintercept = 1, linetype = "dashed", color = "gray40") +
+  scale_y_log10(breaks = c(0.5, 1, 2, 4, 8, 16)) +
+  coord_flip() +
+  labs(
+    x = NULL,
+    y = "Treatment odds ratio (Active vs Placebo)",
+    title = "Population vs subject-specific treatment effects",
+    subtitle = "Same data, different estimands -- both valid for their intended use"
+  ) +
+  theme_minimal(base_size = 16)
+print(or_plot)
+```
+
+---
+
+## 16.5 The Sampling Zero Problem
+
+**Observation**: ECG data has ZERO in cell (Sequence P-A, response pattern 1,0).
+
+**Why this matters**:
+
+| Issue | Impact |
+|-------|--------|
+| Sampling zero | Can destabilize estimation |
+| GLMMs especially sensitive | Quadrature-based estimation struggles |
+| FLW sensitivity practice (p. 483) | Add $1/4$ to the **single sampling-zero cell only**, then refit |
+
+FLW's sensitivity refits (add $1/4$ to the (P-A, 1,0) cell): marginal Treatment $\approx 0.55$, GLMM Treatment $\approx 1.64$, $\widehat{g}_{11} \approx 20.7$ - substantive conclusions unchanged.
+
+::: {.notes}
+Corrected from an earlier "add 0.25 to all cells": FLW p. 483 adds 1/4 to the ONE cell containing the sampling zero (P-A, pattern 1,0), not to all eight cells, then repeats both analyses. The refits barely move (marginal 0.55, mixed 1.64, Var(b) 20.7), so the sampling zero does not drive the conclusions. The correction is a diagnostic probe, not a fix.
+:::
+
+---
+
+## Alternatives to Continuity Correction
+
+| Method | Description |
+|--------|-------------|
+| Penalized likelihood | Firth correction |
+| Bayesian methods | Weakly informative priors |
+| Conditional logistic | For paired data |
+
+**Key point**: The 0.25 correction is a **diagnostic probe**, not a solution.
+
+---
+
+## 16.5 Robustness Check with Conditional Logistic
+
+```{r}
+#| label: conditional-logistic
+#| output-location: slide
+# Conditional logistic (fixed-effects / within-subject), stratified by subject.
+# In a 2-period crossover, treatment and period are confounded WITHIN subject,
+# so we condition on subject and estimate the treatment effect alone; adding
+# period to the conditional model is not separately identified here.
+clogit_fit <- survival::clogit(
+  response ~ treatment + strata(id),
+  data = ecg_long
+)
+
+clogit_or <- exp(coef(clogit_fit)["treatment"])
+cat("Conditional logistic OR for treatment:", round(clogit_or, 2), "\n")
+cat("Compare to GLMM OR:", round(contrast_tbl$odds_ratio[2], 2), "\n")
+cat("\nSame direction and order of magnitude as the GLMM:",
+    "the subject-specific effect is robust to the normal-b_i assumption.\n")
+```
+
+::: {.callout-note}
+In the Section 16.5 case study, FLW instead uses conditional ML (the method of Section 14.6) **after** adding $1/4$ to the sampling-zero cell, obtaining $\widehat\beta_2^* = 1.94$ (close to the GLMM's $1.86$), with a Hausman-type test (Tchetgen & Coull 2006, Section 14.6) giving $Z = 0.40$ ($p > 0.65$): no evidence against the normal random-effects assumption.
+:::
+
+::: {.notes}
+The conditional (fixed-effects) logistic estimate is a robustness check on the GLMM's normal-b assumption: it conditions out b entirely. Period is dropped because treatment and period are confounded within subject in a 2-period crossover (the within-subject design is not rich enough to separate them); including both yields a non-identified, divergent fit. With treatment only the OR is in the same ballpark as the GLMM, supporting the GLMM result. FLW's own conditional-ML number (1.94, after the 1/4 correction) and the Hausman test (Z = 0.40) confirm the normal-b assumption is acceptable here.
+:::
+
+---
+
+## 16.5 Additional Diagnostics
+
+**For sparse data with small $n_i$:**
+
+| Check | Purpose |
+|-------|---------|
+| Separation issues | Logistic models can fail to converge |
+| Exact logistic regression | For small samples |
+| Random effects distribution | Sensitivity to normality assumption |
+| Profile likelihood CIs | When Wald approximation is questionable |
+
+---
+
+## Key Messages for Sparse Data
+
+- Distributional assumptions on $b_i$ matter most when $n_i$ is small
+- With only 2 observations/subject, both approaches have limitations
+- Report sensitivity analyses alongside main results
+
+---
+
+## 16.6 Conclusion Highlights
+
+| Approach | Focus | Use Case |
+|----------|-------|----------|
+| Marginal | $\mu_i$; model mean and association separately | Policy, regulatory |
+| Mixed | Individual trajectories; random effects explain correlation | Personalized medicine |
+
+**Key insight**: Mixed models do NOT automatically provide marginal summaries without extra integration.
+
+---
+
+## 16.6 No Grand Unified Model
+
+FLW's verdict: do not chase one model that answers every question. Different scientific questions demand different models.
+
+> "The megalomaniacal strategy of fitting a grand unified model... is dangerous, unnecessary and counterproductive."
+> -- Drum & McCullagh (1993), quoted approvingly by FLW (p. 486)
+
+**One size does not fit all.** Choose marginal or mixed by the question, and report both when the audience needs both.
+
+::: {.notes}
+Lead-in added so the quote does not arrive cold (review item L16-L13). FLW endorses Drum & McCullagh (1993, p. 300) on p. 486: a GLMM can in principle yield marginal means, but the induced marginal model is not of the same form and any RE misspecification biases it, so a marginal model is preferable when the target is population inference. The chapter's closing line is "one size does not fit all."
+:::
+
+---
+
+## Why GLMMs Do Not Solve Everything
+
+| Issue | Explanation |
+|-------|-------------|
+| Marginal means derivable *in principle* | But link forms change |
+| Misspecified random effects | Lead to biased population averages |
+| Marginal models | Avoid that risk when target is population inference |
+
+**Bottom line**: One size does not fit all.
+
+---
+
+## When to Choose Marginal vs Mixed Models
+
+| Scenario | Use Marginal (GEE) | Use Mixed (GLMM) |
+|----------|:------------------:|:----------------:|
+| FDA submission | X | |
+| Public health policy | X | |
+| Population attributable risk | X | |
+| Personalized medicine | | X |
+| Risk calculators | | X |
+| Individual prediction | | X |
+| Mechanistic understanding | | X |
+
+**Can you fit both?** YES! Report both when stakeholders need both estimands.
+
+---
+
+## Common Misconceptions
+
+| Misconception | Reality |
+|---------------|---------|
+| "Mixed models are always better" | They answer different questions; GEE optimal for marginal inference |
+| "The GLMM $\beta^*$ is biased because it's larger" | Neither biased -- they estimate different parameters |
+| "`re.form = NA` gives marginal predictions" | NO! It gives $E[Y \mid b=0]$, not $E[Y]$. Must integrate over $f(b)$. |
+
+---
+
+## More Misconceptions
+
+| Misconception | Reality |
+|---------------|---------|
+| "Link function preserved after integration" | Only for identity (linear) and partially for log link |
+| "Large SEs in GLMM indicate problems" | Expected with small $n_i$ or large $\sigma_b^2$ |
+
+---
+
+## Common Software Pitfalls
+
+| Warning Sign | What to Do |
+|--------------|------------|
+| Default options may not match your estimand | Check documentation |
+| `glmer` and `geeglm` syntax similarity | Remember they target different quantities |
+| `predict(glmer, re.form = NA)` $\neq$ marginal prediction | Gives $E[Y \mid b=0]$, not $E[Y]$; use Monte Carlo integration |
+| Convergence warnings with small clusters | Try different optimizers |
+| Sparse cells | Require sensitivity analyses |
+| High $\sigma_b^2$ | Check quadrature points in GLMMs |
+
+---
+
+## Best Practices
+
+1. State estimand before opening software
+2. Check for sparse cells in contingency tables
+3. Use proper integration for marginal predictions from GLMMs
+4. Apply small-sample corrections for GEE with few clusters
+5. Report both estimates when relevant
+
+---
+
+## Common Mistakes When Contrasting Models
+
+| Mistake | Why It Is Wrong | Correction |
+|---------|----------------|------------|
+| Claiming GLMM is "biased" because OR differs from GEE | They estimate different parameters (conditional vs marginal) | Both are unbiased for their respective estimands |
+| Expecting GEE and GLMM to match for binary outcomes | Non-collapsibility makes this impossible | Accept the difference as mathematically expected |
+| Using `re.form=NA` for "marginal" predictions | This gives $E[Y \mid b=0]$, not $E[Y]$ | Use Monte Carlo integration over $f(b)$ |
+| Choosing model based on which gives "better" p-value | P-value shopping invalidates inference | Choose model based on research question before seeing results |
+| Ignoring small-sample issues in GEE | Robust SE can be biased downward with few clusters | Use jackknife, CR2, or Fay corrections |
+| Fitting only one model type | Different audiences need different estimands | Fit both GEE and GLMM as sensitivity analysis |
+
+---
+
+## Check Your Understanding: Model Selection
+
+**Scenario:** You are analyzing a clinical trial of a new antidepressant. The outcome is binary (remission yes/no) measured at 4 visits. You must present results to:
+
+1. The FDA for drug approval
+2. Psychiatrists who will prescribe the drug
+
+**Question:** What model(s) should you fit, and what should you report to each audience?
+
+::: {.fragment}
+**Answer:**
+
+**Fit both models:**
+
+- GEE with exchangeable working correlation and robust SE
+- GLMM with random intercept (and possibly random slope for time)
+
+**Report to FDA:**
+
+- GEE estimate (population-average OR)
+- "Treatment increased the population odds of remission by X% (OR = Y, 95% CI: ...)"
+- Focus on: Did it work for the population?
+
+**Report to psychiatrists:**
+
+- GLMM estimate (subject-specific OR)
+- "For any given patient, treatment increases their odds of remission by X% (OR = Y, 95% CI: ...)"
+- Also mention random intercept SD to convey patient-to-patient variability
+- Focus on: Will it work for my patient?
+
+**In the paper:** Report both, clearly labeled, with explanation of why they differ.
+:::
+
+---
+
+## Advanced (beyond FLW): Marginalized Mixed Models
+
+**The challenge:** want BOTH random effects (heterogeneity) AND a direct marginal interpretation. FLW notes this is possible only with a **non-standard** conditional-mean specification (footnote, p. 478); the constructions themselves are beyond Ch. 16.
+
+| Approach | Reference |
+|----------|-----------|
+| Marginalized multilevel / mixed models | Heagerty (1999); Heagerty & Zeger (2000) |
+| h-likelihood methods | Lee & Nelder (2004) |
+| Implementations | Swihart et al. (2014) |
+
+**Trade-off:** best of both worlds in theory, but complex, specialized software, computationally intensive.
+
+::: {.notes}
+Consolidated to a single Advanced slide and clearly flagged beyond-FLW (review item L16-L13). FLW's own footnote (p. 478) says marginal regression parameters are estimable directly from a random-effects model only when a non-standard relationship is assumed for the conditional mean: that is the door these methods walk through. Strategy: specify the conditional mean so integrating out b yields the desired marginal mean exactly. Heagerty (1999) JASA is the foundational reference.
+:::
+
+---
+
+## Recipe Card: Decision Table
+
+**Step 1 - Define the estimand, then read across:**
+
+| Factor | Favors Marginal (GEE) | Favors Mixed (GLMM) |
+|--------|:----:|:----:|
+| Target of inference | Population-average | Subject-specific |
+| Typical audience | FDA, public health | Clinicians, precision medicine |
+| Key output | Population OR/RR, attributable risk | Conditional OR/RR, RE variance |
+| Cluster size $n_i$ | Small (2-4) | Larger (5+) |
+| Missing data | MCAR (or IPW-GEE for MAR) | MAR (likelihood) |
+| Random effects of interest | No | Yes |
+| Concern about RE distribution | Yes | Less so |
+
+::: {.callout-warning}
+**Missing data (FLW p. 528).** *Standard* GEE requires **MCAR**. **IPW-GEE** (correct dropout model) extends GEE to **MAR**; likelihood-based GLMMs are valid under **MAR** without weighting. "MCAR favors GEE" means *standard* GEE.
+:::
+
+::: {.notes}
+This single decision table replaces the former Quick Reference Card plus five separate Recipe-Card step slides (review item L16-L04: collapse to one table plus one flowchart). The missing-data precision point (standard GEE = MCAR; IPW-GEE = MAR; GLMM = MAR) lives in the callout. The next slide is the single flowchart.
+:::
+
+---
+
+## Recipe Card: Decision Flowchart
+
+```
+                    START
+                       |
+            What is your estimand?
+           /                      \
+    Population effect          Individual effect
+          |                           |
+      Use GEE                     Use GLMM
+          |                           |
+   Report population OR/RR     Report conditional OR/RR
+          |                           |
+   Consider: robust SE,        Consider: nAGQ, random-
+   working correlation, MCAR   effects structure, MAR
+          |                           |
+          +----------+----------------+
+                     |
+        Report BOTH if the audience includes
+        clinicians AND regulators
+```
+
+**Methods-section template:** *"We used [GEE/GLMM] because our primary interest was [population-average/subject-specific] effects."*
+
+::: {.notes}
+The one flowchart kept after the collapse. Identity-link continuous outcomes are the trivial case (GEE and GLMM agree on beta); the decision only bites for non-linear links. Document the estimand choice in the methods section before seeing results, to avoid p-value shopping (echoes the Common Mistakes slide).
+:::
+
+---
+
+## Synthesis and Key Takeaways
+
+1. **Estimand clarity prevents misinterpretation** -- Know your audience
+
+2. **Linear models are special** -- Only place where $\beta = \beta^*$
+
+3. **Attenuation is predictable** -- Use formula (for logistic random-intercept models)
+
+4. **Both approaches are valid** -- Different questions need different models
+
+5. **Marginal predictions require integration** -- `re.form = NA` gives $E[Y \mid b=0]$, NOT $E[Y]$
+
+**Remember**: The model serves the question, not vice versa.
+
+::: {.notes}
+Closing synthesis. The five points are the testable takeaways: estimand clarity, linear-model equivalence as the sole place beta = beta-star, predictable attenuation (logistic random-intercept), both approaches valid for their estimands, and the re.form = NA misconception. Tie back to the ECG result: GEE 1.77 (population) vs GLMM 6.4 (subject-specific), both correct. FLW closes with Drum & McCullagh: no grand unified model.
+:::
+
+---
+
+## 16.7 Further Reading
+
+**Most accessible**:
+
+| Reference | Best for |
+|-----------|----------|
+| Hubbard et al. (2010) | Clinical researchers |
+| Agresti (2002, Section 12.2) | Clearest binary data explanation |
+
+**Comprehensive coverage**:
+
+| Reference | Topic |
+|-----------|-------|
+| Fitzmaurice et al. (2009, Ch. 7) | Detailed targets of inference |
+| Gardiner et al. (2009) | Assumption comparison checklist |
+
+---
+
+## Further Reading: Technical Foundations
+
+| Reference | Topic |
+|-----------|-------|
+| Neuhaus et al. (1991) | Original comparison paper |
+| Zeger et al. (1988) | Population-average GEE theory |
+| Heagerty & Zeger (2000) | Marginalized mixed models |
+
+---
+
+## Summary Checklist
+
+Before analyzing longitudinal/clustered data, ask:
+
+- [ ] What is my primary research question?
+- [ ] Who is my audience (regulator, clinician, patient)?
+- [ ] Do I need population or individual inference?
+- [ ] Is my outcome linear or non-linear?
+- [ ] How much heterogeneity exists ($\sigma_b^2$)?
+- [ ] Do I have sparse cells or small clusters?
+- [ ] Am I computing marginal predictions correctly?
+- [ ] Should I report both marginal and conditional estimates?
+
+---
+
+## Final Thought
+
+Understanding the distinction between marginal and conditional models is essential for correct inference in longitudinal data analysis.

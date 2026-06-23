@@ -1,0 +1,30 @@
+<!--
+LITE notation reference for INTRO / overview decks (e.g. L01, L03), used BEFORE random
+effects and GEE are introduced. It is a strict subset of the canonical
+2026/NOTATION_REFERENCE.md; the full slide is 2026/lectures/_notation_box.qmd (use that from L08 on).
+Include in an early deck with:  {{< include _notation_box_intro.qmd >}}
+Edit ONCE here. Convention: bold = vector/matrix; plain = scalar/index. No em-dashes.
+Reserved symbols match the canon (X_i/beta fixed; epsilon residual). Random-effect symbols
+(Z_i, b_i, G, R_i) and GEE symbols (alpha, phi, pi_ij) are deliberately omitted until later lectures.
+Marginal covariance is Sigma_i (FLW's letter), NOT V_i; V_i is the GEE working covariance (Ch.12-13).
+-->
+
+## Notation reference (so far)
+
+::: {.notation-card style="font-size: 0.85em;"}
+
+| Symbol | Meaning |
+|:--|:--|
+| $i,\ j$ | subject index $i = 1,\dots,N$ and occasion/time index $j = 1,\dots,n_i$ |
+| $N,\ n_i$ | number of subjects; number of occasions for subject $i$ ($n$ when balanced) |
+| $Y_{ij},\ \mathbf{Y}_i$ | response for subject $i$ at occasion $j$ (scalar); response vector $(n_i \times 1)$ |
+| $t_{ij}$ | measurement time for subject $i$ at occasion $j$ |
+| $X_{ij},\ \mathbf{X}_i$ | covariate row vector $1 \times p$; design matrix $n_i \times p$ |
+| $\boldsymbol\beta$ | fixed-effect (population-average) coefficients |
+| $\varepsilon_{ij},\ \boldsymbol\varepsilon_i$ | residual error (scalar; vector) |
+| $\Sigma_i = \operatorname{Cov}(\mathbf{Y}_i)$ | marginal (total) covariance of $\mathbf{Y}_i$ (decomposes into random-effect + residual parts once random effects appear, Ch. 8) |
+| $\rho$ | a correlation parameter (e.g. exchangeable, or AR(1) where corr at lag $k$ is $\rho^k$) |
+
+**Bold** = vector or matrix. This is a running reference card: later lectures add random-effect and GEE notation.
+
+:::

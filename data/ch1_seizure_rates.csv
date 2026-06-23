@@ -1,0 +1,11 @@
+arm,time,mean,sd
+Progabide,baseline,3.96,3.5
+Progabide,week2,4.68,5.1
+Progabide,week4,4.14,4.1
+Progabide,week6,3.37,5.6
+Progabide,week8,4.0,3.8
+Placebo,baseline,3.85,3.3
+Placebo,week2,4.29,9.1
+Placebo,week4,4.21,5.9
+Placebo,week6,4.06,7.0
+Placebo,week8,4.39,7.3

@@ -1,0 +1,1093 @@
+---
+title: "Diagnostic Plot Gallery"
+subtitle: "Recognizing Good vs. Problematic Patterns in Longitudinal Models"
+format:
+  html:
+    theme: cosmo
+    toc: true
+    embed-resources: true
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+```{r}
+#| label: setup
+#| include: false
+
+library(nlme)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(patchwork)
+
+set.seed(667)
+```
+
+## Introduction
+
+Model diagnostics are essential for validating longitudinal models. This gallery provides side-by-side comparisons of **good** versus **problematic** patterns for each major diagnostic plot. Learning to recognize these patterns will help you identify model misspecification and guide remediation.
+
+## 1. Residuals vs Fitted Values
+
+This plot assesses whether the mean model is correctly specified and whether variance is constant (homoscedasticity).
+
+### What to Look For
+
+| Pattern | Interpretation | Action |
+|---------|----------------|--------|
+| Random scatter around 0 | Good model fit | None needed |
+| Funnel shape (fanning) | Heteroscedasticity | Add variance function or transform Y |
+| Curved pattern | Mean model misspecification | Add polynomial terms or transform X |
+| Clusters | Possible grouping structure | Consider group-specific effects |
+
+### Simulated Examples
+
+```{r}
+#| label: fig-resid-vs-fitted
+#| fig-cap: "Residuals vs Fitted Values: Good vs Problematic Patterns"
+#| fig-width: 12
+#| fig-height: 8
+
+# Simulate datasets with different characteristics
+n <- 200
+
+# Good: Random scatter
+set.seed(667)
+good_fitted <- runif(n, 10, 50)
+good_resid <- rnorm(n, 0, 3)
+
+# Problematic 1: Funnel shape (heteroscedasticity)
+hetero_fitted <- runif(n, 10, 50)
+hetero_resid <- rnorm(n, 0, 0.5 + 0.15 * (hetero_fitted - 10))
+
+# Problematic 2: Curvature (mean model misspecification)
+curve_fitted <- runif(n, 10, 50)
+curve_resid <- 0.02 * (curve_fitted - 30)^2 - 4 + rnorm(n, 0, 1.5)
+
+# Combine data
+resid_fitted_data <- data.frame(
+  Fitted = c(good_fitted, hetero_fitted, curve_fitted),
+  Residual = c(good_resid, hetero_resid, curve_resid),
+  Pattern = rep(c("A: GOOD - Random Scatter",
+                  "B: PROBLEMATIC - Funnel Shape\n(Heteroscedasticity)",
+                  "C: PROBLEMATIC - Curvature\n(Mean Misspecification)"), each = n)
+)
+
+# Create plot
+ggplot(resid_fitted_data, aes(x = Fitted, y = Residual)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "darkred", linewidth = 0.8) +
+  geom_point(alpha = 0.5, color = "steelblue") +
+  geom_smooth(method = "loess", se = FALSE, color = "coral", linewidth = 1.2) +
+  facet_wrap(~Pattern, ncol = 3) +
+  labs(x = "Fitted Values",
+       y = "Residuals",
+       title = "Residuals vs Fitted Values: Pattern Recognition",
+       subtitle = "Orange line is LOESS smoother; dashed line is y = 0") +
+  theme_minimal(base_size = 11) +
+  theme(strip.text = element_text(face = "bold", size = 10),
+        panel.grid.minor = element_blank())
+```
+
+### Interpretation Guide
+
+**Panel A (Good):**
+
+- Points scatter randomly around the zero line
+- LOESS smoother is approximately flat at 0
+- Spread is constant across fitted values
+- **Conclusion:** Mean model and variance assumptions are satisfied
+
+**Panel B (Heteroscedasticity):**
+
+- Funnel shape: spread increases with fitted values
+- Common in count data or measurements with proportional error
+- **Fix:** Use `weights = varPower()` or `varExp()` in nlme, or log-transform Y
+
+**Panel C (Mean Misspecification):**
+
+- Clear curved pattern in residuals
+- LOESS smoother deviates substantially from zero
+- **Fix:** Add quadratic term, use splines, or transform X
+
+## 2. Residuals vs Time
+
+This plot specifically examines whether the residual variance or correlation structure changes over time.
+
+### What to Look For
+
+| Pattern | Interpretation | Action |
+|---------|----------------|--------|
+| Flat band, no trend | Good model fit | None needed |
+| Fanning with time | Need random slopes or variance function | Add random slopes |
+| Trend over time | Missing time effect in mean model | Add time term or interaction |
+| Periodic pattern | Seasonal effects or cyclical correlation | Model seasonality |
+
+### Simulated Examples
+
+```{r}
+#| label: fig-resid-vs-time
+#| fig-cap: "Residuals vs Time: Good vs Problematic Patterns"
+#| fig-width: 12
+#| fig-height: 8
+
+# Simulate subject-level data over time
+n_subj <- 50
+n_time <- 8
+
+# Create base data structure
+base_data <- expand.grid(
+  subject = 1:n_subj,
+  time = 1:n_time
+)
+
+# Good: Flat band
+set.seed(667)
+good_time <- base_data |>
+  mutate(
+    resid = rnorm(n(), 0, 2),
+    Pattern = "A: GOOD - Flat Band"
+  )
+
+# Problematic 1: Fanning (need random slopes)
+set.seed(668)
+fanning_time <- base_data |>
+  group_by(subject) |>
+  mutate(
+    slope_effect = rnorm(1, 0, 0.5)[1],
+    resid = slope_effect * (time - 4) + rnorm(n(), 0, 1),
+    Pattern = "B: PROBLEMATIC - Fanning\n(Need Random Slopes)"
+  ) |>
+  ungroup()
+
+# Problematic 2: Trend (missing time effect)
+set.seed(669)
+trend_time <- base_data |>
+  mutate(
+    resid = -2 + 0.5 * time + rnorm(n(), 0, 1.5),
+    Pattern = "C: PROBLEMATIC - Trend\n(Missing Time Effect)"
+  )
+
+# Combine data
+resid_time_data <- bind_rows(
+  good_time |> select(subject, time, resid, Pattern),
+  fanning_time |> select(subject, time, resid, Pattern),
+  trend_time |> select(subject, time, resid, Pattern)
+)
+
+# Create plot
+ggplot(resid_time_data, aes(x = time, y = resid)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "darkred", linewidth = 0.8) +
+  geom_point(alpha = 0.3, color = "steelblue") +
+  geom_smooth(method = "loess", se = TRUE, color = "coral", fill = "coral", alpha = 0.2) +
+  facet_wrap(~Pattern, ncol = 3) +
+  labs(x = "Time",
+       y = "Residuals",
+       title = "Residuals vs Time: Pattern Recognition",
+       subtitle = "Look for changes in spread or systematic trends over time") +
+  theme_minimal(base_size = 11) +
+  theme(strip.text = element_text(face = "bold", size = 10),
+        panel.grid.minor = element_blank())
+```
+
+### The Fanning Pattern in Detail
+
+The "fanning" pattern (Panel B) is particularly important because it suggests **subject-specific slopes**:
+
+```{r}
+#| label: fig-fanning-detail
+#| fig-cap: "The Fanning Pattern: Why It Suggests Random Slopes"
+#| fig-width: 10
+#| fig-height: 5
+
+# Show individual trajectories that create fanning
+set.seed(667)
+n_show <- 15
+
+fanning_detail <- expand.grid(
+  subject = 1:n_show,
+  time = 1:n_time
+) |>
+  group_by(subject) |>
+  mutate(
+    true_slope = rnorm(1, 0, 0.6)[1],
+    resid = true_slope * (time - 4) + rnorm(n(), 0, 0.5)
+  ) |>
+  ungroup()
+
+p1 <- ggplot(fanning_detail, aes(x = time, y = resid, group = subject, color = factor(subject))) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
+  geom_line(alpha = 0.7) +
+  geom_point(size = 1.5) +
+  scale_color_viridis_d(option = "turbo") +
+  labs(x = "Time", y = "Residual",
+       title = "Individual Residual Trajectories",
+       subtitle = "Different subjects have different slopes") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+p2 <- ggplot(fanning_detail, aes(x = time, y = resid)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "darkred") +
+  geom_point(alpha = 0.3, color = "steelblue") +
+  geom_smooth(method = "loess", se = FALSE, color = "coral", linewidth = 1.2) +
+  labs(x = "Time", y = "Residual",
+       title = "Combined View: Fanning Pattern",
+       subtitle = "Spread increases away from center") +
+  theme_minimal()
+
+p1 + p2
+```
+**Diagnosis:** When residuals fan out from a central time point, subjects have heterogeneous slopes that are not captured by the model. Adding `random = ~ time | subject` allows each subject to have their own slope.
+
+## 3. QQ Plot of Residuals
+
+The QQ plot assesses the normality assumption for residual errors.
+
+### What to Look For
+
+| Pattern | Interpretation | Action |
+|---------|----------------|--------|
+| Points on diagonal | Normality satisfied | None needed |
+| S-shape | Heavy tails (outliers) | Identify outliers; robust methods |
+| Curved (concave/convex) | Skewness | Transform Y; check for floor/ceiling effects |
+| Stairstep pattern | Discrete outcomes | Consider GLMMs |
+
+### Simulated Examples
+
+```{r}
+#| label: fig-qq-residuals
+#| fig-cap: "QQ Plots of Residuals: Good vs Problematic Patterns"
+#| fig-width: 12
+#| fig-height: 8
+
+n_qq <- 300
+
+# Good: Normal residuals
+set.seed(667)
+good_qq <- rnorm(n_qq, 0, 2)
+
+# Problematic 1: Heavy tails
+set.seed(668)
+heavy_qq <- rt(n_qq, df = 3) * 2  # t-distribution with 3 df
+
+# Problematic 2: Right skewed
+set.seed(669)
+skewed_qq <- rexp(n_qq, rate = 0.5) - 2  # Shifted exponential
+
+# Function to create QQ data
+create_qq_data <- function(x, label) {
+  qq_obj <- qqnorm(x, plot.it = FALSE)
+  data.frame(
+    Theoretical = qq_obj$x,
+    Sample = qq_obj$y,
+    Pattern = label
+  )
+}
+
+qq_data <- bind_rows(
+  create_qq_data(good_qq, "A: GOOD - Normal"),
+  create_qq_data(heavy_qq, "B: PROBLEMATIC - Heavy Tails\n(Outliers)"),
+  create_qq_data(skewed_qq, "C: PROBLEMATIC - Right Skewed\n(Transform Y)")
+)
+
+# Create plot
+ggplot(qq_data, aes(x = Theoretical, y = Sample)) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "darkred", linewidth = 0.8) +
+  geom_point(alpha = 0.5, color = "steelblue") +
+  facet_wrap(~Pattern, ncol = 3, scales = "free_y") +
+  labs(x = "Theoretical Quantiles (Standard Normal)",
+       y = "Sample Quantiles",
+       title = "QQ Plots of Residuals: Pattern Recognition",
+       subtitle = "Points should fall along the diagonal line") +
+  theme_minimal(base_size = 11) +
+  theme(strip.text = element_text(face = "bold", size = 10),
+        panel.grid.minor = element_blank())
+```
+
+### Visual Interpretation Guide
+
+```{r}
+#| label: fig-qq-interpretation
+#| fig-cap: "QQ Plot Interpretation Guide"
+#| fig-width: 9
+#| fig-height: 4
+#| echo: false
+
+# Create schematic interpretations
+interp_data <- data.frame(
+  x = rep(seq(-3, 3, length.out = 50), 4),
+  Pattern = rep(c("Normal", "Heavy Tails", "Light Tails", "Right Skewed"), each = 50)
+)
+
+interp_data <- interp_data |>
+  mutate(
+    y = case_when(
+      Pattern == "Normal" ~ x,
+      Pattern == "Heavy Tails" ~ ifelse(abs(x) > 1.5, sign(x) * (abs(x) + 0.5 * (abs(x) - 1.5)^2), x),
+      Pattern == "Light Tails" ~ ifelse(abs(x) > 1.5, sign(x) * (abs(x) - 0.3 * (abs(x) - 1.5)), x),
+      Pattern == "Right Skewed" ~ x + 0.15 * x^2
+    )
+  )
+
+interp_data$Pattern <- factor(interp_data$Pattern,
+                               levels = c("Normal", "Heavy Tails", "Light Tails", "Right Skewed"))
+
+ggplot(interp_data, aes(x = x, y = y)) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "gray50") +
+  geom_line(color = "steelblue", linewidth = 1.5) +
+  facet_wrap(~Pattern, ncol = 4) +
+  labs(x = "Theoretical", y = "Sample",
+       title = "QQ Plot Pattern Schematic",
+       subtitle = "Common deviations from normality") +
+  theme_minimal(base_size = 10) +
+  theme(strip.text = element_text(face = "bold"))
+```
+
+## 4. QQ Plot of Random Effects
+
+For mixed models, we also assess whether random effects are approximately normally distributed.
+
+### What to Look For
+
+| Pattern | Interpretation | Action |
+|---------|----------------|--------|
+| Roughly on line | RE distribution OK | None needed |
+| Moderate deviation | Often acceptable | Monitor; may be robust |
+| Severe deviation | RE distribution misspecified | Try different RE structure; check data |
+| Few extreme points | Influential subjects | Sensitivity analysis |
+
+### Simulated Examples
+
+```{r}
+#| label: fig-qq-random-effects
+#| fig-cap: "QQ Plots of Random Effects: Good vs Problematic"
+#| fig-width: 12
+#| fig-height: 6
+
+# Simulate random intercepts and slopes
+n_subj_re <- 100
+
+# Good: Normal random effects
+set.seed(667)
+good_b0 <- rnorm(n_subj_re, 0, 3)
+good_b1 <- rnorm(n_subj_re, 0, 0.5)
+
+# Problematic: Non-normal random effects
+set.seed(668)
+bad_b0 <- c(rnorm(n_subj_re - 5, 0, 2), rnorm(5, 8, 1))  # With outliers
+bad_b1 <- rbeta(n_subj_re, 2, 5) * 2 - 0.5  # Skewed
+
+# Create QQ data for all
+qq_re_data <- bind_rows(
+  create_qq_data(good_b0, "A: GOOD - Random Intercepts"),
+  create_qq_data(bad_b0, "B: PROBLEMATIC - Random Intercepts\n(Outliers/Mixture)"),
+  create_qq_data(good_b1, "C: GOOD - Random Slopes"),
+  create_qq_data(bad_b1, "D: PROBLEMATIC - Random Slopes\n(Skewed)")
+)
+
+ggplot(qq_re_data, aes(x = Theoretical, y = Sample)) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "darkred", linewidth = 0.8) +
+  geom_point(alpha = 0.6, color = "steelblue") +
+  facet_wrap(~Pattern, ncol = 2, scales = "free") +
+  labs(x = "Theoretical Quantiles",
+       y = "Sample Quantiles (Random Effects)",
+       title = "QQ Plots of Random Effects",
+       subtitle = "Some deviation is acceptable; severe departure indicates misspecification") +
+  theme_minimal(base_size = 11) +
+  theme(strip.text = element_text(face = "bold", size = 10),
+        panel.grid.minor = element_blank())
+```
+
+### Practical Considerations
+
+- Random effect normality is often less critical than residual normality
+- With few subjects (< 30), QQ plots have high variability---be cautious about over-interpretation
+- Severe non-normality may indicate latent subgroups (consider mixture models)
+- Outlying random effects identify subjects requiring closer examination
+
+## 5. Semivariogram
+
+The semivariogram assesses whether the correlation structure is properly modeled. For detailed coverage, see the **Semivariogram Guide** handout.
+
+### What to Look For
+
+| Pattern | Interpretation | Action |
+|---------|----------------|--------|
+| Flat near 1 | Correlation well-modeled | None needed |
+| Rising toward 1 | Positive correlation not captured | Add AR(1) or similar |
+| Above 1 at early lags | Negative correlation | Check for over-differencing |
+| Different by group | Heterogeneous correlation | Group-specific structures |
+
+### Simulated Examples
+
+```{r}
+#| label: fig-semivariogram
+#| fig-cap: "Semivariogram Patterns: Good vs Problematic"
+#| fig-width: 12
+#| fig-height: 6
+
+# Create semivariogram data for different scenarios
+lag <- 1:6
+
+# Good: Flat at 1 (correlation properly modeled)
+good_vario <- data.frame(
+  lag = lag,
+  gamma = c(0.98, 1.02, 0.97, 1.01, 0.99, 1.00) + rnorm(6, 0, 0.03),
+  Pattern = "A: GOOD - Flat Near 1\n(Correlation Properly Modeled)"
+)
+
+# Problematic 1: Rising (positive correlation not captured)
+rising_vario <- data.frame(
+  lag = lag,
+  gamma = c(0.35, 0.55, 0.72, 0.85, 0.93, 0.98) + rnorm(6, 0, 0.02),
+  Pattern = "B: PROBLEMATIC - Rising\n(Unmodeled Positive Correlation)"
+)
+
+# Problematic 2: Above 1 (negative correlation)
+above_vario <- data.frame(
+  lag = lag,
+  gamma = c(1.35, 1.15, 1.05, 1.02, 1.00, 0.99) + rnorm(6, 0, 0.02),
+  Pattern = "C: PROBLEMATIC - Above 1\n(Negative Correlation)"
+)
+
+vario_data <- bind_rows(good_vario, rising_vario, above_vario)
+
+ggplot(vario_data, aes(x = lag, y = gamma)) +
+  geom_hline(yintercept = 1, linetype = "dashed", color = "darkred", linewidth = 0.8) +
+  geom_rect(aes(xmin = -Inf, xmax = Inf, ymin = 0.9, ymax = 1.1),
+            fill = "lightgreen", alpha = 0.3) +
+  geom_point(color = "steelblue", size = 3) +
+  geom_line(color = "steelblue", linewidth = 1) +
+  facet_wrap(~Pattern, ncol = 3) +
+  scale_y_continuous(limits = c(0.2, 1.5)) +
+  labs(x = "Lag (time units)",
+       y = expression(paste("Semivariance ", gamma, "(h)")),
+       title = "Semivariogram Patterns",
+       subtitle = "Green zone (0.9-1.1) indicates well-modeled correlation") +
+  theme_minimal(base_size = 11) +
+  theme(strip.text = element_text(face = "bold", size = 10),
+        panel.grid.minor = element_blank())
+```
+
+### Connection to ACF
+
+The semivariogram and ACF are related by: $\gamma(h) \approx 1 - \rho(h)$ for normalized residuals.
+
+| Semivariogram | ACF | Interpretation |
+|---------------|-----|----------------|
+| $\gamma(h) < 1$ | $\rho(h) > 0$ | Positive correlation |
+| $\gamma(h) = 1$ | $\rho(h) = 0$ | No correlation |
+| $\gamma(h) > 1$ | $\rho(h) < 0$ | Negative correlation |
+
+## 6. ACF of Residuals
+
+The autocorrelation function (ACF) directly shows correlation at each lag.
+
+### What to Look For
+
+| Pattern | Interpretation | Action |
+|---------|----------------|--------|
+| All within blue bands | No significant autocorrelation | None needed |
+| Significant positive at lag 1 | AR(1) correlation | Add `corAR1()` |
+| Slow decay | Strong serial correlation | AR(1) or random slopes |
+| Alternating signs | Negative correlation pattern | Check model specification |
+
+### Simulated Examples
+
+```{r}
+#| label: fig-acf
+#| fig-cap: "ACF Patterns: Good vs Problematic"
+#| fig-width: 12
+#| fig-height: 8
+
+# Simulate residual series with different correlation structures
+n_acf <- 200
+
+# Good: No autocorrelation
+set.seed(667)
+good_acf_data <- rnorm(n_acf)
+
+# Problematic: AR(1) correlation
+set.seed(668)
+ar1_acf_data <- arima.sim(n = n_acf, list(ar = 0.6))
+
+# Problematic: Strong AR(1)
+set.seed(669)
+strong_ar1_data <- arima.sim(n = n_acf, list(ar = 0.85))
+
+# Calculate ACF values
+acf_good <- acf(good_acf_data, plot = FALSE, lag.max = 10)
+acf_ar1 <- acf(ar1_acf_data, plot = FALSE, lag.max = 10)
+acf_strong <- acf(strong_ar1_data, plot = FALSE, lag.max = 10)
+
+# Create data frame
+acf_plot_data <- data.frame(
+  Lag = rep(0:10, 3),
+  ACF = c(acf_good$acf, acf_ar1$acf, acf_strong$acf),
+  Pattern = rep(c("A: GOOD - No Autocorrelation",
+                  "B: PROBLEMATIC - Moderate AR(1)\n(rho ~ 0.6)",
+                  "C: PROBLEMATIC - Strong AR(1)\n(rho ~ 0.85)"), each = 11)
+)
+
+# Confidence bounds (approximate)
+ci_bound <- qnorm(0.975) / sqrt(n_acf)
+
+ggplot(acf_plot_data, aes(x = Lag, y = ACF)) +
+  geom_hline(yintercept = 0, color = "black") +
+  geom_hline(yintercept = c(-ci_bound, ci_bound), linetype = "dashed", color = "blue") +
+  geom_segment(aes(x = Lag, xend = Lag, y = 0, yend = ACF), color = "steelblue", linewidth = 1) +
+  geom_point(color = "steelblue", size = 2) +
+  facet_wrap(~Pattern, ncol = 3) +
+  scale_y_continuous(limits = c(-0.3, 1.1)) +
+  labs(x = "Lag",
+       y = "Autocorrelation",
+       title = "ACF of Residuals: Pattern Recognition",
+       subtitle = "Blue dashed lines are 95% confidence bands; bars outside indicate significant correlation") +
+  theme_minimal(base_size = 11) +
+  theme(strip.text = element_text(face = "bold", size = 10),
+        panel.grid.minor = element_blank())
+```
+
+### Interpreting Lag Structure
+
+```{r}
+#| label: tbl-acf-interpretation
+#| echo: false
+
+acf_interp <- data.frame(
+  `Lag Pattern` = c("Lag 1 only significant",
+                    "Lags 1-2 significant, decay",
+                    "Slow decay across many lags",
+                    "Lag 1 negative",
+                    "Oscillating pattern"),
+  Interpretation = c("Simple AR(1) correlation",
+                     "AR(1) may be adequate; consider AR(2)",
+                     "Strong serial dependence; random slopes may help",
+                     "Over-differencing or sign error",
+                     "Seasonal or cyclical effects"),
+  `Suggested Fix` = c("Add corAR1()",
+                      "Add corAR1() or corARMA(p=2)",
+                      "Add random slopes or higher-order AR",
+                      "Check mean model specification",
+                      "Model seasonality explicitly"),
+  check.names = FALSE
+)
+
+knitr::kable(acf_interp, caption = "ACF Pattern Interpretation Guide")
+```
+
+## 7. Influence Diagnostics
+
+Influence diagnostics identify observations or subjects that have disproportionate impact on model estimates.
+
+### Key Measures
+
+| Measure | Formula Concept | Interpretation |
+|---------|-----------------|----------------|
+| Cook's Distance | Change in all coefficients when observation deleted | Overall influence |
+| DFBETAS | Change in specific coefficient when observation deleted | Coefficient-specific influence |
+| Leverage | Diagonal of hat matrix | Potential for influence |
+| Studentized Residuals | Residuals scaled by their SE | Outlier detection |
+
+### Simulated Example
+
+```{r}
+#| label: fig-influence
+#| fig-cap: "Influence Diagnostics: Identifying Problematic Observations"
+#| fig-width: 12
+#| fig-height: 8
+
+# Create data with some influential points
+set.seed(667)
+n_inf <- 100
+
+influence_data <- data.frame(
+  x = c(rnorm(n_inf - 3, 5, 1.5), 12, 5, 5),      # 3 special points
+  y = c(rnorm(n_inf - 3, 5, 1.5), 15, 15, -5)     # High leverage, outlier, both
+)
+
+# Fit model
+fit_inf <- lm(y ~ x, data = influence_data)
+
+# Calculate diagnostics
+influence_data$cooks_d <- cooks.distance(fit_inf)
+influence_data$leverage <- hatvalues(fit_inf)
+influence_data$studentized <- rstudent(fit_inf)
+influence_data$dfbeta_intercept <- dfbetas(fit_inf)[, 1]
+influence_data$dfbeta_slope <- dfbetas(fit_inf)[, 2]
+influence_data$obs <- 1:nrow(influence_data)
+
+# Thresholds
+cooks_threshold <- 4 / n_inf
+leverage_threshold <- 2 * 2 / n_inf  # 2p/n
+dfbeta_threshold <- 2 / sqrt(n_inf)
+
+# Identify influential points
+influence_data$influential <- with(influence_data,
+  cooks_d > cooks_threshold | abs(studentized) > 3 |
+  abs(dfbeta_slope) > dfbeta_threshold)
+
+# Create plots
+p1 <- ggplot(influence_data, aes(x = obs, y = cooks_d)) +
+  geom_hline(yintercept = cooks_threshold, linetype = "dashed", color = "darkred") +
+  geom_segment(aes(x = obs, xend = obs, y = 0, yend = cooks_d),
+               color = ifelse(influence_data$cooks_d > cooks_threshold, "coral", "steelblue")) +
+  geom_point(color = ifelse(influence_data$cooks_d > cooks_threshold, "coral", "steelblue")) +
+  labs(x = "Observation", y = "Cook's Distance",
+       title = "Cook's Distance",
+       subtitle = paste("Threshold =", round(cooks_threshold, 3))) +
+  theme_minimal()
+
+p2 <- ggplot(influence_data, aes(x = leverage, y = abs(studentized))) +
+  geom_hline(yintercept = 3, linetype = "dashed", color = "darkred") +
+  geom_vline(xintercept = leverage_threshold, linetype = "dashed", color = "darkred") +
+  geom_point(aes(color = influential), size = 2, alpha = 0.7) +
+  scale_color_manual(values = c("FALSE" = "steelblue", "TRUE" = "coral")) +
+  labs(x = "Leverage", y = "|Studentized Residual|",
+       title = "Leverage vs Studentized Residuals",
+       subtitle = "Points in upper-right are most influential") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+p3 <- ggplot(influence_data, aes(x = obs, y = dfbeta_slope)) +
+  geom_hline(yintercept = c(-dfbeta_threshold, dfbeta_threshold),
+             linetype = "dashed", color = "darkred") +
+  geom_hline(yintercept = 0, color = "gray50") +
+  geom_segment(aes(x = obs, xend = obs, y = 0, yend = dfbeta_slope),
+               color = ifelse(abs(influence_data$dfbeta_slope) > dfbeta_threshold, "coral", "steelblue")) +
+  geom_point(color = ifelse(abs(influence_data$dfbeta_slope) > dfbeta_threshold, "coral", "steelblue")) +
+  labs(x = "Observation", y = "DFBETA (Slope)",
+       title = "DFBETAS for Slope Coefficient",
+       subtitle = paste("Threshold =", round(dfbeta_threshold, 3))) +
+  theme_minimal()
+
+p4 <- ggplot(influence_data, aes(x = x, y = y)) +
+  geom_point(aes(color = influential, size = cooks_d), alpha = 0.7) +
+  geom_smooth(method = "lm", se = FALSE, color = "darkgreen", linewidth = 1) +
+  scale_color_manual(values = c("FALSE" = "steelblue", "TRUE" = "coral")) +
+  scale_size_continuous(range = c(1, 5)) +
+  labs(x = "X", y = "Y",
+       title = "Data with Influential Points Highlighted",
+       subtitle = "Point size proportional to Cook's distance") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+(p1 + p2) / (p3 + p4)
+```
+
+### Threshold Guidelines
+
+| Measure | Common Threshold | Notes |
+|---------|------------------|-------|
+| Cook's Distance | $> 4/n$ or $> 1$ | $4/n$ more sensitive |
+| DFBETAS | $> 2/\sqrt{n}$ | Per coefficient |
+| Leverage | $> 2p/n$ | $p$ = number of parameters |
+| Studentized Residual | $> 3$ | Outlier in Y |
+
+### What to Do with Influential Points
+
+1. **Verify data:** Check for data entry errors or measurement problems
+2. **Understand the science:** Is this point scientifically plausible?
+3. **Sensitivity analysis:** Fit with and without the point; compare conclusions
+4. **Report transparently:** If excluding, justify and report both analyses
+5. **Never delete just because it is influential**---only if there is a scientific reason
+
+## 8. Complete Example: Diagnosis and Remediation
+
+Let us work through a complete example where we identify problems and fix them.
+
+### Simulate Data with Known Problems
+
+```{r}
+#| label: simulate-problem-data
+
+set.seed(667)
+
+# Parameters
+n_subjects <- 50
+n_times <- 6
+
+# Create data with multiple issues:
+# 1. AR(1) correlation not modeled
+# 2. Heteroscedasticity (variance increases with time)
+# 3. Missing quadratic time effect
+
+problem_data <- expand.grid(
+  subject = 1:n_subjects,
+  time = 1:n_times
+) |>
+  arrange(subject, time) |>
+  group_by(subject) |>
+  mutate(
+    # Random intercept
+    b0 = rnorm(1, 0, 3)[1],
+    # AR(1) errors
+    ar1_error = {
+      e <- numeric(n())
+      sigma_t <- 1 + 0.3 * (time - 1)  # Increasing variance
+      e[1] <- rnorm(1, 0, sigma_t[1])
+      for (t in 2:n()) {
+        e[t] <- 0.5 * e[t-1] + rnorm(1, 0, sigma_t[t] * sqrt(1 - 0.5^2))
+      }
+      e
+    },
+    # True mean: quadratic in time
+    true_mean = 10 + 2 * time - 0.15 * time^2,
+    # Outcome
+    y = true_mean + b0 + ar1_error
+  ) |>
+  ungroup()
+
+problem_data$subject <- factor(problem_data$subject)
+
+# Preview
+head(problem_data, 12)
+```
+
+### Step 1: Fit Initial (Mis-specified) Model
+
+```{r}
+#| label: fit-initial-model
+
+# Fit a model that ignores all the problems
+fit_bad <- lme(y ~ time,
+               random = ~ 1 | subject,
+               data = problem_data,
+               method = "REML")
+
+summary(fit_bad)
+```
+
+### Step 2: Generate Diagnostic Plots
+
+```{r}
+#| label: fig-diagnostics-bad
+#| fig-cap: "Diagnostic Plots for Mis-specified Model"
+#| fig-width: 12
+#| fig-height: 10
+
+# Extract diagnostics
+problem_data$fitted_bad <- fitted(fit_bad)
+problem_data$resid_bad <- resid(fit_bad, type = "normalized")
+
+# 1. Residuals vs Fitted
+p1_bad <- ggplot(problem_data, aes(x = fitted_bad, y = resid_bad)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "darkred") +
+  geom_point(alpha = 0.5, color = "steelblue") +
+  geom_smooth(method = "loess", se = FALSE, color = "coral", linewidth = 1.2) +
+  labs(x = "Fitted Values", y = "Normalized Residuals",
+       title = "Residuals vs Fitted",
+       subtitle = "PROBLEM: Curved pattern -> mean misspecification") +
+  theme_minimal()
+
+# 2. Residuals vs Time
+p2_bad <- ggplot(problem_data, aes(x = time, y = resid_bad)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "darkred") +
+  geom_point(alpha = 0.5, color = "steelblue") +
+  geom_smooth(method = "loess", se = TRUE, color = "coral", fill = "coral", alpha = 0.2) +
+  labs(x = "Time", y = "Normalized Residuals",
+       title = "Residuals vs Time",
+       subtitle = "PROBLEM: Fanning + trend") +
+  theme_minimal()
+
+# 3. QQ Plot of Residuals
+qq_bad <- qqnorm(problem_data$resid_bad, plot.it = FALSE)
+qq_bad_df <- data.frame(Theoretical = qq_bad$x, Sample = qq_bad$y)
+
+p3_bad <- ggplot(qq_bad_df, aes(x = Theoretical, y = Sample)) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "darkred") +
+  geom_point(alpha = 0.5, color = "steelblue") +
+  labs(x = "Theoretical Quantiles", y = "Sample Quantiles",
+       title = "QQ Plot of Residuals",
+       subtitle = "Moderate deviation") +
+  theme_minimal()
+
+# 4. Semivariogram
+vario_bad <- Variogram(fit_bad, form = ~ time | subject, resType = "normalized")
+
+p4_bad <- ggplot(data.frame(vario_bad), aes(x = dist, y = variog)) +
+  geom_hline(yintercept = 1, linetype = "dashed", color = "darkred") +
+  geom_rect(aes(xmin = -Inf, xmax = Inf, ymin = 0.9, ymax = 1.1),
+            fill = "lightgreen", alpha = 0.3) +
+  geom_point(color = "steelblue", size = 3) +
+  geom_line(color = "steelblue", linewidth = 1) +
+  labs(x = "Lag", y = expression(gamma(h)),
+       title = "Semivariogram",
+       subtitle = "PROBLEM: Rising pattern -> unmodeled correlation") +
+  theme_minimal()
+
+(p1_bad + p2_bad) / (p3_bad + p4_bad) +
+  plot_annotation(
+    title = "Diagnostics for Mis-specified Model",
+    subtitle = "Multiple problems identified",
+    theme = theme(plot.title = element_text(face = "bold", size = 14))
+  )
+```
+
+### Step 3: Identify the Issues
+
+Based on the diagnostic plots:
+
+1. **Residuals vs Fitted:** Clear curved pattern indicates the mean model is missing a quadratic term
+2. **Residuals vs Time:** Fanning pattern and non-flat LOESS suggest heteroscedasticity and/or random slopes needed
+3. **Semivariogram:** Rising pattern indicates unmodeled AR(1) correlation
+
+### Step 4: Fit Corrected Model
+
+```{r}
+#| label: fit-corrected-model
+
+# Add:
+# 1. Quadratic time effect
+# 2. AR(1) correlation structure
+# 3. Variance function for heteroscedasticity
+
+fit_good <- lme(y ~ time + I(time^2),
+                random = ~ 1 | subject,
+                correlation = corAR1(form = ~ time | subject),
+                weights = varPower(form = ~ time),
+                data = problem_data,
+                method = "REML")
+
+summary(fit_good)
+```
+
+### Step 5: Compare Diagnostics
+
+```{r}
+#| label: fig-diagnostics-good
+#| fig-cap: "Diagnostic Plots for Corrected Model"
+#| fig-width: 12
+#| fig-height: 10
+
+# Extract diagnostics for good model
+problem_data$fitted_good <- fitted(fit_good)
+problem_data$resid_good <- resid(fit_good, type = "normalized")
+
+# 1. Residuals vs Fitted
+p1_good <- ggplot(problem_data, aes(x = fitted_good, y = resid_good)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "darkred") +
+  geom_point(alpha = 0.5, color = "steelblue") +
+  geom_smooth(method = "loess", se = FALSE, color = "coral", linewidth = 1.2) +
+  labs(x = "Fitted Values", y = "Normalized Residuals",
+       title = "Residuals vs Fitted",
+       subtitle = "IMPROVED: Random scatter around 0") +
+  theme_minimal()
+
+# 2. Residuals vs Time
+p2_good <- ggplot(problem_data, aes(x = time, y = resid_good)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "darkred") +
+  geom_point(alpha = 0.5, color = "steelblue") +
+  geom_smooth(method = "loess", se = TRUE, color = "coral", fill = "coral", alpha = 0.2) +
+  labs(x = "Time", y = "Normalized Residuals",
+       title = "Residuals vs Time",
+       subtitle = "IMPROVED: Flat band") +
+  theme_minimal()
+
+# 3. QQ Plot of Residuals
+qq_good <- qqnorm(problem_data$resid_good, plot.it = FALSE)
+qq_good_df <- data.frame(Theoretical = qq_good$x, Sample = qq_good$y)
+
+p3_good <- ggplot(qq_good_df, aes(x = Theoretical, y = Sample)) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "darkred") +
+  geom_point(alpha = 0.5, color = "steelblue") +
+  labs(x = "Theoretical Quantiles", y = "Sample Quantiles",
+       title = "QQ Plot of Residuals",
+       subtitle = "IMPROVED: Close to diagonal") +
+  theme_minimal()
+
+# 4. Semivariogram
+vario_good <- Variogram(fit_good, form = ~ time | subject, resType = "normalized")
+
+p4_good <- ggplot(data.frame(vario_good), aes(x = dist, y = variog)) +
+  geom_hline(yintercept = 1, linetype = "dashed", color = "darkred") +
+  geom_rect(aes(xmin = -Inf, xmax = Inf, ymin = 0.9, ymax = 1.1),
+            fill = "lightgreen", alpha = 0.3) +
+  geom_point(color = "steelblue", size = 3) +
+  geom_line(color = "steelblue", linewidth = 1) +
+  labs(x = "Lag", y = expression(gamma(h)),
+       title = "Semivariogram",
+       subtitle = "IMPROVED: Flat near 1") +
+  theme_minimal()
+
+(p1_good + p2_good) / (p3_good + p4_good) +
+  plot_annotation(
+    title = "Diagnostics for Corrected Model",
+    subtitle = "All issues addressed",
+    theme = theme(plot.title = element_text(face = "bold", size = 14))
+  )
+```
+
+### Step 6: Side-by-Side Comparison
+
+```{r}
+#| label: fig-comparison-final
+#| fig-cap: "Before and After: Model Improvement Summary"
+#| fig-width: 14
+#| fig-height: 6
+
+# Combine semivariograms for comparison
+vario_compare <- rbind(
+  data.frame(vario_bad) |> mutate(Model = "Before: Mis-specified"),
+  data.frame(vario_good) |> mutate(Model = "After: Corrected")
+)
+
+p_vario_compare <- ggplot(vario_compare, aes(x = dist, y = variog)) +
+  geom_hline(yintercept = 1, linetype = "dashed", color = "darkred") +
+  geom_rect(aes(xmin = -Inf, xmax = Inf, ymin = 0.9, ymax = 1.1),
+            fill = "lightgreen", alpha = 0.3) +
+  geom_point(color = "steelblue", size = 3) +
+  geom_line(color = "steelblue", linewidth = 1) +
+  facet_wrap(~Model) +
+  labs(x = "Lag", y = expression(gamma(h)),
+       title = "Semivariogram Comparison") +
+  theme_minimal() +
+  theme(strip.text = element_text(face = "bold"))
+
+# Combine residual plots
+resid_compare <- rbind(
+  problem_data |>
+    select(time, resid = resid_bad) |>
+    mutate(Model = "Before: Mis-specified"),
+  problem_data |>
+    select(time, resid = resid_good) |>
+    mutate(Model = "After: Corrected")
+)
+
+p_resid_compare <- ggplot(resid_compare, aes(x = time, y = resid)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "darkred") +
+  geom_point(alpha = 0.3, color = "steelblue") +
+  geom_smooth(method = "loess", se = FALSE, color = "coral", linewidth = 1.2) +
+  facet_wrap(~Model) +
+  labs(x = "Time", y = "Normalized Residuals",
+       title = "Residuals vs Time Comparison") +
+  theme_minimal() +
+  theme(strip.text = element_text(face = "bold"))
+
+p_vario_compare + p_resid_compare
+```
+
+### Model Comparison Summary
+
+```{r}
+#| label: model-comparison-summary
+
+# Compare AIC/BIC
+cat("Model Comparison:\n")
+cat("================\n\n")
+
+cat("Mis-specified Model (y ~ time, random intercept only):\n")
+cat("  AIC:", round(AIC(fit_bad), 2), "\n")
+cat("  BIC:", round(BIC(fit_bad), 2), "\n\n")
+
+cat("Corrected Model (y ~ time + time^2, AR(1), varPower):\n")
+cat("  AIC:", round(AIC(fit_good), 2), "\n")
+cat("  BIC:", round(BIC(fit_good), 2), "\n\n")
+
+cat("Improvement:\n")
+cat("  Delta AIC:", round(AIC(fit_bad) - AIC(fit_good), 2), "(positive = corrected model better)\n")
+cat("  Delta BIC:", round(BIC(fit_bad) - BIC(fit_good), 2), "\n\n")
+
+cat("Estimated AR(1) correlation:\n")
+cat("  phi =", round(coef(fit_good$modelStruct$corStruct, unconstrained = FALSE), 3), "\n")
+
+cat("\nEstimated variance power:\n")
+cat("  delta =", round(coef(fit_good$modelStruct$varStruct, unconstrained = FALSE), 3), "\n")
+```
+
+## Summary: Diagnostic Checklist
+
+Use this checklist when validating your longitudinal models:
+
+### Residuals vs Fitted
+
+- [ ] Random scatter around 0
+- [ ] No funnel shape (heteroscedasticity)
+- [ ] No curved pattern (mean misspecification)
+
+### Residuals vs Time
+
+- [ ] Flat band across time
+- [ ] No fanning (would suggest random slopes)
+- [ ] No trend (would suggest missing time effect)
+
+### QQ Plot of Residuals
+
+- [ ] Points approximately on diagonal
+- [ ] No severe S-shape (heavy tails)
+- [ ] No strong curvature (skewness)
+
+### QQ Plot of Random Effects
+
+- [ ] Roughly on line (some deviation OK)
+- [ ] No extreme outliers suggesting mixture
+
+### Semivariogram
+
+- [ ] Flat near 1 across all lags
+- [ ] No rising pattern (would need AR structure)
+- [ ] Values do not exceed 1 substantially
+
+### ACF of Residuals
+
+- [ ] All bars within blue confidence bands
+- [ ] No significant correlation at lag 1+
+- [ ] No systematic pattern
+
+### Influence Diagnostics
+
+- [ ] No observations with Cook's D > 4/n
+- [ ] DFBETAS within bounds for key coefficients
+- [ ] Any influential points investigated
+
+## Quick Reference Code
+
+```{r}
+#| label: quick-reference
+#| eval: false
+
+# Fit your model
+fit <- lme(y ~ time * treatment,
+           random = ~ 1 | subject,
+           correlation = corAR1(form = ~ time | subject),
+           data = mydata)
+
+# Extract residuals
+mydata$resid_norm <- resid(fit, type = "normalized")
+mydata$fitted <- fitted(fit)
+
+# 1. Residuals vs Fitted
+plot(fitted(fit), resid(fit, type = "normalized"))
+abline(h = 0, lty = 2)
+
+# 2. Residuals vs Time
+plot(mydata$time, mydata$resid_norm)
+abline(h = 0, lty = 2)
+
+# 3. QQ Plot of Residuals
+qqnorm(resid(fit, type = "normalized"))
+qqline(resid(fit, type = "normalized"))
+
+# 4. QQ Plot of Random Effects
+qqnorm(ranef(fit)$`(Intercept)`)
+qqline(ranef(fit)$`(Intercept)`)
+
+# 5. Semivariogram
+plot(Variogram(fit, form = ~ time | subject, resType = "normalized"))
+
+# 6. ACF of Residuals (by subject, then average)
+acf(resid(fit, type = "normalized"))
+
+# 7. Influence (requires additional packages)
+library(influence.ME)
+influence_fit <- influence(fit, group = "subject")
+cooks.distance(influence_fit)
+```
+
+## Further Reading
+
+- See **Semivariogram Guide** for detailed interpretation of semivariograms
+- See **Covariance Structure Selection** for choosing correlation structures
+- Pinheiro, J.C. and Bates, D.M. (2000). *Mixed-Effects Models in S and S-PLUS*
+- Fitzmaurice, G.M., Laird, N.M., and Ware, J.H. (2011). *Applied Longitudinal Analysis*

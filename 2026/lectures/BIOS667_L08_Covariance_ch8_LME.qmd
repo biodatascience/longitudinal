@@ -1,0 +1,1228 @@
+---
+title: "BIOS 667 - Lecture 8: Mixed-Effects Models (Ch. 8)"
+subtitle: "Fitzmaurice, Laird & Ware (2011) - Applied Longitudinal Data Analysis"
+author: "Naim Rashid"
+format:
+  revealjs:
+    theme: [default]
+    footer: BIOS 667 - UNC Gillings - Lecture 8 (Ch.8)
+    slide-number: true
+    hash: true
+    toc: false
+    code-overflow: wrap
+    code-line-numbers: false
+    math: mathjax
+    incremental: true
+    embed-resources: true
+    chalkboard: false
+    css: "../../unc-gillings.css"
+    scrollable: true
+execute:
+  warning: false
+  message: false
+---
+
+## Lecture Objectives
+
+By the end of this lecture, you will be able to:
+
+- Distinguish between marginal (GEE) and subject-specific (mixed-effects) approaches
+- Formulate random-intercept and random-slope models for longitudinal data
+- Understand how random effects induce covariance structures (CS, nonstationary)
+- Apply shrinkage/EBLUP concepts for subject-specific predictions
+- Choose between ML and REML for appropriate model comparisons
+
+::: {.callout-note}
+**Reading.** FLW Ch. 8 (8.1-8.10). **Assessed by:** HW3 (LME with CS/AR(1)/UN covariance;
+marginal vs conditional interpretation) and the longitudinal-modeling component of the final project.
+:::
+
+---
+
+## Roadmap
+
+| Section | Topics |
+|:--------|:-------|
+| **Foundations** | Why mixed-effects? RI vs RS models |
+| **Estimation** | ML/REML, BLUPs, shrinkage |
+| **TLC Application** | Data wrangling, model fitting, diagnostics |
+| **Model Selection** | Comparing structures, boundary tests |
+| **Advanced Topics** | Heterogeneous variances, AR(1), splines |
+| **Summary** | Reporting checklist, practical guidance |
+
+::: {.callout-note}
+**Pacing (2 class periods).** Day 1 (Part I): foundations through BLUPs and shrinkage, plus the
+core RI/RS fits on the TLC data. Day 2 (Part II): heterogeneous variances, AR(1), diagnostics,
+testing, and practical guidance.
+:::
+
+---
+
+## Prerequisites / recall
+
+Before this lecture you should be able to:
+
+- Describe the CS, AR(1), and UN covariance structures and what each assumes (Ch. 7).
+- Interpret a marginal (population-average) regression coefficient.
+- Fit a basic linear model in R and read its `summary()` output.
+
+::: {.notes}
+Instructor: confirm these in about a minute. The usual soft spot is reading a covariance structure
+off Ch. 7; if it is shaky, point back to Lecture 7 rather than re-teaching it here.
+:::
+
+{{< include _notation_box.qmd >}}
+
+# Part I (Day 1): Models, Fitting, and Interpretation {.center background-color="#13294B"}
+
+## Why Mixed-Effects?
+
+Longitudinal data: same person measured repeatedly leads to **correlated** outcomes.
+
+Mixed-effects = fixed effects (population-average) + **random effects** (person-specific deviations).
+
+---
+
+## What Mixed-Effects Captures
+
+| Feature | Description |
+|:--------|:------------|
+| Between-subject heterogeneity | Different baselines/slopes across individuals |
+| Within-subject correlation | Implied by shared random effects |
+| Unbalanced designs | Handles varying numbers of observations per subject |
+| Mistimed visits | Continuous time naturally accommodated |
+
+---
+
+## Subject-Specific vs Marginal Views
+
+"Marginal" vs "subject-specific" is a contrast of **estimands**, not methods. The LME delivers both:
+
+| Estimand | Quantity | From the LME |
+|:---------|:---------|:-------------|
+| **Subject-specific** | $E(Y_i \mid b_i) = X_i\boldsymbol\beta + Z_i b_i$ | Conditional on the subject's $b_i$ |
+| **Marginal** | $E(Y_i) = X_i\boldsymbol\beta$, $\operatorname{Cov}(Y_i) = Z_i G Z_i^\top + \sigma^2 I$ | Averaging over $b_i$ (FLW pp. 190-191) |
+
+Averaging the subject-specific mean over $b_i \sim N(0, G)$ gives the marginal mean $X_i\boldsymbol\beta$, so the LME **also** has a marginal interpretation. GEE is one way to target that marginal mean directly (with robust SEs); the LME targets it while also predicting subject trajectories and leveraging all available data under MAR.
+
+---
+
+## Model Building Blocks
+
+Let $Y_{ij}$ be the response for subject $i$ at time $t_{ij}$.
+
+---
+
+## Random-Intercept (RI) Model
+
+$$
+Y_{ij} = \beta_0 + X_{ij}\boldsymbol\beta + b_{0i} + \varepsilon_{ij}
+$$
+
+where:
+
+- $b_{0i} \sim N(0, \sigma_b^2)$ is the subject-specific intercept
+- $\varepsilon_{ij} \sim N(0, \sigma^2)$ is the residual error
+
+---
+
+## Random-Slope (RS) Model
+
+$$
+Y_{ij} = \beta_0 + \beta_1 t_{ij} + X_{ij}\boldsymbol\beta + b_{0i} + b_{1i} t_{ij} + \varepsilon_{ij}
+$$
+
+where the random effects follow:
+
+$$
+\begin{pmatrix} b_{0i} \\ b_{1i} \end{pmatrix} \sim N\!\left(\mathbf{0}, G\right), \quad
+G = \begin{pmatrix} \sigma_{b0}^2 & \sigma_{b01} \\ \sigma_{b01} & \sigma_{b1}^2 \end{pmatrix}
+$$
+
+---
+
+## Implied Covariance (RI Model)
+
+For the random-intercept model:
+
+$$
+\mathrm{Var}(Y_{ij}) = \sigma_b^2 + \sigma^2
+$$
+
+The shared random intercept $b_{0i}$ is the only thing two observations on subject $i$ have in common, so the off-diagonal covariance is
+
+$$
+\mathrm{Cov}(Y_{ij}, Y_{ik}) = \sigma_b^2 \quad (j \ne k)
+$$
+
+Dividing by the variance gives the correlation, which is the same for every pair of times:
+
+$$
+\mathrm{Corr}(Y_{ij}, Y_{ik}) = \frac{\sigma_b^2}{\sigma_b^2 + \sigma^2} \quad \text{(Compound Symmetry)}
+$$
+
+::: {.notes}
+Instructor: derive the off-diagonal explicitly. $\mathrm{Cov}(Y_{ij},Y_{ik}) = \mathrm{Cov}(b_{0i}+\varepsilon_{ij},\, b_{0i}+\varepsilon_{ik}) = \mathrm{Var}(b_{0i}) = \sigma_b^2$ because the residuals are independent. That single shared term is what produces compound symmetry, so CS is asserted by the model, not assumed.
+:::
+
+---
+
+## Implied Covariance (RS Model)
+
+For the random-slope model the implied variance changes with time (nonstationary):
+
+$$
+\mathrm{Var}(Y_{ij}) = \sigma_{b0}^2 + 2\, t_{ij}\, \sigma_{b01} + t_{ij}^2\, \sigma_{b1}^2 + \sigma^2
+$$
+
+This is a quadratic in $t_{ij}$: trajectories **fan out** (or in) over time, unlike the constant variance of compound symmetry. This is the nonstationary, "linear-in-time" covariance shown in the RI+RS row of the Link to Chapter 7 table below (it is introduced here, not in Ch. 7).
+
+::: {.notes}
+Instructor: this formula is what "nonstationary" means. At $t_{ij}=0$ it collapses to $\sigma_{b0}^2 + \sigma^2$ (the random-intercept case), and the variance grows from there. Contrast with CS, which is flat in time.
+:::
+
+---
+
+## RI vs RS: When and Why
+
+| Model | Use When |
+|:------|:---------|
+| **RI** | Subjects have different baselines but common trajectory shape |
+| **RS** | Subjects have different **rates of change**; trajectories fan in/out |
+
+If slopes vary across persons (common in biology), RS is often essential.
+
+---
+
+## Two-Stage Random Effects Formulation (FLW 8.4)
+
+FLW motivate the LME model in two stages, which makes clear where the random effects come from:
+
+- **Stage 1 (within-subject):** $\mathbf{Y}_i = \mathbf{Z}_i \boldsymbol\beta_i + \boldsymbol\varepsilon_i$, with $\boldsymbol\varepsilon_i \sim N(0, R_i)$. Each subject follows their own regression with coefficients $\boldsymbol\beta_i$.
+- **Stage 2 (between-subject):** $\boldsymbol\beta_i = \mathbf{A}_i \boldsymbol\beta + \mathbf{b}_i$, with $\mathbf{b}_i \sim N(0, G)$. Here $\mathbf{A}_i$ is a known between-subject design matrix linking each subject's coefficients to the population means $\boldsymbol\beta$ (often an identity, or a map of subject-level covariates). The subject-specific coefficients vary around $\boldsymbol\beta$.
+
+Substituting Stage 2 into Stage 1 gives the familiar single-equation form
+
+$$
+\mathbf{Y}_i = \mathbf{X}_i \boldsymbol\beta + \mathbf{Z}_i \mathbf{b}_i + \boldsymbol\varepsilon_i,
+\qquad \Sigma_i = \mathbf{Z}_i G \mathbf{Z}_i^\top + R_i .
+$$
+
+> The random-intercept and random-slope models are special cases: the two-stage view simply makes explicit that $G$ is the **between-subject covariance** of the $\mathbf{b}_i$.
+
+::: {.notes}
+Instructor: the payoff of the two-stage view is conceptual. Stage 1 is "everyone has their own line,"
+Stage 2 is "those lines scatter around a population line." Students who see only the one-equation form
+often think of $\mathbf{b}_i$ as nuisance noise rather than as real between-subject variation. Tie $G$ back
+to the notation slide.
+:::
+
+---
+
+## The Link to Chapter 7
+
+| Random Effects | Implied Covariance |
+|:---------------|:-------------------|
+| RI only | Compound Symmetry (CS) |
+| RI + RS | Linear-in-time covariance (nonstationary) |
+
+Mixed-effects give **parsimonious, interpretable** $\Sigma_i$ via random effects rather than directly parameterizing $\Sigma_i$.
+
+---
+
+::: {.callout-note collapse="true"}
+## Check Your Understanding: Random Effects Basics
+
+1. In the random-intercept model, what is the implied correlation between two observations $Y_{ij}$ and $Y_{ik}$ from the same subject?
+
+2. When would you choose a random-slope model over a random-intercept model?
+
+3. A random-intercept model is equivalent to which covariance pattern from Chapter 7?
+
+**Answers:**
+
+1. $\text{Corr}(Y_{ij}, Y_{ik}) = \frac{\sigma_b^2}{\sigma_b^2 + \sigma^2}$. This is the intraclass correlation (ICC), representing the proportion of total variance attributable to between-subject differences.
+
+2. When you expect subjects to have different **rates of change** over time, not just different starting points. Visual signs include trajectories that "fan out" or cross over time in spaghetti plots.
+
+3. Compound Symmetry (CS). The random intercept induces constant correlation between any two time points for the same subject.
+:::
+
+---
+
+## Estimation Overview
+
+| Method | Use For |
+|:-------|:--------|
+| **ML** | Comparing **different fixed effects** |
+| **REML** | Comparing **different random-effects structures** (same fixed effects) |
+
+Mixed-model equations (Henderson) yield **BLUPs** of random effects; with unknown variance components they become **EBLUPs** (empirical BLUPs, the FLW term for predicted random effects: BLUPs computed using the *estimated* variance components rather than known ones).
+
+---
+
+## Shrinkage Intuition (EBLUP)
+
+**Borrowing strength**: subject-specific intercepts/slopes are **pulled** toward population means.
+
+Shrinkage is stronger when:
+
+- Subject has **few** measurements
+- Measurement error $\sigma^2$ is **large**
+- Random-effect variance is **small**
+
+This prevents overfitting noisy within-subject patterns.
+
+---
+
+## TLC Data Setup
+
+```{r}
+#| echo: true
+#| output-location: slide
+library(dplyr); library(tidyr); library(nlme); library(ggplot2); library(emmeans)
+
+path <- "../../data/tlc.csv"
+tlc_wide <- read.csv(path, check.names = FALSE, stringsAsFactors = FALSE)
+names(tlc_wide) <- trimws(names(tlc_wide))
+
+tlc <- tlc_wide %>%
+  rename(
+    id  = ID,
+    trt = `Treatment Group`,
+    w0  = `Lead Level Week 0`,
+    w1  = `Lead Level Week 1`,
+    w4  = `Lead Level Week 4`,
+    w6  = `Lead Level Week 6`
+  ) %>%
+  mutate(trt = factor(trt, levels = c("P","A"), labels = c("Placebo","Succimer"))) %>%
+  pivot_longer(c(w0,w1,w4,w6), names_to = "wk", values_to = "y") %>%
+  mutate(
+    time     = recode(wk, w0="0", w1="1", w4="4", w6="6"),
+    time_f   = factor(time, levels = c("0","1","4","6")),
+    time_num = as.numeric(as.character(time)),
+    id       = factor(id),
+    group    = trt
+  ) %>%
+  select(id, group, time_f, time_num, y) %>%
+  arrange(id, time_num)
+
+stopifnot(all(!is.na(tlc$y)))
+dplyr::count(tlc, id)
+```
+
+---
+
+## TLC Visuals: Spaghetti Plot
+
+```{r}
+#| echo: true
+#| output-location: slide
+ggplot(tlc, aes(time_num, y, group = id, color = group)) +
+  geom_line(alpha = 0.25) +
+  stat_summary(aes(group = group), fun = mean, geom = "line", linewidth = 1.1) +
+  labs(title = "Lead levels over time (TLC)", x = "Week", y = "Lead") +
+  theme_minimal() + guides(color = guide_legend(title = "Group"))
+```
+
+---
+
+## Random-Intercept Model (RI)
+
+```{r}
+#| echo: true
+#| output-location: slide
+lme_ri <- lme(y ~ group * time_f, random = ~ 1 | id, data = tlc, method = "REML")
+summary(lme_ri)$tTable[1:8, , drop = FALSE]
+VarCorr(lme_ri)
+```
+
+---
+
+## Reading VarCorr Output: Random-Intercept Model
+
+::: {.callout-tip}
+## How to Interpret VarCorr for RI Model
+
+The `VarCorr()` output shows:
+
+| Row | Meaning | Interpretation |
+|:----|:--------|:---------------|
+| `(Intercept)` under `id` | $\sigma_b$ (StdDev) and $\sigma_b^2$ (Variance) | **Between-subject SD**: How much subjects differ at baseline |
+| `Residual` | $\sigma$ (StdDev) and $\sigma^2$ (Variance) | **Within-subject SD**: Variability around each subject's trajectory |
+
+**Derived quantities:**
+
+- **ICC (intraclass correlation)** = $\frac{\sigma_b^2}{\sigma_b^2 + \sigma^2}$ = proportion of variance due to between-subject differences
+- **Total variance** = $\sigma_b^2 + \sigma^2$
+
+**Example interpretation:** If `VarCorr` shows (Intercept) StdDev = 8.5 and Residual StdDev = 5.2, then ICC = $8.5^2/(8.5^2 + 5.2^2) = 72.25/99.29 \approx 0.73$. About 73% of the total variance is between subjects.
+:::
+
+---
+
+## RI Model Specification
+
+- **Fixed**: group x time (factor) = maximal mean for covariance selection
+- **Random**: intercept only ($b_{0i}$)
+
+---
+
+## Random-Slope Model (RS)
+
+A random slope needs **numeric** time (`time_num`) so each subject has a single slope coefficient. (We keep the factor `time_f` for the population mean in the next model; the consequence of mixing factor and numeric time for model comparison shows up on the AIC slide.)
+
+```{r}
+#| echo: true
+#| output-location: slide
+ctrl <- lmeControl(
+  niterEM     = 200,
+  msMaxIter   = 200,
+  msMaxEval   = 400,
+  tolerance   = 1e-6,
+  returnObject= TRUE
+)
+
+lme_rs <- lme(y ~ group * time_num, random = ~ time_num | id, data = tlc, method = "REML", control = ctrl)
+summary(lme_rs)$tTable
+VarCorr(lme_rs)
+```
+
+**Random coefficients** allow individual-specific baseline **and** slope.
+
+::: {.callout-note}
+`ctrl` (defined above via `lmeControl`) just relaxes `nlme`'s convergence settings and is reused via
+`control = ctrl` in the later fits. If a fit warns about convergence this usually helps. Note that
+`returnObject = TRUE` returns the fit **even if it did not fully converge**, so always confirm the fit
+converged before trusting it.
+:::
+
+---
+
+## Reading VarCorr Output: Random-Slope Model
+
+::: {.callout-tip}
+## How to Interpret VarCorr for RS Model
+
+The `VarCorr()` output for a random-slope model shows:
+
+| Row | Meaning | Interpretation |
+|:----|:--------|:---------------|
+| `(Intercept)` under `id` | $\sigma_{b0}$ | **Between-subject SD in intercepts**: How much starting points vary |
+| `time_num` under `id` | $\sigma_{b1}$ | **Between-subject SD in slopes**: How much rates of change vary |
+| `Corr` | $\rho_{01}$ | **Intercept-slope correlation**: Do high-baseline subjects change faster or slower? |
+| `Residual` | $\sigma$ | **Within-subject residual SD**: Unexplained variability |
+
+**Interpreting the correlation:**
+
+- $\rho_{01} > 0$: Subjects with higher intercepts tend to have steeper slopes
+- $\rho_{01} < 0$: Subjects with higher intercepts tend to have flatter (or declining) slopes
+- $\rho_{01} \approx 0$: Baseline and rate of change are unrelated
+
+**Note:** The intercept-slope correlation is easier to interpret when time is centered (e.g., at baseline or mid-study).
+:::
+
+---
+
+## RI vs RS: AIC/REML Comparison
+
+```{r}
+#| echo: true
+#| output-location: slide
+data.frame(
+  model = c("RI (time_f)", "RS (time_num)"),
+  AIC   = c(AIC(lme_ri), AIC(lme_rs)),
+  logLik= c(logLik(lme_ri), logLik(lme_rs))
+)
+```
+
+Not strictly comparable if fixed effects differ (time factor vs numeric): REML AIC compares random structures only when the fixed effects match (see Estimation Overview).
+
+---
+
+## Factor-Time Fixed Effects with RS Random
+
+Strategy: keep **time as factor** in fixed effects (rich mean), use **time_num** in random part to permit RS.
+
+```{r}
+#| echo: true
+#| output-location: slide
+lme_rifs <- lme(y ~ group * time_f, random = ~ time_num | id, data = tlc, method = "REML", control = ctrl)
+data.frame(
+  model = c("RI", "RI+RS"),
+  AIC   = c(AIC(lme_ri), AIC(lme_rifs)),
+  logLik= c(logLik(lme_ri), logLik(lme_rifs))
+)
+```
+
+---
+
+## Interpreting Fixed Effects with RS
+
+| Component | Interpretation |
+|:----------|:---------------|
+| Fixed effects | Summarize **average** trajectory |
+| Random effects | Capture **individual departures** |
+| Interaction group x time | **Difference-in-change** averaged across subjects |
+
+---
+
+## EMMs for Contrasts at Planned Times
+
+```{r}
+#| echo: true
+#| output-location: slide
+emm_ri <- emmeans(lme_ri, ~ group | time_f)
+pairs(emm_ri)
+```
+
+Same use of `emmeans` as in Ch. 7; SEs now reflect **random-effects** structure.
+
+---
+
+## BLUPs: Subject-Specific Intercepts/Slopes
+
+```{r}
+#| echo: true
+#| output-location: slide
+re <- ranef(lme_rifs)
+head(re)
+
+re_df <- as.data.frame(re)
+ggplot(re_df, aes(x = `(Intercept)`)) + geom_histogram(bins = 20) +
+  labs(title = "BLUPs of random intercepts", x = expression(b[0*i]), y = "Count") +
+  theme_minimal()
+```
+
+**So what?** A wide spread of these intercept BLUPs $b_{0i}$ means substantial between-subject variation in baseline, consistent with a large $\sigma_{b0}$ in `VarCorr`: the histogram is the picture of that variance component. (The QQ-plot slide recomputes `re` from the same fit.)
+
+# Part II (Day 2): Extensions, Diagnostics, and Practice {.center background-color="#13294B"}
+
+## Heterogeneous Residual Variances + RI/RS
+
+Mixed models can combine **random effects** + a **within-subject residual** covariance $R_i$:
+
+- Heterogeneous residual SDs via `weights = varIdent(~ 1 | time_f)` (a separate residual SD per visit, instead of one constant $\sigma$)
+- Additional within-subject correlation via `corAR1(~ time_num | id)` (residual AR(1): correlation that decays with the time gap) if needed
+
+```{r}
+#| echo: true
+#| output-location: slide
+lme_rifs_het <- lme(y ~ group * time_f, random = ~ time_num | id,
+                    weights = varIdent(~ 1 | time_f),
+                    data = tlc, method = "REML", control = ctrl)
+AIC(lme_rifs, lme_rifs_het)
+```
+
+---
+
+## Adding Residual AR(1) to RI/RS
+
+```{r}
+#| echo: true
+#| output-location: slide
+lme_rifs_ar1 <- lme(y ~ group * time_f, random = ~ time_num | id,
+                    correlation = corAR1(form = ~ time_num | id),
+                    data = tlc, method = "REML", control = ctrl)
+data.frame(model = c("RI+RS", "RI+RS + AR(1)"),
+           AIC   = c(AIC(lme_rifs), AIC(lme_rifs_ar1)))
+```
+
+Only add AR(1) if random effects **do not** remove residual serial correlation.
+
+---
+
+## Diagnostics: Residuals vs Fitted
+
+```{r}
+#| echo: true
+#| output-location: slide
+res <- resid(lme_rifs, type = "normalized")
+fit <- fitted(lme_rifs)
+
+ggplot(data.frame(fit, res), aes(fit, res)) +
+  geom_point(alpha = 0.5) + geom_hline(yintercept = 0, linewidth = 0.3) +
+  labs(title = "Residuals vs fitted (normalized)", x = "Fitted", y = "Residual") +
+  theme_minimal()
+```
+
+*Normalized* residuals are Cholesky-standardized: they strip out the modeled within-subject correlation, which is why we check these (not raw residuals) for a correlated-data model.
+
+---
+
+## Diagnostics: ACF of Residuals
+
+```{r}
+#| echo: true
+#| output-location: slide
+acf_out <- ACF(lme_rifs, resType = "normalized")
+ggplot(acf_out, aes(lag, ACF)) + geom_col(width = 0.1) +
+  geom_hline(yintercept = 0, linewidth = 0.3) +
+  labs(title = "ACF of normalized residuals", x = "Lag", y = "ACF",
+       subtitle = "Reading rule: bars within the band (flat) = good; slow decay = leftover serial correlation") +
+  theme_minimal()
+```
+
+::: {.notes}
+Instructor: the reference line is 0. Bars staying inside the confidence band (flat) mean the random
+effects already captured the within-subject correlation. A slow decay across lags is the warning sign
+of leftover serial correlation, which motivates adding a residual AR(1) structure.
+:::
+
+---
+
+## Diagnostics: Semivariogram
+
+```{r}
+#| echo: true
+#| output-location: slide
+vg <- Variogram(lme_rifs, form = ~ time_num | id, resType = "normalized")
+ggplot(vg, aes(dist, variog)) + geom_point() +
+  geom_smooth(se = FALSE, span = 0.9) +
+  geom_hline(yintercept = 1, linetype = 3) +
+  labs(title = "Semivariogram of normalized residuals", x = "Lag (weeks apart)", y = expression(hat(gamma)),
+       subtitle = "Reading rule: flat near 1 = correlation captured; rising from a low value = consider AR(1)") +
+  theme_minimal()
+```
+
+::: {.notes}
+Instructor: the dashed reference line is at 1 (the variance of standardized residuals). A roughly flat
+cloud near 1 means the modeled covariance is adequate; a curve rising from a low value at short lags
+signals leftover serial correlation, so consider a corAR1 residual structure.
+:::
+
+---
+
+## Diagnostics: Random-Effects QQ Plot
+
+```{r}
+#| echo: true
+#| output-location: slide
+re <- ranef(lme_rifs)
+qq <- as.data.frame(re)
+ggplot(qq, aes(sample = `(Intercept)`)) +
+  stat_qq() + stat_qq_line() +
+  labs(title = "QQ plot: predicted random intercepts (BLUPs)", x = "Theoretical", y = "Sample") +
+  theme_minimal()
+```
+
+::: {.callout-warning}
+## Do NOT use this to test random-effects normality
+The predicted random effects (empirical BLUPs) are **shrunk** toward 0, so their
+distribution **understates** the true random-effects variance and is not a valid check
+of the $N(0, G)$ assumption (FLW p. 273). Use the BLUP QQ plot only to **spot individual
+subjects with unusual profiles** (outliers/influence), never as a normality test.
+:::
+
+---
+
+## Testing Fixed Effects
+
+| Test Type | Method |
+|:----------|:-------|
+| Wald tests (z/F) | Large-sample z (FLW); KR/Satterthwaite df is a modern add-on |
+| Likelihood-ratio tests | Between nested fixed-effects models (requires **ML** fits) |
+
+FLW Ch. 8 uses large-sample inference: Wald z-statistics and LRTs without a small-sample df
+adjustment (Tables 8.5 and 8.12 report z-statistics).
+
+::: {.callout-warning}
+**Beyond FLW (standard modern add-on).** Kenward-Roger and Satterthwaite df correct Wald tests in
+small samples but are not part of FLW Ch. 8. `nlme::lme` (used here) provides **neither**: it reports
+containment df. For KR/Satterthwaite, fit with `lme4::lmer` and use `lmerTest` (Satterthwaite) or
+`pbkrtest` (Kenward-Roger). The LRT route below works directly in `nlme` once both models are refit
+with ML.
+:::
+
+```{r}
+#| echo: true
+#| output-location: slide
+lme_rifs_ML <- update(lme_rifs, method = "ML")
+lme_rifs_noInt_ML <- lme(y ~ group + time_f, random = ~ time_num | id, data = tlc, method = "ML", control = ctrl)
+anova(lme_rifs_noInt_ML, lme_rifs_ML)
+```
+
+---
+
+## Testing Variance Components (Boundary)
+
+Variance-component tests are **boundary** tests (a variance cannot be negative), so the null distribution is a 50:50 **mixture**, not a plain $\chi^2$. Which mixture depends on how many parameters you drop:
+
+- **One variance** (e.g. $\sigma_{b0}^2 = 0$: is a random intercept needed at all?): $\tfrac12\chi^2_0 + \tfrac12\chi^2_1$. Only here is the corrected p the naive $\chi^2_1$ p-value **halved**.
+- **A random slope, dropped from a model that already has a random intercept** (our example below: removes $\sigma_{b1}^2$ **and** the intercept-slope covariance $\sigma_{b01}$, two parameters): $\tfrac12\chi^2_1 + \tfrac12\chi^2_2$ (Stram & Lee). **Not** a simple halving.
+
+```{r}
+#| echo: true
+#| output-location: slide
+lrt <- anova(lme_ri, lme_rifs)   # REML; same fixed effects, drop the random slope
+lrt
+# Dropping the random slope removes TWO parameters: use the 1/2 chi^2_1 + 1/2 chi^2_2 mixture
+LR <- lrt[["L.Ratio"]][2]
+p_mix <- 0.5 * pchisq(LR, 1, lower.tail = FALSE) + 0.5 * pchisq(LR, 2, lower.tail = FALSE)
+c(naive_chisq2 = lrt[["p-value"]][2], mixture_corrected = p_mix)
+```
+
+The naive `anova()` $\chi^2_2$ p-value is **conservative** (too large). The mixture above is the correct adjustment for this two-parameter test.
+
+::: {.callout-note}
+**FLW's procedure (Section 8.5, p. 209).** Compare the LRT statistic against the 50:50 chi-squared
+mixture critical values in **FLW Appendix Table C.1**. For comparing **two correlated random effects
+(random intercept + slope) versus one (random intercept only)** -- exactly this random-slope test, the
+$\tfrac12\chi^2_1 + \tfrac12\chi^2_2$ mixture -- the $\alpha = 0.05$ critical value is the $q=1$ row of
+Table C.1, **5.14** (smaller than the naive $\chi^2_2$ value of 5.99). FLW recommend $\alpha = 0.10$
+instead of $0.05$ only for **more complex** comparisons ($q$ vs $q+k$ correlated random effects with
+$k > 1$), where the null distribution is less well understood. (Testing a single variance component at 0
+is the $\tfrac12\chi^2_0 + \tfrac12\chi^2_1$ case, $\alpha = 0.05$ critical value about 2.71.)
+:::
+
+::: {.callout-tip}
+**Beyond FLW (modern extension).** For exact inference on a single variance component, a parametric
+bootstrap of the restricted LRT is available via `RLRsim::exactRLRT`; `pbkrtest` offers a parametric
+bootstrap LRT. These are not the chapter's method (FLW uses the tabulated mixture above), but they
+avoid the asymptotic mixture approximation.
+:::
+
+::: {.notes}
+Instructor: this is the subtlety students (and software) miss. Halving the p-value is correct ONLY for a single-variance test. Dropping a random slope from a model that already has a random intercept removes the slope variance AND the intercept-slope covariance, so it is a two-parameter boundary test with the 1/2 chi^2_1 + 1/2 chi^2_2 mixture, not 1/2 chi^2_0 + 1/2 chi^2_1 and not p/2.
+:::
+
+---
+
+## Centering Time for Interpretation
+
+With RS, centering time at a meaningful point (e.g., baseline or mid-study) stabilizes covariance and aids interpretation:
+
+- **Intercept** = mean response at the centering time
+- **Random-intercept/slope correlation** becomes more interpretable
+
+```{r}
+#| echo: true
+#| output-location: slide
+tlc <- tlc %>% mutate(time_c = time_num - mean(time_num))
+lme_rifs_c <- lme(y ~ group * time_c, random = ~ time_c | id, data = tlc, method = "REML", control = ctrl)
+VarCorr(lme_rifs_c)
+```
+
+---
+
+::: {.callout-note collapse="true"}
+## Check Your Understanding: Model Selection and Testing
+
+1. You want to test whether the `group * time_f` interaction is significant. Should you use ML or REML for this comparison?
+
+2. When testing whether to drop the random slope (i.e., testing $\sigma_{b1}^2 = 0$), why is the standard $\chi^2$ test inappropriate?
+
+3. A colleague compares two models: one with `random = ~ 1 | id` and one with `random = ~ time | id`, but the fixed effects differ (one uses `time_f`, the other uses `time_num`). Can they use REML AIC to compare these models?
+
+**Answers:**
+
+1. **ML**. Use ML when comparing models with different fixed effects. REML likelihoods are not comparable across models with different fixed-effects structures.
+
+2. Testing $\sigma_{b1}^2 = 0$ is a **boundary test** because the null places the parameter on the edge of its space (variance cannot be negative), so the null distribution is a 50:50 mixture, not a plain $\chi^2$. Dropping the random slope from a model that already has a random intercept removes **two** parameters ($\sigma_{b1}^2$ and the intercept-slope covariance $\sigma_{b01}$), so the correct mixture is $\frac{1}{2}\chi^2_1 + \frac{1}{2}\chi^2_2$, not the standard $\chi^2_2$. (Testing a single variance, e.g. whether to include a random intercept at all, gives $\frac{1}{2}\chi^2_0 + \frac{1}{2}\chi^2_1$, where halving the p-value is exact.) The standard $\chi^2$ test is conservative.
+
+3. **No**. REML AIC is only valid for comparing models with **identical fixed effects**. Since the fixed effects differ, they cannot use REML AIC. They would need to either (a) make the fixed effects the same, or (b) use ML for both models if comparing fixed effects is the goal.
+:::
+
+---
+
+## Beyond Linear Time: Splines
+
+```{r}
+#| echo: true
+#| output-location: slide
+library(splines)
+lme_spl <- lme(y ~ group * ns(time_num, df = 3),
+               random = ~ time_num | id, data = tlc, method = "REML", control = ctrl)
+AIC(lme_rifs, lme_spl)
+```
+
+Flexible mean over time; keep random slopes (or random spline coefficients if enough data).
+
+---
+
+## Time-Varying Covariates (TVCs)
+
+Mixed models handle **TVCs** naturally.
+
+Watch out for **endogeneity** (covariate depends on past $Y_{ij}$).
+
+Interactions with time (fixed and/or random slopes) often required.
+
+---
+
+## Missing Data (MAR) and LMMs
+
+Under **MAR**, ML/REML estimates remain valid with an appropriate mean + random-effects structure.
+
+LMMs use all available data without ad hoc imputation.
+
+---
+
+## Simulation: Shrinkage and EBLUPs
+
+```{r}
+#| echo: true
+#| output-location: slide
+set.seed(8)
+N <- 200; m <- 3
+ids <- factor(seq_len(N))
+times <- 0:2
+G <- matrix(c(1.0, 0.3, 0.3, 0.4), 2, 2)  # random-effects covariance (FLW's G)
+sigma2 <- 1.2^2                            # residual variance
+
+sim <- do.call(rbind, lapply(ids, function(i){
+  b <- MASS::mvrnorm(1, mu = c(0,0), Sigma = G)
+  tibble::tibble(id = i, time = times,
+                 y = 5 + 0.6*time + b[1] + b[2]*time + rnorm(length(times), sd = sqrt(sigma2)))
+}))
+
+fit <- lme(y ~ time, random = ~ time | id, data = sim, method = "REML", control = ctrl)
+blup <- ranef(fit)
+head(blup)
+```
+
+Note BLUPs near 0 when subject has **little information** (shrinkage).
+
+---
+
+## Visual: Shrinkage with Few vs Many Points
+
+```{r}
+#| echo: true
+#| output-location: slide
+set.seed(81)
+ids_few <- sample(levels(sim$id), 6)
+pred <- expand.grid(id = ids_few, time = seq(0,2,by=.05))
+pred$pop <- predict(fit, newdata = pred, level = 0)
+pred$ss  <- predict(fit, newdata = pred, level = 1)
+
+ggplot(sim %>% dplyr::filter(id %in% ids_few),
+       aes(time, y, group = id)) +
+  geom_point() +
+  geom_line(aes(y = pop, group = id), data = pred, linetype = 2) +
+  geom_line(aes(y = ss,  group = id), data = pred) +
+  facet_wrap(~ id, ncol = 3) +
+  labs(title = "Shrinkage stronger with sparse/noisy subjects", x = "Time", y = "Y") +
+  theme_minimal()
+```
+
+---
+
+::: {.callout-note collapse="true"}
+## Check Your Understanding: Shrinkage and BLUPs
+
+1. What are the three conditions that make shrinkage stronger (i.e., pull subject-specific estimates more toward the population mean)?
+
+2. What is the difference between a BLUP and an EBLUP?
+
+3. In `predict(fit, level = 0)` vs `predict(fit, level = 1)`, which one incorporates the subject-specific random effects?
+
+**Answers:**
+
+1. Shrinkage is stronger when: (a) the subject has **few measurements**, (b) the residual error $\sigma^2$ is **large**, and (c) the random-effect variance is **small**. In each case, subject-specific data is less informative, so we borrow more from the population.
+
+2. **BLUP** (Best Linear Unbiased Predictor) assumes variance components are known. **EBLUP** (Empirical BLUP) uses estimated variance components from the data. In practice, we always compute EBLUPs since true variances are unknown.
+
+3. `level = 1` gives subject-specific predictions that include the BLUPs. `level = 0` gives population-average predictions using only the fixed effects. The solid lines (level=1) in the shrinkage plot follow individual patterns; dashed lines (level=0) show the overall population trend.
+:::
+
+---
+
+## Prediction and Intervals
+
+| Level | What It Uses |
+|:------|:-------------|
+| **Population-level** (level = 0) | Fixed effects only |
+| **Subject-specific** (level = 1) | Includes BLUPs |
+
+**Prediction intervals** require accounting for **both** residual and random-effect uncertainty, so there is no one-line `predict()` interval for a subject-specific prediction. The standard route (stated as reference, not run here):
+
+::: {.callout-note}
+**Parametric-bootstrap prediction interval (recipe).** (1) Simulate new random effects $\mathbf{b}^\ast \sim N(0,\hat G)$ and residuals $\varepsilon^\ast \sim N(0,\hat\sigma^2)$ from the fitted model; (2) form $y^\ast = \mathbf{X}\hat{\boldsymbol\beta} + \mathbf{Z}\mathbf{b}^\ast + \varepsilon^\ast$ for the target subject and time; (3) repeat many times and take empirical quantiles. `lme4::bootMer` automates this for `lmer` fits; for `nlme`, simulate from `VarCorr`/`ranef` by hand.
+:::
+
+---
+
+## Influence and Outliers
+
+- Check **standardized residuals**, **random-effect outliers**, leverage
+- Consider **robust** mixed models or transformations if heavy tails/outliers
+
+---
+
+## Random-Effects Covariance Interpretation
+
+| Component | Interpretation |
+|:----------|:---------------|
+| $\sigma_{b0}^2$ | Between-subject variance at the centered time |
+| $\sigma_{b1}^2$ | Heterogeneity in slopes |
+| $\sigma_{b01}$ | Intercept-slope association (positive means high baseline with steeper increase) |
+
+---
+
+## When to Add Residual Correlation
+
+If RI/RS + heterogeneous residual variances still leave **serial correlation** in residuals (ACF/variogram), add `corAR1` or similar.
+
+Do not over-layer: random slopes often **absorb** a lot of serial correlation.
+
+---
+
+## Practical Modeling Sequence
+
+| Step | Action |
+|:-----|:-------|
+| 1 | Choose **rich mean** (time as factor or spline; group x time) |
+| 2 | Start with **RI**; consider **RS** if trajectories differ in slope |
+| 3 | Add **heterogeneous residual SDs** if needed; check residual ACF/variogram |
+| 4 | Only then consider additional residual correlation (e.g., AR(1)) |
+| 5 | Compare **REML AIC** for random/residual structures; **ML** for fixed effects |
+| 6 | Validate with residual and random-effect diagnostics |
+
+---
+
+## Class Exercise Prompt (TLC)
+
+1. Fit: RI, RI+RS, RI+RS+varIdent
+2. Compare by REML AIC; interpret variance components
+3. Report group differences at each visit (EMMs) with 95% CIs
+
+---
+
+## Code Template for Exercise
+
+```{r}
+#| echo: true
+#| output-location: slide
+# 1) RI
+fit_ri <- lme(y ~ group * time_f, random = ~ 1 | id, data = tlc, method = "REML")
+
+# 2) RI+RS (time_num in random part)
+fit_rs <- lme(y ~ group * time_f, random = ~ time_num | id, data = tlc, method = "REML", control = ctrl)
+
+# 3) Add hetero residual SDs by visit
+fit_rs_het <- update(fit_rs, weights = varIdent(~ 1 | time_f))
+
+# Compare REML AIC
+data.frame(model=c("RI","RI+RS","RI+RS+het"),
+           AIC=c(AIC(fit_ri), AIC(fit_rs), AIC(fit_rs_het)))
+
+# EMMs: group contrasts by visit
+emmeans(fit_rs_het, ~ group | time_f) |> pairs()
+```
+
+---
+
+## Common Pitfalls
+
+| Pitfall | Correct Approach |
+|:--------|:-----------------|
+| Comparing random structures under ML | Use REML |
+| Boundary tests with plain $\chi^2$ | Use mixture or bootstrap |
+| Ignoring centering for RS | Leads to awkward intercept/slope correlation |
+| High-degree polynomials for time | Prefer splines |
+
+---
+
+## Common Mistakes to Avoid
+
+::: {.callout-warning}
+## Mistakes That Lead to Wrong Results
+
+| Mistake | Why It Is Wrong | Correct Approach |
+|:--------|:----------------|:-----------------|
+| Using REML to compare different fixed effects | REML likelihoods not comparable | Refit both models with ML, then compare |
+| Using ML to select random-effects structure | ML underestimates variances | Use REML when fixed effects are the same |
+| Using standard $\chi^2$ for variance component tests | Boundary problem: variance $\geq 0$ | Use the right 50:50 mixture ($\frac{1}{2}\chi^2_0+\frac{1}{2}\chi^2_1$ for one variance; $\frac{1}{2}\chi^2_1+\frac{1}{2}\chi^2_2$ to drop a random slope), comparing to FLW Appendix Table C.1 critical values (a parametric bootstrap is a beyond-FLW option) |
+| Not centering time in RS models | Hard-to-interpret intercept-slope correlation | Center at baseline or mid-study |
+| Adding AR(1) without checking if RS is sufficient | Random slopes often absorb serial correlation | Check residual ACF after fitting RS first |
+| Interpreting VarCorr "StdDev" as variance | Column shows standard deviation, not variance | Square the StdDev to get variance |
+| Forgetting that BLUPs are shrunk | BLUPs are biased toward population mean | Use for prediction, not unbiased estimation |
+| Extrapolating subject-specific predictions | BLUPs unreliable beyond observed data | Limit predictions to data range |
+:::
+
+---
+
+## RI/RS vs Pure Covariance Models (Ch. 7)
+
+- Many covariance patterns can be **mimicked** by random effects
+- Mixed models **interpret** $\Sigma_i$ through heterogeneity in **baseline/slopes**
+- For prediction and patient-specific effects, **mixed models** are natural
+
+---
+
+## Reporting Checklist (LMM)
+
+| Element | Details |
+|:--------|:--------|
+| Mean structure | Time coding, interactions, rationale |
+| Random structure | RI/RS; covariance of random effects $G$ |
+| Residual structure | Heterogeneous SDs, AR(1) if any |
+| Estimation method | ML/REML and model comparisons |
+| Estimates | Fixed effects with CIs; variance components |
+| Diagnostics | Residual ACF/variogram; BLUP plot for unusual subjects (not RE normality); influence |
+| Sensitivity | Additional analyses |
+
+---
+
+## Quick Reference: `nlme::lme` Syntax
+
+```{r}
+#| echo: true
+#| eval: false
+# Random-intercept
+lme(y ~ fixed_terms, random = ~ 1 | id, data = dat)
+
+# Random-slope (linear time)
+lme(y ~ fixed_terms, random = ~ time | id, data = dat)
+
+# Add hetero residual SDs by visit
+lme(y ~ fixed_terms, random = ~ time | id,
+    weights = varIdent(~ 1 | time_factor), data = dat)
+
+# Add residual AR(1)
+lme(y ~ fixed_terms, random = ~ time | id,
+    correlation = corAR1(~ time | id), data = dat)
+```
+
+---
+
+## The Same Model in SAS (PROC MIXED)
+
+R is our runnable language (used in the slides above and in the homework). For students who work in
+SAS, here is the equivalent, shown for reference only and not executed. This mirrors FLW's Computing
+section (8.9).
+
+```sas
+/* Not run here. SAS counterpart of the random-slope fit above, on the TLC data. */
+PROC MIXED DATA=tlc METHOD=REML;
+  CLASS id trt;
+  MODEL y = time trt time*trt / SOLUTION;
+  RANDOM intercept time / SUBJECT=id TYPE=UN G;
+RUN;
+```
+
+- `RANDOM ... / SUBJECT=id` is the SAS counterpart of R's `random = ~ time | id` (or `(time | id)` in `lmer`).
+- `METHOD=REML` matches the `nlme::lme`/`lmer` default; use `METHOD=ML` for LRTs of fixed effects.
+- `TYPE=UN` is an unstructured $G$ (correlated intercept and slope); `TYPE=VC` makes them independent.
+
+::: {.notes}
+Instructor: do not run this. The point is the R-to-SAS mapping so SAS users can follow along. The two
+lines students most often miss are SUBJECT=id (defines the cluster) and METHOD= (REML vs ML, same rule
+as in R).
+:::
+
+---
+
+## Quick Reference: ML vs REML
+
+| Goal | Method |
+|:-----|:-------|
+| Compare fixed effects | Refit both models with **ML**; LRT/AIC on ML |
+| Choose random/residual structure | Fit with **REML**; compare REML AIC/LRT |
+
+---
+
+## Side Note: lme vs lmer
+
+| Package | Strengths |
+|:--------|:----------|
+| `nlme::lme` | Residual correlation structures and heteroscedastic weights; no built-in Satterthwaite |
+| `lme4::lmer` | Fast, robust; pair with `lmerTest` for df; no built-in residual AR(1)/varIdent |
+
+Choose based on needs; results for fixed effects are often similar.
+
+---
+
+## Worked Example: ML vs REML
+
+```{r}
+#| echo: true
+#| output-location: slide
+fit_full_ML <- lme(y ~ group * time_f, random = ~ time_num | id, data = tlc, method = "ML", control = ctrl)
+fit_noint_ML <- lme(y ~ group + time_f, random = ~ time_num | id, data = tlc, method = "ML", control = ctrl)
+anova(fit_noint_ML, fit_full_ML)
+```
+
+---
+
+## Subject-Specific Predictions Table
+
+```{r}
+#| echo: true
+#| output-location: slide
+sub_ids <- head(levels(tlc$id), 6)
+new6 <- tlc %>% distinct(id, group) %>% filter(id %in% sub_ids) %>%
+  mutate(time_num = 6, time_f = factor("6", levels = c("0","1","4","6")))
+data.frame(
+  id = sub_ids,
+  pop = predict(lme_rifs, newdata = new6, level = 0),
+  ss  = predict(lme_rifs, newdata = new6, level = 1)
+)
+```
+
+---
+
+## Model Criticism: Overdispersion/Heavy Tails
+
+If residuals or random effects are heavy-tailed, consider:
+
+- Transformations, variance functions, robust LMMs (e.g., t-distributed random effects/errors)
+- Check sensitivity to outliers
+
+---
+
+## Time as Factor vs Continuous: Guidance
+
+| Approach | Best For |
+|:---------|:---------|
+| **Factor** | Flexible at planned visits; good for EMMs at specific times |
+| **Continuous** | Interpretable global slope; good with many time points or mistiming |
+| **Combined** | Factor in fixed, continuous in random (RS) is often optimal |
+
+---
+
+## Growth Curves vs Spline LMMs
+
+- Polynomial growth curves are easy but can oscillate
+- Natural cubic **splines** are more stable
+- Choose df by AIC/CV and subject-matter considerations
+
+---
+
+## TVCs and Lagged Effects
+
+- Incorporate **lagged** covariates if plausible causal ordering
+- Beware of **post-treatment** covariates when estimating treatment effects
+
+---
+
+## Beyond Gaussian LMMs
+
+- GLMMs for non-Gaussian outcomes (binary, counts)
+- Similar principles; estimation via Laplace/AGQ
+- Not covered in this chapter
+
+---
+
+## Cheat-Sheet: Model Choice
+
+| Question | Solution |
+|:---------|:---------|
+| Slopes differ across subjects? | Add RS |
+| Residual SD varies by visit? | Add varIdent |
+| Leftover serial correlation? | Add AR(1) |
+| Need predictions per subject? | Use Mixed models |
+| Only marginal contrasts? | Consider GEE as sensitivity |
+
+---
+
+## Cheat-Sheet: Testing
+
+| Test Type | Method |
+|:----------|:-------|
+| Fixed effects | ML for model comparison; large-sample Wald z / LRT (FLW). KR/Satterthwaite df is a modern add-on |
+| Random effects | REML LRT vs the 50:50 mixture (FLW Appendix Table C.1; use $\alpha = 0.10$ for $q$-vs-$q+k$, $k>1$). Bootstrap is beyond FLW |
+
+Do not mix ML and REML across compared models.
+
+---
+
+## What to Include in Your Report
+
+- Data structure and missingness; time coding
+- Final mean, random, residual structures; estimation method
+- Key estimates (fixed) with CIs; variance components
+- Diagnostics; sensitivity; clear interpretations
+
+---
+
+## Recipe Card: Fitting Mixed-Effects Models
+
+::: {.callout-tip}
+## Step-by-Step Workflow for LMM Analysis
+
+**Step 1: Data Preparation**
+```r
+# Ensure data is in long format with:
+# - Subject ID as factor
+# - Time as both factor (for rich mean) and numeric (for slopes)
+dat <- dat %>%
+  mutate(id = factor(id),
+         time_f = factor(time),
+         time_num = as.numeric(time),
+         time_c = time_num - mean(time_num))  # centered
+```
+
+**Step 2: Fit Candidate Models (REML)**
+```r
+# Start with random intercept
+fit_ri <- lme(y ~ group * time_f, random = ~ 1 | id,
+              data = dat, method = "REML")
+
+# Add random slope
+fit_rs <- lme(y ~ group * time_f, random = ~ time_num | id,
+              data = dat, method = "REML")
+
+# Add heterogeneous residual variances
+fit_rs_het <- update(fit_rs, weights = varIdent(~ 1 | time_f))
+```
+
+**Step 3: Compare Random Structures (REML AIC)**
+```r
+AIC(fit_ri, fit_rs, fit_rs_het)  # Lower is better
+```
+
+**Step 4: Check Diagnostics**
+```r
+plot(fit_rs)                    # Residuals vs fitted
+qqnorm(resid(fit_rs, type = "normalized"))
+ACF(fit_rs)                     # Check for leftover correlation
+qqnorm(ranef(fit_rs)[,1])       # BLUPs: spot unusual subjects, NOT a normality test (FLW p.273)
+```
+
+**Step 5: Test Fixed Effects (refit with ML)**
+```r
+fit_full_ML <- update(fit_rs, method = "ML")
+fit_reduced_ML <- lme(y ~ group + time_f, random = ~ time_num | id,
+                      data = dat, method = "ML")
+anova(fit_reduced_ML, fit_full_ML)  # LRT for interaction
+```
+
+**Step 6: Report Final Model**
+```r
+summary(fit_rs)$tTable           # Fixed effects
+VarCorr(fit_rs)                  # Variance components
+emmeans(fit_rs, ~ group | time_f) %>% pairs()  # Contrasts
+```
+:::
+
+---
+
+## Summary: Big Ideas
+
+1. **Mixed-effects** = flexible, interpretable way to model individual trajectories and covariance
+2. **Shrinkage** improves estimation for sparse/noisy subjects
+3. Careful **model comparison** (ML vs REML) and **boundary-aware** tests are crucial
+
+---
+
+## Further Reading and For Next Time
+
+- **FLW Ch. 8:** the Case Studies (8.8), the Computing section on PROC MIXED (8.9), and Further Reading (8.10).
+- Laird & Ware (1982), the original two-stage random-effects formulation behind 8.4.
+- **Next:** FLW Ch. 9, Fixed Effects versus Random Effects Models and the Hausman test (Lecture 9).
+
+::: {.callout-note}
+**A note on the data.** TLC is our **course running example** (carried over from Ch. 5-7 for
+continuity), not a Ch. 8 dataset. FLW Ch. 8's own case studies (Section 8.8) are the **Six Cities**
+log(FEV1) data, fit with hybrid random-effects + serial-correlation models, and the **ACTG 193A**
+log(CD4) counts, fit with a linear-spline LME whose empirical-BLUP trajectories appear in Fig. 8.10.
+:::
+
+::: {.notes}
+Instructor: the Ch. 9 forward pointer matters. We have argued for random effects all lecture; Ch. 9 asks
+when that assumption is safe, so flag it as the natural next question rather than a separate topic.
+:::
+
+---

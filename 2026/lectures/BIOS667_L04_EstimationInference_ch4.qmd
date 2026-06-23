@@ -1,0 +1,1055 @@
+---
+title: "BIOS 667 - Lecture 4: Estimation and Inference (Ch. 4)"
+subtitle: "Fitzmaurice, Laird & Ware (2011) - Applied Longitudinal Data Analysis"
+author: "Naim Rashid"
+format:
+  revealjs:
+    theme: [default]
+    footer: BIOS 667 · UNC Gillings - Lecture 4 (Ch. 4)
+    slide-number: true
+    hash: true
+    toc: false
+    code-overflow: wrap
+    code-line-numbers: false
+    math: mathjax
+    incremental: true
+    embed-resources: true
+    chalkboard: false
+    scrollable: true
+    css: "../../unc-gillings.css"
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+## Lecture Objectives
+
+By the end of this lecture, you will be able to:
+
+- Understand the role of covariance structure in longitudinal data modeling
+- Apply maximum likelihood (ML) and restricted maximum likelihood (REML) estimation
+- Classify missing data mechanisms (MCAR, MAR, MNAR) and their implications
+- Compare inference approaches: Wald, likelihood ratio, and score tests
+- Choose appropriate estimation methods based on research goals
+
+---
+
+## Roadmap
+
+| Section | Topic |
+|---------|-------|
+| 1 | Introduction to Linear Models for Longitudinal Data |
+| 2 | Maximum Likelihood Estimation |
+| 3 | Missing Data Mechanisms |
+| 4 | Statistical Inference |
+| 5 | Restricted Maximum Likelihood (REML) |
+
+*Spans 2 class periods.* Day 1 covers covariance structure and ML estimation; Day 2 covers missing data and inference (including REML).
+
+---
+
+{{< include _notation_box_intro.qmd >}}
+
+## Notation (this lecture)
+
+::: {.notation-card}
+This deck adds:
+
+| Symbol | Meaning |
+|:--|:--|
+| $\Sigma_i$ | within-subject covariance of $\mathbf{Y}_i$ (FLW eq (4.2); pre-Ch. 8 it is just $\operatorname{Cov}(\mathbf{Y}_i)$) |
+| $\boldsymbol{\theta}$ | covariance parameters: $\Sigma_i = \Sigma_i(\boldsymbol{\theta})$ |
+| $R_i$ | **missingness indicator** (Part II), not the Ch. 8 residual covariance |
+:::
+
+::: {.notes}
+Flag the $R_i$ clash out loud: here $R_i$ is the missing-data indicator (FLW's response-indicator notation), a different object from the residual-covariance $R_i$ the master notation introduces in Ch. 8 (not seen yet). We write $\Sigma_i$ (FLW's letter, eq (4.2)); before random effects this is simply the covariance of $\mathbf{Y}_i$ within a subject. ($V_i$ is reserved for the GEE working covariance in Ch. 12-13, a different object.)
+:::
+
+# Part I (Day 1): Covariance Structure and ML Estimation
+
+*Timing cue: this Part is one 75-minute block (covariance structure and ML estimation).*
+
+# Introduction
+
+---
+
+## From Conceptual to Estimation
+
+Until now: models for longitudinal data were **conceptual** (mean + covariance)
+
+Starting here: focus on **estimation of unknown parameters**
+
+| Parameter | Description |
+|-----------|-------------|
+| $\beta$ | Regression coefficients |
+| $\boldsymbol{\theta}$ | Covariance parameters |
+| $\Sigma_i$ | Within-subject covariance matrix |
+
+---
+
+## The Framework
+
+Conditional multivariate normal model:
+
+$$
+\mathbb{E}(\mathbf{Y}_i \mid \mathbf{X}_i) = \mathbf{X}_i \beta
+$$
+
+$$
+\text{Cov}(\mathbf{Y}_i \mid \mathbf{X}_i) = \Sigma_i = \Sigma_i(\boldsymbol{\theta})
+$$
+
+Here $\Sigma_i$ is the within-subject covariance for subject $i$ (FLW's $\Sigma_i(\boldsymbol\theta)$), and $\boldsymbol{\theta}$ collects its covariance parameters.
+
+::: {.notes}
+This is the whole chapter in two lines: a mean model and a covariance model. Emphasize that $\boldsymbol{\theta}$ is what is new relative to OLS, where the only nuisance parameter was a single $\sigma^2$. Everything that follows (ML, REML, the test choices) is about estimating and testing $\boldsymbol{\theta}$ alongside $\beta$. Flag the notation now: both this deck and the running card call this object $\Sigma_i$ (FLW eq (4.2)); $V_i$ is reserved for the GEE working covariance later.
+:::
+
+---
+
+## Interpreting the Covariance Matrix
+
+$\Sigma_i$ encodes **within-subject covariance** of repeated measures
+
+Parameterized by a vector $\boldsymbol{\theta}$ of covariance parameters
+
+---
+
+## Covariance Structure Options
+
+| Structure | Parameters ($q$) | Description |
+|-----------|------------------|-------------|
+| Unstructured (UN) | $n_i(n_i+1)/2$ | All variances and covariances estimated |
+| Compound Symmetry (CS) | 2 | One variance + one covariance |
+| AR(1) | 2 | Correlation decays with time lag |
+| Independence | 1 | Only variance estimated |
+
+::: {.notes}
+Drive home that the UN count is $n_i(n_i+1)/2$ where $n_i$ is the number of occasions, NOT the number of subjects. With 5 occasions that is already 15 parameters; with 8 it is 36. This is why UN gets infeasible fast and why CS/AR(1) exist. Ask the class to compute the count for $n_i = 4$ before revealing it.
+:::
+
+---
+
+## Why Covariance Structure Matters
+
+Choice of covariance structure directly impacts:
+
+| Aspect | Consequence |
+|--------|-------------|
+| Efficiency | Are SEs valid and efficient? |
+| Interpretability | Do correlation patterns make sense? |
+| Feasibility | UN explodes when $n_i$ (number of occasions) is large |
+
+---
+
+## Looking Ahead: Chapters 5-8
+
+Chapters 5-8 will:
+
+- Focus on **models for the mean and covariance**
+- Explore estimation under different covariance assumptions
+- Develop tools for inference when $\Sigma_i$ is known vs estimated
+
+Next up, **Lecture 5 (Ch. 5, response profiles)** applies this estimation and inference machinery (GLS/ML, REML, the LRT) to the mean response over time.
+
+---
+
+## Discussion Question
+
+> What might happen if we assume *compound symmetry* when the *true structure* is autoregressive (AR(1))?
+
+---
+
+## Example: Simulating Covariance Structures
+
+```{r}
+#| echo: true
+#| output-location: slide
+
+set.seed(667)
+
+# Parameters
+n_subj <- 25   # enough subjects to SEE constant vs decaying correlation
+n_time <- 5
+time <- 1:n_time
+
+# Compound symmetry covariance (rho constant)
+rho_cs <- 0.8
+Sigma_cs <- matrix(rho_cs, n_time, n_time)
+diag(Sigma_cs) <- 1
+
+# AR(1) covariance (rho decays with lag)
+# row()/col() return the row and column index of each matrix entry, so
+# abs(row - col) is the time-lag |j - k| at each cell; rho^lag gives the
+# AR(1) correlation that decays as the lag grows.
+rho_ar1 <- 0.8
+Sigma_ar1 <- rho_ar1 ^ abs(row(Sigma_cs) - col(Sigma_cs))
+
+# Independence covariance (rho is 0)
+rho_in <- 0
+Sigma_in <- matrix(rho_in, n_time, n_time)
+diag(Sigma_in) <- 1
+
+# Simulate data
+library(MASS)
+sim_cs  <- MASS::mvrnorm(n_subj, mu = rep(0, n_time), Sigma = Sigma_cs)
+sim_ar1 <- MASS::mvrnorm(n_subj, mu = rep(0, n_time), Sigma = Sigma_ar1)
+sim_in  <- MASS::mvrnorm(n_subj, mu = rep(0, n_time), Sigma = Sigma_in)
+
+# Put in long format
+to_long <- function(mat, type){
+  data.frame(id = rep(1:nrow(mat), each = n_time),
+             time = rep(time, nrow(mat)),
+             y = as.vector(t(mat)),
+             cov_type = type)
+}
+df <- rbind(to_long(sim_cs, "CS"), to_long(sim_ar1, "AR1"), to_long(sim_in, "Indep"))
+```
+
+---
+
+## Visualization: CS vs AR(1) vs Independence
+
+```{r}
+#| echo: true
+#| output-location: slide
+
+library(ggplot2)
+ggplot(df, aes(x = time, y = y, group = id, color = cov_type)) +
+  geom_line(alpha = 0.75) +
+  facet_wrap(~cov_type) +
+  labs(title = "Simulated Trajectories under CS vs AR(1) vs Identity Covariance",
+       x = "Time", y = "Response") +
+  theme_minimal()
+```
+
+---
+
+## Key Takeaways from Simulation
+
+| Structure | Pattern |
+|-----------|---------|
+| Compound Symmetry | Correlation constant across time; lines look "parallel" |
+| AR(1) | Correlation decays with lag; trajectories diverge over time |
+| Independence | No correlation; erratic patterns |
+
+If mis-specified, **standard errors are incorrect** and inference is invalid (point estimates stay consistent)
+
+---
+
+::: {.callout-note collapse="true"}
+## Check Your Understanding: Covariance Structures
+
+1. If you have 8 time points and use an unstructured covariance, how many covariance parameters must be estimated?
+2. When would AR(1) be preferred over compound symmetry?
+3. What happens to standard errors if you assume independence when observations are actually correlated?
+
+**Answers:**
+
+1. With $n_i = 8$ occasions, $n_i(n_i+1)/2 = 8(9)/2 = 36$ parameters (8 variances + 28 covariances)
+2. AR(1) is preferred when correlation decays with time lag (e.g., measurements closer in time are more correlated)
+3. Standard errors will typically be **underestimated**, leading to inflated Type I error rates (false positives)
+:::
+
+# Maximum Likelihood Estimation
+
+---
+
+## ML Estimation Goal
+
+**Goal:** Jointly estimate both:
+
+- Regression coefficients $\beta$
+- Covariance parameters $\boldsymbol{\theta}$
+
+---
+
+## The Log-Likelihood
+
+Under the multivariate normal model:
+
+$$
+\ell(\beta, \boldsymbol{\theta}) = -\tfrac{1}{2} \sum_{i=1}^N
+\Big[ \log |\Sigma_i| + (\mathbf{Y}_i - \mathbf{X}_i \beta)^\top \Sigma_i^{-1} (\mathbf{Y}_i - \mathbf{X}_i \beta) \Big]
+$$
+
+::: {.notes}
+Read the two terms aloud: the quadratic form is a $\Sigma_i^{-1}$-weighted residual sum of squares (down-weighting correlated, high-variance observations), and the $\log|\Sigma_i|$ term is the penalty that keeps the optimizer from inflating the covariance to make residuals look small. Both depend on $\boldsymbol{\theta}$, which is exactly why $\beta$ and $\boldsymbol{\theta}$ must be estimated jointly.
+:::
+
+---
+
+## Case 1: Independent Observations
+
+When responses are independent (e.g., cross-sectional data):
+
+$$\Sigma_i = \sigma^2 I$$
+
+Log-likelihood simplifies to **OLS framework**:
+
+$$
+\hat{\beta} = (\mathbf{X}^\top \mathbf{X})^{-1} \mathbf{X}^\top \mathbf{Y}
+$$
+
+---
+
+## Visualization: Independent Case
+
+```{r}
+#| echo: true
+#| output-location: slide
+
+set.seed(667)
+n <- 50
+x <- rnorm(n)
+y <- 1 + 2*x + rnorm(n, sd = 1)
+fit <- lm(y ~ x)
+plot(x, y, pch = 19, col = "steelblue")
+abline(fit, col = "darkred", lwd = 2)
+```
+
+---
+
+## Independence: Key Point
+
+With independence:
+
+- OLS line = ML estimate
+- All observations contribute equally
+
+---
+
+## Case 2: Non-Independent Observations
+
+For **longitudinal data**: responses within subject $i$ are correlated
+
+- $\Sigma_i$ not proportional to identity matrix
+- Need to model covariance explicitly (e.g., CS, AR(1), UN)
+- ML must **jointly estimate** $\beta$ and $\boldsymbol{\theta}$
+
+---
+
+## Key Result: GLS/ML Estimator of $\beta$
+
+For a known (or estimated) covariance $\Sigma_i$, the ML estimator of $\beta$ is the generalized least squares (GLS) form:
+
+$$
+\hat{\beta} = \left( \sum_{i=1}^N \mathbf{X}_i^\top \Sigma_i^{-1} \mathbf{X}_i \right)^{-1} \left( \sum_{i=1}^N \mathbf{X}_i^\top \Sigma_i^{-1} \mathbf{Y}_i \right)
+$$
+
+Setting $\Sigma_i = \sigma^2 I$ (independence) drops $\Sigma_i^{-1}$ to a constant and recovers the OLS form $\hat{\beta} = (\mathbf{X}^\top \mathbf{X})^{-1} \mathbf{X}^\top \mathbf{Y}$.
+
+::: {.notes}
+The headline: GLS is just OLS that down-weights correlated observations through $\Sigma_i^{-1}$. Walk the class through the collapse to OLS so they see independence is the special case, not the general one. Common student error: thinking we need a different estimator entirely under correlation. We do not; we need the right weight matrix. In practice $\Sigma_i$ is unknown, so we plug in $\hat{\Sigma}_i(\hat{\boldsymbol{\theta}})$ and iterate, which is what `gls` and `lme` do internally.
+:::
+
+---
+
+## Implications of Non-Independence
+
+If correlation is ignored:
+
+| Aspect | Consequence |
+|--------|-------------|
+| $\hat{\beta}$ | Still unbiased (under correct mean model) |
+| Standard errors | **Incorrect** - invalid inference |
+
+Proper ML uses $\Sigma_i^{-1}$ weighting to account for correlation
+
+---
+
+## Example: CS vs AR(1) Model Comparison
+
+```{r}
+#| echo: true
+#| output-location: slide
+
+library(nlme)
+data(Orthodont, package = "nlme")
+Orthodont <- data.frame(Orthodont)
+
+# Fit ML with compound symmetry vs AR1
+fit_cs  <- gls(distance ~ age,
+               correlation = corCompSymm(value = 0.5, form = ~1|Subject),
+               data = Orthodont, method = "ML")
+
+fit_ar1 <- gls(distance ~ age,
+               correlation = corAR1(value = 0.5, form = ~age|Subject),
+               data = Orthodont, method = "ML")
+
+AIC(fit_cs, fit_ar1)
+```
+
+::: {.notes}
+Worked example to run live. Point out `method = "ML"` (not REML): the two models share the same fixed-effect mean (`distance ~ age`) and differ only in covariance, so either method is legitimate here, but we keep ML so the slide is consistent with later LRT-of-fixed-effects discussion. Note both fits use `gls`, not `lme`, because there are no random effects yet, only a modeled residual correlation. Have students predict which structure wins before showing the AIC.
+:::
+
+---
+
+## Model Comparison: Interpretation
+
+- Compare model fits using AIC
+- AR(1) often better when correlation decays with time
+- Demonstrates sensitivity of ML to covariance choice
+
+**In plain language:** When you see an AIC comparison, the model with the **lower AIC** provides a better balance of fit and parsimony. If AR(1) has lower AIC than CS, this suggests that correlations between measurements do indeed decay as time between measurements increases - a common pattern in longitudinal data.
+
+---
+
+## SAS Equivalent: PROC MIXED (Reference Only)
+
+The same CS vs AR(1) comparison in SAS uses `PROC MIXED` with a `REPEATED` statement:
+
+```sas
+/* Compound symmetry */
+proc mixed data=orthodont method=reml;
+  class subject;
+  model distance = age / solution;
+  repeated / type=cs subject=subject;
+run;
+
+/* First-order autoregressive */
+proc mixed data=orthodont method=reml;
+  class subject;
+  model distance = age / solution;
+  repeated / type=ar(1) subject=subject;
+run;
+```
+
+::: {.callout-note}
+R is the runnable language for this course (used in homework); SAS is shown for reference only. Compare fits across the two runs via the AIC reported in each `PROC MIXED` output.
+:::
+
+---
+
+## Why ML Matters
+
+ML provides a unified framework for:
+
+| Task | Application |
+|------|-------------|
+| Estimation | Regression parameters |
+| Estimation | Covariance structure |
+| Testing | Competing models (LRT, AIC) |
+
+**Caveat:** Can be biased for variance components in small samples - motivates REML
+
+---
+
+## Discussion Prompt
+
+> Suppose you analyze repeated measures with **independence assumed**, but the true covariance is AR(1).
+
+- What happens to $\hat{\beta}$?
+- What happens to its standard errors?
+- How might conclusions differ?
+
+---
+
+::: {.callout-note collapse="true"}
+## Check Your Understanding: Maximum Likelihood
+
+1. What two sets of parameters does ML simultaneously estimate in longitudinal models?
+2. If you fit a model assuming compound symmetry but the true structure is AR(1), will $\hat{\beta}$ be biased?
+3. Why might we use AIC to compare different covariance structures?
+
+**Answers:**
+
+1. Regression coefficients ($\beta$) and covariance parameters ($\boldsymbol{\theta}$)
+2. No, $\hat{\beta}$ remains unbiased under a correctly specified mean model. However, **standard errors** will be incorrect.
+3. AIC balances model fit against complexity, allowing fair comparison of non-nested covariance structures (e.g., CS vs AR(1))
+:::
+
+# Part II (Day 2): Missing Data and Inference
+
+---
+
+## Day 2 Roadmap
+
+Day 1 covered covariance structure and ML estimation. Today:
+
+- Missing data mechanisms (MCAR, MAR, MNAR)
+- Statistical inference (Wald, LRT, score tests)
+- Restricted maximum likelihood (REML)
+
+# Missing Data Mechanisms
+
+---
+
+## The Missing Data Problem
+
+Missing data is **ubiquitous** in longitudinal studies
+
+The mechanism driving missingness is critical to:
+
+- Validity of parameter estimates
+- Interpretation of results
+
+---
+
+## Rubin's Classification
+
+| Mechanism | Abbreviation | Description |
+|-----------|--------------|-------------|
+| Missing Completely at Random | MCAR | Missingness independent of data |
+| Missing at Random | MAR | Missingness depends on observed data |
+| Missing Not at Random | MNAR | Missingness depends on unobserved data |
+
+Core question: *Can we ignore the missingness mechanism?*
+
+::: {.callout-note}
+FLW Ch. 4 (Section 4.3) reviews only MCAR and MAR plus the likelihood-based handling of MAR. MNAR (and the selection / pattern-mixture models, multiple imputation, and inverse probability weighting introduced below) is a forward look to FLW Ch. 17-18 (course L17-L18), not Ch. 4.
+:::
+
+---
+
+## MCAR: Missing Completely at Random
+
+Probability of missingness does **not depend on data** (neither observed nor unobserved)
+
+Let $R_i$ be the **missingness indicator** for subject $i$ (which responses are observed vs missing). Note this $R_i$ is the missing-data indicator and is distinct from the residual-covariance matrix $R_i$ in the master notation.
+
+$$
+P(R_i \mid Y_i, X_i) = P(R_i)
+$$
+
+**Example:** Lab sample lost due to shipping error
+
+**Implication:** Complete case analyses remain **unbiased**, but less efficient
+
+> Rare in practice, but a useful baseline
+
+::: {.notes}
+Stress the double independence in MCAR: missingness depends on neither observed nor unobserved data. Watch the $R_i$ clash: here $R_i$ is the missingness indicator (FLW's response-indicator notation), but in the master notation $R_i$ is the residual-covariance matrix, which we do not reach until Ch. 8. Flag this now so students do not conflate them later. The payoff line: MCAR is the only mechanism where naive complete-case analysis is unbiased, which is exactly why it is rare and why we need MAR-valid methods.
+:::
+
+---
+
+## MAR: Missing at Random
+
+Probability of missingness depends only on **observed data**
+
+Split $Y_i$ into its observed and missing parts: $Y_{i,\text{obs}}$ is the responses actually recorded for subject $i$, and $Y_{i,\text{mis}}$ is the responses that are missing.
+
+$$
+P(R_i \mid Y_i, X_i) = P(R_i \mid Y_{i,\text{obs}}, X_i)
+$$
+
+**Example:** Dropout depends on age or baseline health status (observed)
+
+**Implication:** Valid inference possible if model conditions on observed predictors
+
+---
+
+## MAR: Methods for Valid Inference
+
+| Method | Description |
+|--------|-------------|
+| Likelihood-based | Model includes predictors of missingness |
+| Multiple imputation | Impute missing values under MAR assumption |
+| Inverse probability weighting | Weight observations by probability of being observed |
+
+::: {.callout-note}
+FLW Ch. 4 (Section 4.3) covers only MCAR/MAR and the **likelihood-based** handling of MAR (first row). Multiple imputation and inverse probability weighting are a forward look to FLW Ch. 17-18 (course L17-L18).
+:::
+
+---
+
+## MAR: A Critical Caveat
+
+**MAR does not mean automatically safe**
+
+Valid inference requires that the **variables driving missingness** are part of your analysis (or imputation) model
+
+Otherwise: bias creeps in, even if the true mechanism is MAR
+
+---
+
+## MAR Examples: Correct vs Incorrect
+
+| Scenario | Modeling Approach | Validity |
+|----------|-------------------|----------|
+| Dropout depends on gender | Gender included as covariate | Valid |
+| Dropout depends on baseline depression | Depression omitted from model | Biased |
+
+**Takeaway:** Always include predictors of missingness in your model if they are observed
+
+---
+
+## MNAR: Missing Not at Random
+
+::: {.callout-note}
+Beyond FLW Ch. 4: MNAR and its models are a forward look to FLW Ch. 17-18 (course L17-L18). FLW Ch. 4 covers only MCAR/MAR.
+:::
+
+Probability of missingness depends on **unobserved data**
+
+$$
+P(R_i \mid Y_i, X_i) = P(R_i \mid Y_{i,\text{mis}}, Y_{i,\text{obs}}, X_i)
+$$
+
+**Example:** Patients with worsening symptoms more likely to drop out
+
+---
+
+## MNAR: Implications
+
+Ignorability fails; specialized models needed:
+
+| Model Type | Approach |
+|------------|----------|
+| Selection models | Model missingness mechanism jointly |
+| Pattern-mixture models | Stratify by missingness patterns |
+
+Assumptions must be **explicit and untestable**
+
+::: {.callout-note}
+Selection and pattern-mixture models are a forward look to FLW Ch. 17-18 (course L17-L18), not FLW Ch. 4.
+:::
+
+---
+
+## Visual Illustration of Mechanisms
+
+```{r}
+#| echo: true
+#| output-location: slide
+
+library(ggplot2)
+set.seed(667)
+
+n <- 200
+x <- rnorm(n)
+y <- 0.5 + 1.2*x + rnorm(n)
+
+# Create missingness
+mar  <- ifelse(x > 0.5, NA, y)           # MAR: depends on observed X
+mcar <- ifelse(runif(n) < 0.3, NA, y)    # MCAR: random
+mnar <- ifelse(y > 1, NA, y)             # MNAR: depends on unobserved Y
+
+df <- data.frame(x, y, mcar, mar, mnar)
+df_long <- tidyr::pivot_longer(df, cols = c(y, mcar, mar, mnar),
+                               names_to = "Type", values_to = "Value")
+
+ggplot(df_long, aes(x, Value, color = Type)) +
+  geom_point(alpha = 0.6) +
+  facet_wrap(~Type) +
+  theme_minimal() +
+  labs(title = "Illustrating MCAR, MAR, and MNAR")
+```
+
+---
+
+## Consequences of Ignoring Mechanisms
+
+| Mechanism | Consequence if Ignored |
+|-----------|------------------------|
+| MCAR | Unbiased estimates but less power |
+| MAR | Valid if appropriately modeled |
+| MNAR | Bias if treated as MAR (biggest risk) |
+
+Incorrect assumption can change clinical conclusions
+
+---
+
+## Discussion Prompt
+
+> Suppose a trial of a new cancer therapy has 20% dropout:
+>
+> - Healthier patients drop due to travel burden
+> - Sicker patients drop due to toxicity
+
+- Which mechanism is most plausible?
+- How would this affect analysis?
+
+---
+
+## Practical Takeaways for Missing Data
+
+| Action | Recommendation |
+|--------|----------------|
+| Ask | Why is data missing? |
+| Document | Dropout patterns carefully |
+| Analyze | Perform sensitivity analyses for MNAR scenarios |
+| Default | Start with MAR, but assess robustness |
+
+---
+
+::: {.callout-note collapse="true"}
+## Check Your Understanding: Missing Data
+
+1. A patient drops out because they felt better and no longer wanted to come in for visits. Is this MCAR, MAR, or MNAR?
+2. Under MAR, what must be true for likelihood-based methods to yield valid inference?
+3. Why is MNAR the most problematic mechanism?
+
+**Answers:**
+
+1. This is likely **MNAR** - the dropout depends on the unobserved outcome (how they would have felt at future visits). However, if feeling better was captured by observed variables (e.g., last observed score), it could be MAR.
+2. The variables that predict missingness must be included in the analysis model (e.g., if dropout depends on baseline severity, include baseline severity as a covariate)
+3. MNAR is problematic because the missingness depends on unobserved data, so we cannot verify the mechanism from the observed data alone. Special models are needed and assumptions are untestable.
+:::
+
+# Statistical Inference
+
+---
+
+## Goals of Inference
+
+After estimation, we want to make **inferences** about:
+
+- Regression coefficients $\beta$
+- Covariance parameters $\boldsymbol{\theta}$
+
+---
+
+## Why Longitudinal Inference Differs
+
+Inference in longitudinal models differs from OLS because:
+
+| Issue | Consequence |
+|-------|-------------|
+| Within-subject correlation | Observations are not independent |
+| Covariance modeling | $\Sigma_i$ must be estimated |
+
+---
+
+## Standard OLS Inference (Review)
+
+In cross-sectional linear regression:
+
+$$\hat{\beta} \sim N(\beta, \sigma^2 (\mathbf{X}^\top \mathbf{X})^{-1})$$
+
+Assumes:
+
+- Independent, identically distributed errors
+- Homoscedasticity
+
+---
+
+## Inference with Correlated Data
+
+With correlated data:
+
+$$\text{Var}(\hat{\beta}) = \left( \sum_i \mathbf{X}_i^\top \Sigma_i^{-1} \mathbf{X}_i \right)^{-1}$$
+
+**Key difference:** Dependence on $\Sigma_i$
+
+If $\Sigma_i$ mis-specified: incorrect standard errors, invalid inference (the point estimate $\hat{\beta}$ stays consistent)
+
+---
+
+## Three Approaches to Hypothesis Testing
+
+| Test | Description |
+|------|-------------|
+| Likelihood Ratio Test (LRT) | Compares nested models via likelihood difference |
+| Wald Test | Based on asymptotic normality of $\hat{\beta}$ |
+| Score Test | Based on derivative of likelihood at restricted model |
+
+::: {.callout-note}
+Beyond FLW Ch. 4: FLW Ch. 4 (Section 4.4) presents only the Wald test and the LRT. The score test is an instructor extension included here for completeness; it does not appear in FLW Ch. 4.
+:::
+
+---
+
+## Likelihood Ratio Tests (LRT)
+
+For testing hypotheses about parameters in **nested models**:
+
+$$\Lambda = -2(\ell_{\text{restricted}} - \ell_{\text{full}})$$
+
+Asymptotically $\chi^2$-distributed
+
+Used for testing fixed effects and comparing covariance structures
+
+---
+
+## LRT: Pros and Cons
+
+| Aspect | Details |
+|--------|---------|
+| Pros | More robust than Wald when testing multiple parameters |
+| Cons | Requires both restricted and full model fits |
+| Best for | Fixed-effects comparisons using **ML** (not REML) |
+
+---
+
+## Wald Tests
+
+Based on asymptotic normality of $\hat{\beta}$:
+
+$$W = (\hat{\beta} - \beta_0)^\top \text{Var}(\hat{\beta})^{-1} (\hat{\beta} - \beta_0)$$
+
+| Aspect | Details |
+|--------|---------|
+| Pros | Flexible; can test single parameters or linear combinations |
+| Cons | Relies on SE accuracy; sensitive to covariance misspecification |
+
+---
+
+## Score Tests
+
+Based on derivative of likelihood at restricted model
+
+::: {.callout-note}
+Beyond FLW Ch. 4: the score test is an instructor extension, not part of FLW Ch. 4 (which covers only the Wald test and the LRT).
+:::
+
+| Aspect | Details |
+|--------|---------|
+| Pros | Requires only restricted fit |
+| Cons | Less commonly applied in practice |
+| Best for | Testing variance components (e.g., random effects) |
+
+::: {.callout-warning}
+## Boundary caveat for variance components (beyond FLW Ch. 4)
+This caveat is correct but is an extension: FLW Ch. 4 (p. 100) recommends **against** Wald-testing covariance parameters and defers variance-component testing to FLW Ch. 7 (no mixture is given in Ch. 4). The boundary mixture below is the Stram-Lee result.
+
+A variance component being tested under $H_0$ sits on the **boundary** of its parameter space (a variance cannot be negative). The usual chi-square reference is then wrong. For testing a single variance component the correct null distribution is a 50:50 mixture, $\tfrac{1}{2}\chi^2_0 + \tfrac{1}{2}\chi^2_1$, not a naive $\chi^2_1$. Using the naive distribution is conservative (p-values too large).
+:::
+
+---
+
+## Comparison of Inference Approaches
+
+The two tests of FLW Ch. 4 are the **LRT** and the **Wald** test. The score test (last row) is an instructor extension, not Ch. 4 content.
+
+| Test | Requires Full Model? | Small-Sample Properties | Notes |
+|------|---------------------|-------------------------|-------|
+| LRT | Yes | Better for fixed effects | Not valid under REML for fixed effects |
+| Wald | Yes | Sensitive to SE estimation | Flexible |
+| Score (beyond Ch. 4) | No | Can be conservative | Good for covariance terms |
+
+---
+
+## When to Use Which Test?
+
+| Situation | Recommended Test |
+|-----------|------------------|
+| Quick, single-parameter, exploratory | Wald |
+| Nested models, multiple fixed effects | LRT |
+| Variance components, unstable full model | Score (beyond FLW Ch. 4) |
+
+LRT and Wald are the FLW Ch. 4 tests; the score-test row is the instructor extension.
+
+---
+
+## Satterthwaite Degrees of Freedom
+
+In finite samples, $\chi^2$ and $t$ approximations may be too liberal
+
+**Satterthwaite adjustment:** estimates a fractional degrees of freedom from the variance of the estimated variance components, so the $t$ reference distribution matches the small-sample behavior of $\hat{\beta} / \text{SE}(\hat{\beta})$. `lmerTest` computes it automatically; you do not specify the formula by hand.
+
+::: {.callout-warning}
+## Package note
+Every model in this deck is fit with `nlme::lme`, which reports **containment** degrees of freedom only, not Satterthwaite or Kenward-Roger. To get Satterthwaite (or Kenward-Roger) df you need `lme4::lmer` with `lmerTest`, or `pbkrtest` for Kenward-Roger.
+:::
+
+---
+
+## Satterthwaite: Key Features
+
+| Feature | Benefit |
+|---------|---------|
+| Fractional df | More accurate Type I error control |
+| Automatic | Available in `lmerTest::lmer()` |
+| Small samples | Critical for validity |
+
+---
+
+## Inference Summary
+
+| Method | Key Characteristic |
+|--------|-------------------|
+| Wald | Convenient but SE-sensitive |
+| LRT | Preferred for nested model comparisons |
+| Score (beyond FLW Ch. 4) | Good for variance component testing |
+| Satterthwaite df | Critical for small-sample validity |
+
+The FLW Ch. 4 toolkit is the Wald test and the LRT; the score test is an instructor extension.
+
+# Restricted Maximum Likelihood (REML)
+
+---
+
+## Motivation for REML
+
+Estimating variance components by ML can be **biased**
+
+Because ML does not account for loss of degrees of freedom from estimating $\beta$
+
+---
+
+## The REML Solution
+
+REML modifies the likelihood to use **only error contrasts** of the data
+
+This eliminates $\beta$ from the variance estimation
+
+---
+
+## Mathematical Definition: ML
+
+Suppose $\mathbf{Y} \sim N(\mathbf{X}\beta, \boldsymbol\Sigma)$
+
+ML log-likelihood:
+
+$$
+\ell(\beta, \boldsymbol{\theta}) = -\tfrac{1}{2}\left\{\log|\boldsymbol\Sigma| + (\mathbf{Y}-\mathbf{X}\beta)^\top \boldsymbol\Sigma^{-1}(\mathbf{Y}-\mathbf{X}\beta) \right\}
+$$
+
+---
+
+## The OLS Intuition: $n$ vs $n-p$
+
+Start with the familiar OLS case (here $n$ is the generic OLS sample size, the number of data points, not the longitudinal occasion count):
+
+| Method | Variance Estimate |
+|--------|-------------------|
+| ML | $\hat{\sigma}^2 = \frac{1}{n}\sum (y_i - \hat{y}_i)^2$ (biased) |
+| REML | $\hat{\sigma}^2 = \frac{1}{n-p}\sum (y_i - \hat{y}_i)^2$ (unbiased) |
+
+Dividing by $n$ ignores that we spent $p$ degrees of freedom estimating $\beta$. The $-p$ correction is what makes the estimate unbiased. REML carries this same correction into the general covariance setting.
+
+::: {.notes}
+Anchor REML in something they already know: the $1/(n-p)$ in ordinary regression IS REML for that simple model. Then the next slide's extra log-determinant term is just the multivariate version of that same $-p$ bookkeeping. Common student error: thinking REML is an exotic new method; it is the generalization of the $n-1$ / $n-p$ correction they have used since intro stats.
+:::
+
+---
+
+## Mathematical Definition: REML
+
+REML log-likelihood integrates out $\beta$:
+
+$$
+\ell_R(\boldsymbol{\theta}) = -\tfrac{1}{2}\left\{ \log|\boldsymbol\Sigma| + \underbrace{\log|\mathbf{X}^\top \boldsymbol\Sigma^{-1}\mathbf{X}|}_{\text{multivariate analogue of the } -p \text{ correction}} + (\mathbf{Y}-\mathbf{X}\hat{\beta})^\top \boldsymbol\Sigma^{-1}(\mathbf{Y}-\mathbf{X}\hat{\beta}) \right\}
+$$
+
+The $\log|\mathbf{X}^\top \boldsymbol\Sigma^{-1}\mathbf{X}|$ term is the matrix generalization of subtracting $p$ from the denominator: it debits the likelihood for the $p$ fixed effects that were estimated.
+
+---
+
+## Intuition: Why REML Works
+
+| Aspect | ML | REML |
+|--------|-----|------|
+| Treatment of $\beta$ | Fixed | Integrated out |
+| Variance estimates | Biased downward | Less biased |
+| Equivalent to | N/A | Linear combinations that eliminate $\beta$ |
+
+---
+
+## Advantages of REML
+
+| Advantage | Details |
+|-----------|---------|
+| Less biased | Especially in small samples |
+| Standard default | `nlme::lme`, `lme4::lmer` |
+| Random effects | Works well for LME models |
+
+---
+
+## Disadvantages of REML
+
+| Disadvantage | Details |
+|--------------|---------|
+| Design dependence | REML likelihood depends on $\mathbf{X}$ |
+| Model comparison | Cannot compare different fixed effects via REML LRT |
+| Computation | Slightly heavier than ML |
+
+---
+
+## ML vs REML: Decision Guide
+
+| Use Case | Recommended Method |
+|----------|-------------------|
+| Comparing models with different fixed effects | ML |
+| Estimating variance components | REML |
+| Small sample sizes | REML |
+
+---
+
+## Visualization: Bias in Variance Estimates
+
+```{r}
+#| echo: true
+#| output-location: slide
+
+set.seed(667)
+library(nlme)
+
+# Simulate small dataset
+dat <- data.frame(id = rep(1:20, each = 3),
+                  time = rep(1:3, times = 20))
+# rnorm(20) draws one random intercept per subject; [dat$id] then repeats
+# each subject's intercept across that subject's 3 rows (a subject-level effect).
+dat$y <- 1 + 0.5*dat$time + rnorm(60, sd = 1) + rnorm(20)[dat$id]
+
+# Fit ML and REML
+fit_ml   <- lme(y ~ time, random = ~1|id, data = dat, method = "ML")
+fit_reml <- lme(y ~ time, random = ~1|id, data = dat, method = "REML")
+
+c("ML Var(Intercept)"   = VarCorr(fit_ml)[1, "Variance"],
+  "REML Var(Intercept)" = VarCorr(fit_reml)[1, "Variance"])
+```
+
+::: {.notes}
+Worked example to run live. With only 20 subjects the ML random-intercept variance comes out noticeably smaller than REML; that gap IS the small-sample downward bias of ML. Tie it back to the $n$ vs $n-p$ slide. Caution: do not over-read a single simulated dataset; if asked, you could wrap this in a loop and average, but the one draw is enough to show the direction. Both fits use `lme` with the same mean model, so the only difference is `method`.
+:::
+
+---
+
+## ML vs REML: Interpreting the Output
+
+**In plain language:** Notice that REML typically produces a **larger** variance estimate than ML. This is because REML corrects for the downward bias inherent in ML estimation. In small samples, this difference can be substantial. The REML estimate is analogous to using $n-p$ instead of $n$ in the denominator when estimating residual variance in ordinary regression.
+
+---
+
+## REML Takeaways
+
+| Point | Summary |
+|-------|---------|
+| Bias correction | REML corrects small-sample bias in variance estimates |
+| Fixed effects | Use ML for fixed effects comparisons |
+| Variance components | Use REML for variance components |
+| Software | Always check software defaults |
+
+---
+
+::: {.callout-note collapse="true"}
+## Check Your Understanding: Inference and REML
+
+1. When comparing two models with different fixed effects (e.g., with vs. without an interaction term), should you use ML or REML for the likelihood ratio test?
+2. Why does ML tend to underestimate variance components?
+3. In what situation would Satterthwaite degrees of freedom be particularly important?
+
+**Answers:**
+
+1. **ML** - REML likelihoods are not comparable across models with different fixed effects because the error contrasts used depend on the design matrix $\mathbf{X}$
+2. ML does not account for the degrees of freedom lost by estimating the fixed effects $\beta$. It treats $\beta$ as known when estimating variances.
+3. Small sample sizes (small number of clusters/subjects) - the $\chi^2$ and standard $t$ approximations may be too liberal, leading to inflated Type I error rates
+:::
+
+---
+
+## Common Mistakes to Avoid
+
+- **Using REML for fixed effects LRT**: Use ML when comparing models with different fixed effects; REML likelihoods are not comparable
+- **Ignoring correlation structure entirely**: Even though $\hat{\beta}$ stays consistent, standard errors are incorrect and inference is invalid - potentially leading to false conclusions
+- **Assuming MAR when dropout depends on unobserved outcomes**: If sicker patients drop out due to worsening symptoms (unobserved), treating this as MAR leads to bias
+- **Not including predictors of missingness in your model**: Under MAR, validity requires conditioning on observed variables that predict missingness
+- **Using overly complex covariance structures with small samples**: Unstructured covariance with $n_i(n_i+1)/2$ parameters can fail to converge or produce unstable estimates
+
+---
+
+## Lecture Summary
+
+| Topic | Key Point |
+|-------|-----------|
+| Covariance structure | Choice affects efficiency and inference validity |
+| ML estimation | Joint estimation of $\beta$ and $\boldsymbol{\theta}$ |
+| Missing data | MCAR, MAR, MNAR have different implications |
+| Inference | Wald, LRT, Score tests have different strengths |
+| REML | Preferred for variance estimation in small samples |

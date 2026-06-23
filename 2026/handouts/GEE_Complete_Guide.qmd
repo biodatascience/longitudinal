@@ -1,0 +1,557 @@
+---
+title: "GEE Complete Guide"
+subtitle: "Generalized Estimating Equations for Longitudinal Data"
+format:
+  html:
+    theme: cosmo
+    toc: true
+    embed-resources: true
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+```{r}
+#| label: setup
+#| include: false
+library(geepack)
+library(lme4)
+library(MASS)
+```
+
+## 1. What is GEE?
+
+Generalized Estimating Equations (GEE) provide a **population-averaged (marginal)** approach for analyzing correlated data, particularly longitudinal and clustered outcomes.
+
+### Key Features
+
+| Feature | Description |
+|---------|-------------|
+| **Target** | Population-averaged (marginal) effects |
+| **Distribution** | Does not require full distribution specification |
+| **Robustness** | Robust to working correlation misspecification (with sandwich SE) |
+| **Estimation** | Quasi-likelihood approach |
+| **Standard Errors** | Uses sandwich (robust) estimator |
+
+### Core Idea
+
+GEE answers: *"How does the average response in the population change with covariates?"*
+
+Unlike GLMMs, GEE does not model individual-specific trajectories. Instead, it directly estimates the marginal mean:
+
+$$E(Y_{ij} | X_{ij}) = g^{-1}(X_{ij}^T \beta)$$
+
+where $g$ is the link function (e.g., logit for binary outcomes).
+
+::: {.callout-important}
+## The Sandwich Estimator is Key
+
+GEE's robustness comes from the **sandwich (robust) standard errors**, which remain valid even if the working correlation structure is misspecified. Always use robust SEs in practice!
+:::
+
+
+## 2. GEE vs GLMM Comparison
+
+| Aspect | GEE | GLMM |
+|--------|-----|------|
+| **Target** | Population average | Subject-specific |
+| **Interpretation** | Marginal effects | Conditional on random effects |
+| **Requires distribution** | No (quasi-likelihood) | Yes (full likelihood) |
+| **Random effects** | No | Yes |
+| **Robust to correlation misspecification** | Yes (with sandwich SE) | No |
+| **Valid under MAR** | No (need IPW-GEE) | Yes |
+| **Coefficient magnitude (binary)** | Smaller | Larger |
+| **Model comparison** | QIC | AIC/BIC/LRT |
+
+### When to Use Each
+
+| Scenario | Recommended Approach |
+|----------|---------------------|
+| Interest in population-level inference | **GEE** |
+| Interest in individual trajectories | **GLMM** |
+| Few clusters (< 30) | **GLMM** (or GEE with small-sample correction) |
+| Correlation structure uncertain | **GEE** (robust to misspecification) |
+| Missing data (MAR mechanism) | **GLMM** or **IPW-GEE** |
+| Simple, robust analysis | **GEE** |
+
+### Coefficient Interpretation Example (Binary Outcome)
+
+For a treatment effect with binary outcome (logit link):
+
+- **GEE**: "The odds of the outcome in the treated group are $e^{\beta}$ times the odds in the control group, on average in the population."
+
+- **GLMM**: "For a given subject, the odds of the outcome when treated are $e^{\beta}$ times the odds when not treated, holding random effects constant."
+
+::: {.callout-note}
+## Marginal vs Conditional
+
+For non-linear models (e.g., logistic), marginal (GEE) coefficients are attenuated toward zero compared to conditional (GLMM) coefficients. This is not a bias---it reflects different targets of inference.
+:::
+
+
+## 3. Working Correlation Structures
+
+GEE uses a **working correlation** structure to improve efficiency. The key insight: even if misspecified, sandwich SEs remain valid.
+
+| Structure | Assumption | When to Use | `geepack` syntax |
+|-----------|------------|-------------|------------------|
+| **Independence** | $\text{Corr}(Y_{ij}, Y_{ik}) = 0$ | Baseline; conservative | `corstr = "independence"` |
+| **Exchangeable** | $\text{Corr}(Y_{ij}, Y_{ik}) = \rho$ for all $j \neq k$ | Clustered data; similar within-cluster correlation | `corstr = "exchangeable"` |
+| **AR(1)** | $\text{Corr}(Y_{ij}, Y_{ik}) = \rho^{|j-k|}$ | Equally-spaced longitudinal data; correlation decays | `corstr = "ar1"` |
+| **Unstructured** | All correlations freely estimated | Small clusters; exploratory | `corstr = "unstructured"` |
+
+### Correlation Structure Formulas
+
+**Exchangeable (Compound Symmetry)**:
+$$R_{jk} = \begin{cases} 1 & j = k \\ \rho & j \neq k \end{cases}$$
+
+**AR(1)**:
+$$R_{jk} = \rho^{|j-k|}$$
+
+**Unstructured**:
+$$R_{jk} = \rho_{jk} \text{ (each pair estimated separately)}$$
+
+### Practical Guidance
+
+1. **Start with exchangeable** for clustered data or longitudinal data with moderate follow-up
+2. **Use AR(1)** for longitudinal data with time-ordered measurements
+3. **Independence** gives valid (but inefficient) inference
+4. **Unstructured** requires many parameters---use only with small cluster sizes
+
+::: {.callout-tip}
+## Robustness Matters More Than Efficiency
+
+Choosing the "correct" working correlation improves efficiency but is not required for valid inference. With robust SEs, any working correlation gives valid hypothesis tests and confidence intervals.
+:::
+
+
+## 4. The Sandwich Estimator
+
+### Why Standard (Model-Based) SEs Fail
+
+Model-based SEs assume the working correlation is correctly specified. If wrong, they can be severely biased (either direction).
+
+### The Sandwich Formula
+
+The robust variance estimator has the "sandwich" form:
+
+$$\widehat{\text{Var}}(\hat{\beta}) = B^{-1} M B^{-1}$$
+
+where:
+
+- $B$ = model-based information matrix ("bread")
+- $M$ = empirical covariance of score contributions ("meat")
+
+### Key Properties
+
+| Property | Explanation |
+|----------|-------------|
+| **Consistent** | Converges to true variance as $n \to \infty$ |
+| **Robust** | Valid even with misspecified working correlation |
+| **Cluster-robust** | Accounts for within-cluster dependence |
+
+### The Trade-off
+
+::: {.callout-warning}
+## Sample Size Requirement
+
+The sandwich estimator requires **enough clusters** for reliable performance:
+
+- Rule of thumb: $n \geq 30-50$ clusters
+- With fewer clusters, sandwich SEs tend to be **biased downward** (anti-conservative)
+- Use small-sample corrections when $n < 40$
+:::
+
+
+## 5. Small Sample Corrections
+
+### The Problem
+
+With few clusters, the sandwich estimator underestimates variance, leading to:
+
+- Inflated Type I error rates
+- Confidence intervals that are too narrow
+
+### Solutions
+
+| Correction | Description | When to Use |
+|------------|-------------|-------------|
+| **Bias-corrected (BC)** | Adjusts for finite-sample bias | $n = 20-40$ clusters |
+| **Jackknife** | Leave-one-cluster-out variance | $n = 15-40$ clusters |
+| **Bootstrap** | Cluster bootstrap | Flexible; any $n$ |
+| **Fay's correction** | Modified BC | Very small $n$ |
+
+### R Implementation with `geepack`
+
+```{r}
+#| eval: false
+
+# Standard fit
+fit <- geeglm(y ~ x, id = id, data = dat,
+              family = binomial, corstr = "exchangeable")
+
+# Extract robust SEs (default)
+summary(fit)$coefficients[, "Std.err"]
+
+# For small-sample corrections, use additional packages:
+# - geesmv: small-sample variance corrections
+# - clubSandwich: cluster-robust SEs with corrections
+```
+
+### Using `clubSandwich` for Small Samples
+
+```{r}
+#| eval: false
+
+library(clubSandwich)
+
+# Fit GEE
+fit <- geeglm(y ~ x, id = id, data = dat,
+              family = binomial, corstr = "exchangeable")
+
+# CR2 correction (recommended for small samples)
+coef_test(fit, vcov = "CR2", cluster = dat$id)
+```
+
+
+## 6. Complete R Example
+
+### Setup: Epilepsy Data Pattern
+
+```{r}
+set.seed(667)
+
+# Simulate epilepsy-like data
+n_subjects <- 60
+n_visits <- 4
+
+# Create data structure
+dat <- data.frame(
+  id = rep(1:n_subjects, each = n_visits),
+  visit = rep(0:(n_visits-1), n_subjects),
+  trt = rep(rbinom(n_subjects, 1, 0.5), each = n_visits),
+  age = rep(rnorm(n_subjects, 30, 10), each = n_visits)
+)
+
+# Generate subject-specific random effects
+subject_re <- rnorm(n_subjects, 0, 0.8)
+
+# Generate correlated binary outcomes (seizure-free: yes/no)
+dat$eta <- -1 + 0.5 * dat$trt + 0.3 * dat$visit - 0.02 * dat$age +
+           subject_re[dat$id]
+dat$prob <- plogis(dat$eta)
+dat$seizure_free <- rbinom(nrow(dat), 1, dat$prob)
+
+# Convert id to factor
+dat$id <- factor(dat$id)
+
+head(dat)
+```
+
+### Fit GEE with Exchangeable Correlation
+
+```{r}
+# Fit GEE
+fit_gee <- geeglm(seizure_free ~ trt + visit + age,
+                  id = id,
+                  data = dat,
+                  family = binomial(link = "logit"),
+                  corstr = "exchangeable")
+
+summary(fit_gee)
+```
+
+### Extract and Interpret Results
+
+```{r}
+# Extract coefficients
+coefs <- summary(fit_gee)$coefficients
+print(coefs)
+
+# Odds ratios with 95% CI
+or_results <- data.frame(
+  Variable = rownames(coefs),
+  OR = exp(coefs[, "Estimate"]),
+  Lower = exp(coefs[, "Estimate"] - 1.96 * coefs[, "Std.err"]),
+  Upper = exp(coefs[, "Estimate"] + 1.96 * coefs[, "Std.err"]),
+  P_value = coefs[, "Pr(>|W|)"]
+)
+print(or_results, digits = 3)
+```
+
+### Working Correlation Estimate
+
+```{r}
+# Extract estimated correlation
+fit_gee$geese$alpha
+```
+
+### Compare to GLMM
+
+```{r}
+# Fit GLMM for comparison
+fit_glmm <- glmer(seizure_free ~ trt + visit + age + (1 | id),
+                  data = dat, family = binomial)
+
+# Compare coefficients
+comparison <- data.frame(
+  Variable = names(fixef(fit_glmm)),
+  GEE = coef(fit_gee),
+  GLMM = fixef(fit_glmm)
+)
+comparison$Ratio <- comparison$GLMM / comparison$GEE
+print(comparison, digits = 3)
+```
+
+::: {.callout-note}
+## Coefficient Comparison
+
+Notice that GLMM coefficients are larger in magnitude than GEE coefficients. This is expected for binary outcomes---marginal effects are attenuated compared to conditional effects.
+:::
+
+### Compare Correlation Structures
+
+```{r}
+# Independence
+fit_ind <- geeglm(seizure_free ~ trt + visit + age,
+                  id = id, data = dat, family = binomial,
+                  corstr = "independence")
+
+# Exchangeable (already fit above)
+
+# AR(1)
+fit_ar1 <- geeglm(seizure_free ~ trt + visit + age,
+                  id = id, data = dat, family = binomial,
+                  corstr = "ar1")
+
+# Unstructured
+fit_un <- geeglm(seizure_free ~ trt + visit + age,
+                 id = id, data = dat, family = binomial,
+                 corstr = "unstructured")
+
+# Compare QIC (not AIC!)
+qic_compare <- data.frame(
+  Structure = c("Independence", "Exchangeable", "AR(1)", "Unstructured"),
+  QIC = c(QIC(fit_ind)[1], QIC(fit_gee)[1], QIC(fit_ar1)[1], QIC(fit_un)[1])
+)
+print(qic_compare)
+```
+
+
+## 7. GEE Diagnostics
+
+### Residual Analysis
+
+```{r}
+# Pearson residuals
+dat$pearson_resid <- residuals(fit_gee, type = "pearson")
+
+# Plot residuals vs fitted
+plot(fitted(fit_gee), dat$pearson_resid,
+     xlab = "Fitted probabilities", ylab = "Pearson residuals",
+     main = "GEE Residuals vs Fitted")
+abline(h = 0, lty = 2, col = "red")
+```
+
+### Checking Working Correlation
+
+```{r}
+# Compare coefficient estimates across structures
+coef_compare <- data.frame(
+  Independence = coef(fit_ind),
+  Exchangeable = coef(fit_gee),
+  AR1 = coef(fit_ar1),
+  Unstructured = coef(fit_un)
+)
+round(coef_compare, 3)
+```
+
+::: {.callout-tip}
+## Stability Across Structures
+
+If coefficient estimates are similar across working correlation structures, this suggests robustness. Large differences may indicate model misspecification or influential observations.
+:::
+
+### QIC for Model Selection
+
+**Use QIC (Quasi-likelihood under Independence Criterion), NOT AIC!**
+
+QIC is the appropriate analog of AIC for GEE:
+
+$$\text{QIC} = -2Q(\hat{\beta}) + 2p$$
+
+where $Q$ is the quasi-likelihood and $p$ is the number of parameters.
+
+```{r}
+# QIC comparison
+cat("QIC values:\n")
+cat("Independence:", QIC(fit_ind)[1], "\n")
+cat("Exchangeable:", QIC(fit_gee)[1], "\n")
+cat("AR(1):", QIC(fit_ar1)[1], "\n")
+cat("Unstructured:", QIC(fit_un)[1], "\n")
+```
+
+
+## 8. IPW-GEE for MAR
+
+### The Problem
+
+Standard GEE is valid only under **MCAR** (Missing Completely at Random). Under **MAR** (Missing at Random), GEE estimates can be biased.
+
+### Solution: Inverse Probability Weighting
+
+IPW-GEE weights observations by the inverse probability of being observed:
+
+$$w_{ij} = \frac{1}{P(\text{observed}_{ij} | \text{covariates})}$$
+
+### Implementation Sketch
+
+```{r}
+#| eval: false
+
+# Step 1: Model missingness
+miss_model <- glm(observed ~ lag_y + x + time,
+                  data = dat, family = binomial)
+
+# Step 2: Calculate weights
+dat$prob_obs <- predict(miss_model, type = "response")
+dat$ipw <- 1 / dat$prob_obs
+
+# Step 3: Fit weighted GEE
+fit_ipw <- geeglm(y ~ x + time, id = id, data = dat[dat$observed == 1, ],
+                  family = binomial, corstr = "exchangeable",
+                  weights = ipw)
+```
+
+::: {.callout-warning}
+## IPW-GEE Considerations
+
+- Requires correct model for missingness mechanism
+- Extreme weights can inflate variance
+- Often combined with weight stabilization or trimming
+:::
+
+
+## 9. Common Mistakes
+
+### Mistake 1: Using Model-Based SEs
+
+```{r}
+#| eval: false
+
+# WRONG: naive/model-based SEs
+# (geepack uses robust by default, but other packages may not)
+
+# CORRECT: Always use robust (sandwich) SEs
+summary(fit_gee)$coefficients[, "Std.err"]  # These ARE robust in geepack
+```
+
+### Mistake 2: Using AIC Instead of QIC
+
+```{r}
+#| eval: false
+
+# WRONG
+AIC(fit_gee)  # Not appropriate for GEE
+
+# CORRECT
+QIC(fit_gee)  # Use QIC for quasi-likelihood models
+```
+
+### Mistake 3: Too Few Clusters
+
+| Number of Clusters | Recommendation |
+|--------------------|----------------|
+| $n < 20$ | Consider GLMM instead |
+| $n = 20-40$ | Use small-sample corrections |
+| $n > 40$ | Standard GEE likely okay |
+
+### Mistake 4: Subject-Specific Interpretation
+
+```{r}
+#| eval: false
+
+# WRONG interpretation:
+# "For an individual patient, treatment increases odds by..."
+
+# CORRECT interpretation:
+# "In the population, treatment is associated with X times higher odds of..."
+```
+
+### Mistake 5: Ignoring MAR
+
+```{r}
+#| eval: false
+
+# WRONG: Standard GEE with dropout
+fit <- geeglm(y ~ trt + time, id = id, data = dat, ...)  # Biased under MAR
+
+# CORRECT: Use IPW-GEE or GLMM
+```
+
+
+## 10. Quick Reference
+
+### Essential Code
+
+| Task | Code |
+|------|------|
+| Fit GEE | `geeglm(y ~ x, id = id, family = binomial, corstr = "exchangeable", data = dat)` |
+| Get robust SEs | `summary(fit)$coefficients[, "Std.err"]` |
+| Odds ratios | `exp(coef(fit))` |
+| 95% CI | `exp(coef(fit) +/- 1.96 * SE)` |
+| Working correlation | `fit$geese$alpha` |
+| Model comparison | `QIC(fit1); QIC(fit2)` |
+
+### Correlation Structure Quick Guide
+
+| Data Pattern | Recommended Structure |
+|--------------|----------------------|
+| Clustered (e.g., patients in clinics) | `exchangeable` |
+| Longitudinal, equal spacing | `ar1` |
+| Longitudinal, irregular spacing | `exchangeable` or `independence` |
+| Few time points per subject | `unstructured` |
+| Uncertain | `independence` (conservative) |
+
+### Decision Flowchart
+
+```
+Population-level inference? --> Yes --> GEE
+                           --> No  --> Consider GLMM
+
+Many clusters (n > 40)?    --> Yes --> Standard GEE
+                           --> No  --> Small-sample correction or GLMM
+
+Missing data pattern?      --> MCAR --> Standard GEE
+                           --> MAR  --> IPW-GEE or GLMM
+                           --> MNAR --> Sensitivity analysis needed
+```
+
+### Package Reference
+
+```{r}
+#| eval: false
+
+# Primary package
+library(geepack)    # geeglm(), QIC()
+
+# Small-sample corrections
+library(clubSandwich)  # coef_test() with CR2
+
+# Comparison with GLMM
+library(lme4)       # glmer()
+
+# IPW-GEE
+library(ipw)        # ipwpoint(), ipwtm()
+```
+
+::: {.callout-tip}
+## Summary
+
+1. **GEE gives population-averaged effects** with robust inference
+2. **Always use sandwich (robust) SEs**---they protect against correlation misspecification
+3. **Use QIC, not AIC** for model comparison
+4. **Need 30+ clusters** for reliable sandwich SEs (or use corrections)
+5. **Standard GEE assumes MCAR**---use IPW-GEE or GLMM under MAR
+:::

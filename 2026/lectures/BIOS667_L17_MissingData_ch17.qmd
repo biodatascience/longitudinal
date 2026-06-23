@@ -1,0 +1,2655 @@
+---
+title: "BIOS 667 - Lecture 17: Missing Data and Dropout (Ch. 17)"
+subtitle: "Fitzmaurice, Laird & Ware (2011) - Applied Longitudinal Data Analysis"
+author: "Naim Rashid"
+format:
+  revealjs:
+    theme: [default]
+    footer: BIOS 667 · UNC Gillings - Lecture 17 (Ch.17)
+    slide-number: true
+    hash: true
+    toc: false
+    code-overflow: wrap
+    code-line-numbers: false
+    math: mathjax
+    incremental: true
+    embed-resources: true
+    chalkboard: false
+    css: "../../unc-gillings.css"
+    scrollable: true
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+```{r}
+#| label: setup
+#| include: false
+
+# Load required packages
+library(MASS)          # For mvrnorm()
+library(dplyr)         # For data manipulation
+library(tidyr)         # For pivot functions
+library(ggplot2)       # For visualizations
+library(knitr)         # For tables
+library(kableExtra)    # For enhanced tables
+library(nlme)          # For gls() and correlation structures
+library(geepack)       # For GEE models
+library(mice)          # For multiple imputation
+
+# Companion R script available: BIOS667_L17_MissingData_ch17_UPDATED.R
+# Contains all simulation functions for experimentation
+
+# Set options for output
+options(digits = 3)
+knitr::opts_chunk$set(
+  cache = TRUE,  # Cache results for faster rendering
+  message = FALSE,
+  warning = FALSE
+)
+```
+
+## Lecture Objectives
+
+By the end of this lecture, you will be able to:
+
+- Distinguish between MCAR, MAR, and MNAR missing data mechanisms
+- Explain why the missing data mechanism determines which analysis methods are valid
+- Demonstrate mathematically why LVCF is biased (even under MCAR)
+- Select appropriate methods for handling dropout in longitudinal studies
+- Conduct and interpret sensitivity analyses for missing data assumptions
+
+---
+
+## Notation (this lecture)
+
+::: {.notation-card}
+| Symbol | Meaning |
+|:--|:--|
+| $Y_i = (Y_{i1},\dots,Y_{in})'$ | intended (complete) response vector, subject $i$ |
+| $Y_i^O,\; Y_i^M$ | observed and missing components of $Y_i$ |
+| $R_i = (R_{i1},\dots,R_{in})'$ | **response (missingness) indicator**: $R_{ij}=1$ if $Y_{ij}$ observed, $0$ if missing |
+| $X_i$ | covariates (assumed fully observed) |
+| $\Sigma_i$ | marginal covariance of $Y_i$ (canonical, as in L08-L10) |
+| $V_i$ | GEE working covariance (Ch. 12-13; appears in the GEE estimating equation) |
+| $D_i = k$ | dropout time: subject leaves between occasions $k-1$ and $k$ |
+:::
+
+::: {.callout-warning}
+## Chapter-local override: $R_i$
+In this chapter $R_i$ / $R_{ij}$ denotes the **response (missingness) indicator** vector (FLW Ch. 17, also Ch. 4), NOT the within-subject residual covariance $R_i$ from L08-L10. The override is local to L17.
+:::
+
+::: {.notes}
+Flag the R_i collision out loud. From Chapter 8 through Chapter 10 we wrote eps_i ~ N(0, R_i), so R_i was the within-subject residual covariance matrix. Fitzmaurice's missing-data chapters (Ch. 4 and Ch. 17) reuse the letter R for the response/missingness INDICATOR, which is the course-canonical reserved symbol per NOTATION_REFERENCE.md. For the rest of this lecture R_i is a 0/1 indicator vector, never a covariance. The other reused letters are safe: Sigma_i is still the marginal covariance (canonical, no declaration needed) and V_i appears only as the GEE working covariance in the estimating equation, which is its reserved Ch. 12-13 use. Tell students to mentally tag "R = recorded?" for this chapter only.
+:::
+
+---
+
+## Today's Roadmap
+
+**Part I: Introduction & Foundations**
+
+- Why missing data matters: Three key implications
+- Motivating examples from real studies
+- Notation and missing data patterns
+
+**Part II: Hierarchy of Missing Data Mechanisms**
+
+- MCAR, MAR, MNAR: Formal definitions and intuition
+- Consequences for data distribution
+- Covariate-dependent missingness
+
+---
+
+## Today's Roadmap (continued)
+
+**Part III: Dropout as Monotone Missingness**
+
+- Dropout taxonomy
+- Simulation study: Visualizing bias under different mechanisms
+
+**Part IV: Methods for Handling Dropout**
+
+- Complete-case and available-data analyses
+- Likelihood-based methods
+- **Critical examination of LVCF** (with mathematical proof of bias)
+- Multiple imputation and inverse probability weighting
+
+**Part V: Practical Guidance**
+
+- Decision framework and sensitivity analyses
+
+# Part I: Introduction and Foundations
+
+---
+
+## Why Missing Data Matters
+
+Missing data are **the rule, not the exception** in longitudinal studies.
+
+**Three critical implications:**
+
+| Issue | Description |
+|-------|-------------|
+| **Imbalance** | Not all individuals have same number of measurements at common occasions |
+| **Loss of precision** | Missing data reduce information; greater missingness leads to decreased precision |
+| **Potential for bias** | Missing data can lead to misleading inferences depending on the mechanism |
+
+The **missing data mechanism** is the critical issue we must address.
+
+---
+
+## Motivating Example 1: Six Cities Study
+
+**Study Design:**
+
+| Feature | Description |
+|---------|-------------|
+| Population | Children enrolled in grades 1-2 (ages 6-7) |
+| Outcome | Annual spirometry measurements |
+| Follow-up | Until high school graduation |
+| Measurements/child | 1 to 12 (highly variable) |
+
+**Main Reason for Missing Data:** Moving in/out of school district
+
+---
+
+## Six Cities: Two Scenarios
+
+| Scenario | Mechanism | Reason for Relocation | Creates Bias? |
+|----------|-----------|----------------------|---------------|
+| **A (MCAR)** | Random | Parent's job transfer | No |
+| **B (MAR/MNAR)** | Informative | Child's respiratory problems | Potentially |
+
+**Question:** How do we determine which scenario applies and handle each appropriately?
+
+---
+
+## Motivating Example 2: Muscatine Study
+
+**Study Design:**
+
+| Feature | Description |
+|---------|-------------|
+| Design | Coronary Risk Factor study in school-age children |
+| Cohorts | Ages 5-7, 7-9, 9-11, 11-13, 13-15 |
+| Timing | Biennial measurements 1977-1981 |
+| Outcome | Obesity status (age-gender-specific weight norms) |
+
+**Missing Data Patterns:**
+
+- Less than 40% had complete data at all three occasions
+- Main reasons: (1) Failure to obtain consent, (2) Absence on exam day
+
+---
+
+## Muscatine Study: Two Missing Data Scenarios
+
+| Scenario | Mechanism | Examples |
+|----------|-----------|----------|
+| **A (Unrelated)** | MCAR | Family relocation, random absence |
+| **B (Related)** | MAR/MNAR | Parents of obese children more/less likely to consent; obese children more likely absent |
+
+**Key Insight:** Same study, different reasons for missing data leads to different analysis strategies needed.
+
+---
+
+## Central Theme of This Lecture
+
+::: {.callout-important}
+## Golden Rule of Missing Data
+
+**When data are missing, we must carefully consider WHY they are missing.**
+
+Some types of missing data are relatively benign; others can introduce serious bias.
+:::
+
+The **missing data mechanism** determines:
+
+- Which methods yield valid inferences
+- Whether we need to model the missingness process
+- How to conduct sensitivity analyses
+
+---
+
+## Notation: Response Vectors and Indicators
+
+Consider a study designed to collect $n$ measurements per subject.
+
+**Complete response vector** (intended):
+$$Y_i = (Y_{i1}, Y_{i2}, \ldots, Y_{in})'$$
+
+**Response indicator vector**:
+$$R_i = (R_{i1}, R_{i2}, \ldots, R_{in})'$$
+
+where $R_{ij} = 1$ if $Y_{ij}$ is observed, and $R_{ij} = 0$ if $Y_{ij}$ is missing.
+
+**Example:** For a 6-visit study (visits 0-5), if a subject drops out after visit 2:
+$$R_i = (1, 1, 1, 0, 0, 0)'$$
+
+**Covariates**: $X_i$ (assumed fully observed)
+
+---
+
+## Partitioning the Response Vector
+
+Given the response indicators $R_i$, partition $Y_i$ into:
+
+| Component | Description |
+|-----------|-------------|
+| $Y_i^O$ | **Observed** components of $Y_i$ |
+| $Y_i^M$ | **Missing** components of $Y_i$ |
+
+**Key observation**: $R_i$ is recorded for all individuals and stratifies the population into distinct sub-populations defined by missing data patterns.
+
+---
+
+## Table 17.1: Missing Data Patterns as Stratification
+
+```{r}
+#| label: tbl-patterns
+#| echo: false
+library(knitr)
+library(kableExtra)
+
+pattern_data <- data.frame(
+  R1 = c(1, 1, 1, 1, 1, 1),
+  R2 = c(1, 0, 1, 1, 0, 0),
+  R3 = c(1, 1, 0, 1, 0, 0),
+  R4 = c(1, 1, 1, 0, 0, 0),
+  Rn = c(1, 1, 1, 1, 0, 0),
+  Y1 = c("Y1", "Y1", "Y1", "Y1", "Y1", "Y1"),
+  Y2 = c("Y2", "*", "Y2", "Y2", "*", "*"),
+  Y3 = c("Y3", "Y3", "*", "Y3", "*", "*"),
+  Y4 = c("Y4", "Y4", "Y4", "*", "*", "*"),
+  Yn = c("Yn", "Yn", "Yn", "Yn", "Yn", "*")
+)
+
+kable(pattern_data,
+      col.names = c("R1", "R2", "R3", "R4", "... Rn", "Y1", "Y2", "Y3", "Y4", "... Yn"),
+      caption = "Schematic representation of R as a stratification variable (* = missing)") %>%
+  kable_styling(bootstrap_options = c("striped", "condensed"),
+                font_size = 14) %>%
+  add_header_above(c("Response Indicators" = 5, "Response Vector" = 5))
+```
+
+Each row represents a different missing data pattern. $R_i$ divides the target population into subpopulations.
+
+---
+
+## Check Your Understanding: Part I
+
+::: {.callout-tip}
+## Quick Self-Check
+
+1. **Scenario Analysis:** In the Six Cities Study, a child's family moves because the parent got a job promotion. Is this MCAR, MAR, or MNAR?
+
+2. **Notation Practice:** A subject has measurements at visits 1, 2, and 3, then drops out. Write their response indicator vector $R_i$ for a 5-visit study.
+
+3. **Conceptual:** Why does missing data potentially lead to bias, not just loss of precision?
+:::
+
+::: {.callout-note collapse="true"}
+## Answers
+
+1. **MCAR** - The reason for moving (job promotion) is unrelated to the child's respiratory health outcomes.
+
+2. $R_i = (1, 1, 1, 0, 0)'$ - The first three visits are observed (1), the last two are missing (0).
+
+3. Missing data leads to bias when the observed data are **not representative** of the full population. If subjects with certain outcome values are more/less likely to be observed, sample statistics will be systematically different from population parameters.
+:::
+
+# Part II: Hierarchy of Missing Data Mechanisms
+
+---
+
+## The Three Missing Data Mechanisms
+
+We classify missing data by considering how $R_i$ is related to $Y_i$:
+
+| Mechanism | Abbreviation |
+|-----------|--------------|
+| Missing Completely at Random | MCAR |
+| Missing at Random | MAR |
+| Not Missing at Random | MNAR |
+
+**Terminology Warning:** The nomenclature is NOT intuitive!
+
+- "Missing at Random" does NOT mean "randomly missing"
+- These are technical definitions with specific mathematical meanings
+
+---
+
+## MCAR: Missing Completely at Random
+
+**Formal Definition:**
+
+$$\Pr(R_i \mid Y_i^O, Y_i^M, X_i) = \Pr(R_i \mid X_i)$$
+
+**Intuition:** Missingness is unrelated to both observed AND unobserved responses (given covariates).
+
+**Bivariate Example:** $Y_i = (Y_{i1}, Y_{i2})'$, $Y_{i1}$ fully observed, $Y_{i2}$ sometimes missing.
+
+If $Y_{i2}$ is MCAR:
+$$\Pr(R_{i2} = 1 \mid Y_{i1}, Y_{i2}, X_i) = \Pr(R_{i2} = 1 \mid X_i)$$
+
+Probability that $Y_{i2}$ is missing does NOT depend on $Y_{i1}$ or $Y_{i2}$.
+
+::: {.notes}
+This is FLW eq (17.1)-(17.2), p. 493-494. The defining feature: the missingness probability drops ALL dependence on the response, observed or unobserved, conditioning only on covariates X_i. Emphasize that MCAR is the strongest (most restrictive) of the three and is usually implausible in clinical follow-up because sicker patients tend to leave. The classic defensible MCAR case is design-induced missingness (a rotating panel, a planned subsample). The next slide draws out the general-vs-strict distinction: "MCAR given X" still allows missingness to depend on baseline covariates, which is weaker than "depends on nothing at all."
+:::
+
+---
+
+## MCAR: Examples
+
+**Example 1: Rotating Panel Design**
+
+- Survey design where individuals rotate in/out by design
+- Timing of measurements determined a priori
+- Missingness mechanism under investigator control
+
+**Example 2: Six Cities Study (Scenario A)**
+
+- Child moves due to parent's job relocation
+- Completely unrelated to child's pulmonary function
+
+---
+
+## MCAR: General vs Strict
+
+**Subtle but important distinction:**
+
+| Type | Definition |
+|------|------------|
+| **General MCAR** | $\Pr(R_i \mid Y_i^O, Y_i^M, X_i) = \Pr(R_i \mid X_i)$ (conditional on covariates) |
+| **Strict MCAR** | $\Pr(R_i \mid Y_i^O, Y_i^M, X_i) = \Pr(R_i)$ (no dependence on anything) |
+
+**Key:** MCAR requires conditional independence given **all relevant covariates** in $X_i$.
+
+---
+
+## MCAR: Covariate-Dependent Examples
+
+**Example 1: Clinical trial dropout by treatment arm**
+
+- Treatment group: 20% dropout, Control: 15% dropout
+- Dropout unrelated to outcomes, just due to pill burden
+- If treatment arm is **included** as covariate: MCAR given treatment
+
+**Example 2: Side effects**
+
+- Missingness related to treatment side effects
+- If "side effects" is **measured** and in $X_i$: data are MCAR (given $X_i$)
+- If "side effects" **NOT measured**: data are NOT MCAR
+
+---
+
+## MCAR: Implications for Distribution
+
+**Essential Feature:** Observed data are a **random sample** of complete data.
+
+**Consequences:**
+
+| Property | Status |
+|----------|--------|
+| Distribution of $Y_i$ same across sub-populations | Yes |
+| Distribution of $Y_i^O$ matches target population | Yes |
+| Sample means, variances unbiased | Yes |
+| "Completers" are random subsample | Yes |
+| Distribution of $Y_i^M$ same for dropouts and completers | Yes |
+
+---
+
+## MCAR: Implications for Analysis
+
+Under MCAR, **almost any method** yields valid inferences:
+
+| Method | Valid? |
+|--------|--------|
+| Complete-case analysis | Yes (inefficient) |
+| Available-data analysis | Yes |
+| GLS / GEE methods | Yes |
+| ML / REML likelihood-based methods | Yes |
+| Linear mixed models / GLMMs | Yes |
+
+**Caveat:** Even though methods are unbiased under MCAR, there is still **loss of precision** (efficiency).
+
+---
+
+## MAR: Missing at Random
+
+**Formal Definition:**
+
+$$\Pr(R_i \mid Y_i^O, Y_i^M, X_i) = \Pr(R_i \mid Y_i^O, X_i)$$
+
+**Intuition:** Missingness depends on **observed** responses and covariates, but NOT on **unobserved** responses (given $Y_i^O$ and $X_i$).
+
+**Bivariate Example:** If $Y_{i2}$ is MAR:
+$$\Pr(R_{i2} = 1 \mid Y_{i1}, Y_{i2}, X_i) = \Pr(R_{i2} = 1 \mid Y_{i1}, X_i)$$
+
+Probability that $Y_{i2}$ is missing depends on observed $Y_{i1}$, but NOT on unobserved $Y_{i2}$.
+
+::: {.notes}
+FLW eq (17.3), p. 494. The key move from MCAR to MAR: missingness MAY depend on the observed responses Y_i^O (and X_i), but once you condition on what was actually seen, it carries no extra dependence on the unobserved Y_i^M. The everyday example: a protocol pulls a patient when their last recorded lab is out of range. That recorded lab is observed, so it is MAR. Stress the verb "given": MAR is a statement about CONDITIONAL independence, not marginal independence. This is the assumption under which likelihood methods stay valid (the central result of the chapter), so spend time here.
+:::
+
+---
+
+## MAR: Examples
+
+**Example 1: Protocol-Driven Removal**
+
+- Study protocol removes subject when outcome falls outside clinical range
+- Missingness in $Y_i$ depends only on observed components of $Y_i$
+
+**Example 2: Six Cities Study (Scenario B - MAR version)**
+
+- Family relocates due to child's respiratory problems
+- Decision based on **recorded history** of pulmonary function measurements
+- Missingness predictable from $Y_i^O$ only
+
+**Non-Example (MNAR):** If relocation based on unobserved variable (e.g., parent's assessment of future health)
+
+---
+
+## MAR: Stratification on Observed Values
+
+If subjects are **stratified on values of $Y_i^O$**, then within strata, missingness in $Y_i^M$ is like a chance mechanism.
+
+**Visual analogy:**
+
+- Imagine sorting subjects by their observed trajectory $Y_i^O$
+- Within each "trajectory group," those missing $Y_i^M$ are random subset
+- Across groups, missingness probabilities can differ
+
+**Mathematical consequence:**
+$$\Pr(R_i \mid Y_i^O, Y_i^M, X_i) = \Pr(R_i \mid Y_i^O, X_i)$$
+
+---
+
+## MAR: Implications for Distribution
+
+**Key Difference from MCAR:**
+
+Because missingness now depends on $Y_i^O$:
+
+| Property | Status |
+|----------|--------|
+| Distribution of $Y_i$ same across sub-populations | No |
+| "Completers" are a random sample | No |
+| Sample means/variances from available data are unbiased | No |
+| Distribution of $Y_i^M$ given $Y_i^O$ same as completers | Yes |
+
+**Critical Implication:** Valid inferences require **correctly modeling the joint distribution** of $Y_i$ (both mean AND covariance).
+
+---
+
+## MAR: Predicting Missing Values
+
+Under MAR, missing values can be validly predicted from observed data.
+
+**For multivariate normal responses:**
+
+$$E(Y_i^M \mid Y_i^O) = \mu_i^M + \Sigma_i^{MO} (\Sigma_i^O)^{-1} (Y_i^O - \mu_i^O)$$
+
+This is the conditional expectation formula from multivariate normal theory (recall properties of partitioned multivariate normal from earlier lectures on covariance structures).
+
+---
+
+## MAR: Why Covariance Matters
+
+**The prediction formula requires:**
+
+**Mean vector:**
+$$\mu_i = \begin{pmatrix} \mu_i^O \\ \mu_i^M \end{pmatrix}$$
+
+**Covariance matrix:**
+$$\Sigma_i = \begin{pmatrix} \Sigma_i^O & \Sigma_i^{OM} \\ \Sigma_i^{MO} & \Sigma_i^M \end{pmatrix}$$
+
+**Critical insight:** The off-diagonal block $\Sigma_i^{MO}$ determines how observed values inform missing values!
+
+**Therefore:** Under MAR, correct covariance specification is **essential** for valid inference.
+
+---
+
+## MAR: Implications for Analysis
+
+Under MAR, method validity depends on assumptions:
+
+| Method | Valid? | Condition |
+|--------|--------|-----------|
+| Likelihood-based (ML/REML, LMM, GLMM) | Yes | IF joint distribution correctly specified |
+| Complete-case analysis | No | Generally biased |
+| Standard GEE | No | Biased (uses biased sample moments) |
+| GLS (without correct covariance) | No | Biased |
+| Weighted GEE | Yes | IF weights correctly specified |
+| Multiple Imputation | Yes | IF imputation model correct |
+
+---
+
+## MAR: The "Ignorable" Terminology
+
+MAR (and MCAR) are often called **"ignorable"** mechanisms.
+
+**What "ignorable" means:**
+
+- We can **ignore** the model for $\Pr(R_i \mid Y_i, X_i)$ in likelihood-based inference
+- We only need to model $f(Y_i \mid X_i)$
+
+**What "ignorable" does NOT mean:**
+
+- "We can ignore the missing data problem"
+- "Any method will work"
+- "Complete-case analysis is fine"
+
+**Bottom line:** We still must carefully model $f(Y_i \mid X_i)$, including covariance!
+
+::: {.notes}
+This is the single most misunderstood term in the chapter, and FLW (p. 495) are emphatic about it: "ignorable" does NOT mean we can ignore the missing-data problem. It means precisely one thing: in a likelihood analysis we may drop the factor Pr(R_i | Y_i, X_i) and maximize the likelihood of the observed responses f(Y_i^O | X_i) alone, without writing down a model for the missingness mechanism. We still have to get f(Y_i | X_i) right, mean AND covariance. A complete-case analysis is still biased under MAR even though MAR is "ignorable." Plant this here because the Check-Your-Understanding "ignorable trap" question and a top-10 pitfall both return to it.
+:::
+
+---
+
+## Subtle Distinction: MCAR vs MAR
+
+**Confusion is common!** Let's clarify with an example:
+
+**Scenario:** In longitudinal trial, subjects with worsening symptoms more likely to drop out
+
+| Question | Answer |
+|----------|--------|
+| Is missingness unrelated to $Y_i$ at all? | No, so NOT MCAR |
+| Is missingness predictable from observed $Y_i^O$ only? | If yes, then MAR |
+| Does missingness depend on unobserved $Y_i^M$? | If yes, then MNAR |
+
+---
+
+## MAR Should Be the Default Assumption
+
+**Our recommendation:**
+
+MAR should be the **default assumption** for longitudinal data analysis unless:
+
+- Strong evidence supports MCAR (e.g., rotating panel by design)
+- OR subject-matter knowledge suggests MNAR
+
+**Reasons:**
+
+1. MCAR is very restrictive and often implausible
+2. MAR is less restrictive but still allows valid likelihood-based inference
+3. Modern software makes MAR analysis straightforward
+4. Can assess sensitivity to MAR assumption
+
+---
+
+## MNAR: Not Missing at Random
+
+**Formal Definition:**
+
+$$\Pr(R_i \mid Y_i^O, Y_i^M, X_i)$$
+
+depends on $Y_i^M$ (the unobserved values).
+
+**Equivalently:** MNAR means the MAR assumption is violated:
+$$\Pr(R_i \mid Y_i^O, Y_i^M, X_i) \neq \Pr(R_i \mid Y_i^O, X_i)$$
+
+**Intuition:** Missingness related to what the values *would have been* had they been observed.
+
+::: {.notes}
+MNAR (FLW p. 494-495) is the negation of MAR: even after conditioning on Y_i^O and X_i, the missingness still depends on the unobserved Y_i^M. The intuition students should leave with: the very value you cannot see is what drives whether you see it. The painful consequence (next slides): this dependence is UNVERIFIABLE from the observed data alone, because the data carry no information about the Y_i^M you never recorded. That is why MNAR forces you into sensitivity analysis and joint (selection or pattern-mixture) models rather than a single "correct" answer. Contrast crisply with the MAR slide: MAR depends on the recorded value, MNAR on the would-have-been value.
+:::
+
+---
+
+## MNAR: Examples
+
+**Example 1: Quality-of-Life Instruments**
+
+- Patients skip QoL questionnaire when feeling poorly
+- Missingness related to unobserved (low) QoL value
+
+**Example 2: Muscatine Study (Scenario B)**
+
+- Parents of obese children less likely to consent
+- Missingness related to unobserved obesity status
+
+**Example 3: Six Cities Study (MNAR version)**
+
+- Family relocates based on parent's concern about *future* deterioration
+- Not based on observed measurements, but on unmeasured prognosis
+
+---
+
+## MNAR: Implications for Distribution
+
+Under MNAR:
+
+| Property | Consequence |
+|----------|-------------|
+| Distribution of $Y_i^M$ given $Y_i^O$ | **Differs** between dropouts and completers |
+| Distribution of $Y_i^M$ | Depends on $Y_i^O$ AND $\Pr(R_i \mid Y_i, X_i)$ |
+| Model for missingness mechanism | **Cannot be ignored** |
+
+**Critical consequence:** The specific model chosen for $\Pr(R_i \mid Y_i, X_i)$ **drives the results**.
+
+---
+
+## MNAR: The Identification Problem
+
+**Fundamental issue:** MNAR assumptions are **unverifiable** from observed data.
+
+Without external information:
+
+- Cannot distinguish one MNAR model from another
+- Observed data provide no evidence for/against MNAR mechanisms
+- Different plausible MNAR models can yield very different conclusions
+
+**Implication:** Under MNAR, **sensitivity analysis is essential**
+
+---
+
+## MNAR: Implications for Analysis
+
+Under MNAR, standard methods are **all biased**:
+
+| Method | Valid? |
+|--------|--------|
+| Complete-case analysis | No |
+| Available-data / GEE | No |
+| ML/REML (without modeling missingness) | No |
+| Standard multiple imputation | No |
+
+**Required approach:** Joint modeling of outcome AND missingness
+
+- Selection models: $f(Y_i, R_i \mid X_i) = f(Y_i \mid X_i) \times \Pr(R_i \mid Y_i, X_i)$
+- Pattern-mixture models: $f(Y_i, R_i \mid X_i) = f(Y_i \mid R_i, X_i) \times \Pr(R_i \mid X_i)$
+
+---
+
+## Quick Comparison: MCAR vs MAR vs MNAR
+
+```{r}
+#| label: tbl-mechanisms
+#| echo: false
+library(knitr)
+library(kableExtra)
+
+mech_comp <- data.frame(
+  Aspect = c("Missingness depends on...",
+             "Observed data are...",
+             "Complete-case valid?",
+             "GEE valid?",
+             "ML/REML valid?",
+             "Must model missingness?"),
+  MCAR = c("Covariates only",
+           "Random sample",
+           "Yes (inefficient)",
+           "Yes",
+           "Yes",
+           "No"),
+  MAR = c("Observed Y + covariates",
+          "NOT random sample",
+          "No (biased)",
+          "No* (need weights)",
+          "Yes* (if Sigma correct)",
+          "No (ignorable)"),
+  MNAR = c("Unobserved Y",
+           "NOT random sample",
+           "No (biased)",
+           "No (biased)",
+           "No (unless modeled)",
+           "Yes (required)")
+)
+
+kable(mech_comp,
+      col.names = c("Aspect", "MCAR", "MAR", "MNAR")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                font_size = 13) %>%
+  column_spec(1, bold = TRUE, width = "25%") %>%
+  row_spec(0, bold = TRUE, background = "#E8F4F8")
+```
+
+\* = conditional on correct model specification
+
+---
+
+## Check Your Understanding: Part II
+
+::: {.callout-tip}
+## Quick Self-Check
+
+1. **MCAR vs MAR:** A clinical trial subject drops out because their most recent blood pressure reading (which you have recorded) was very high. Is this MCAR, MAR, or MNAR?
+
+2. **The "Ignorable" Trap:** A colleague says "The data are MAR, so we can ignore the missing data problem." What's wrong with this statement?
+
+3. **Side-by-Side:** Complete this table:
+
+| Scenario | Mechanism |
+|----------|-----------|
+| Equipment malfunction loses data | ? |
+| Subjects with improving symptoms stop coming | ? |
+| Subjects drop out based on how they feel *today* (unrecorded) | ? |
+:::
+
+::: {.callout-note collapse="true"}
+## Answers
+
+1. **MAR** - The dropout depends on an observed value (the recorded blood pressure), not on unobserved future values.
+
+2. **"Ignorable" means we can ignore the missingness MODEL**, not the missing data itself. Under MAR, we still must correctly specify the joint distribution of $Y_i$ (both mean AND covariance) for valid inference. Complete-case analysis is still biased under MAR!
+
+3.
+| Scenario | Mechanism |
+|----------|-----------|
+| Equipment malfunction loses data | **MCAR** |
+| Subjects with improving symptoms stop coming | **MAR** (if improvement is based on recorded trajectory) |
+| Subjects drop out based on how they feel *today* (unrecorded) | **MNAR** |
+:::
+
+::: {.callout-important}
+## Key Distinction: MCAR vs MAR
+
+**MCAR:** $\Pr(R_i \mid Y_i, X_i) = \Pr(R_i \mid X_i)$ - Missingness independent of ALL outcomes
+
+**MAR:** $\Pr(R_i \mid Y_i^O, Y_i^M, X_i) = \Pr(R_i \mid Y_i^O, X_i)$ - Missingness independent of UNOBSERVED outcomes, given observed
+
+The difference: Under MAR, dropout CAN depend on observed $Y$ values; under MCAR, it cannot.
+:::
+
+# Part III: Dropout as Monotone Missingness
+
+---
+
+## What is Dropout?
+
+**Definition:** Dropout refers to the special case where:
+
+$$\text{If } R_{ik} = 0, \text{ then } R_{ik+1} = \cdots = R_{in} = 0$$
+
+**Characteristics:**
+
+| Feature | Description |
+|---------|-------------|
+| Pattern | Once out, stays out |
+| Type | **Monotone** missing data |
+| Contrast | Intermittent missingness has gaps with returns |
+
+**Dropout indicator:** $D_i = k$ means subject drops out between occasions $k-1$ and $k$
+
+---
+
+## Figure 17.1: Monotone Pattern Visualization
+
+```{r}
+#| label: fig-monotone-pattern
+#| fig-cap: "Monotone missing data pattern for dropout. Each row is an individual; bars show observations."
+#| fig-height: 5
+#| fig-width: 8
+#| output-location: slide
+
+library(ggplot2)
+library(dplyr)
+
+# Create monotone dropout pattern
+set.seed(667)
+n_subjects <- 20
+n_times <- 5
+
+dropout_data <- tibble(
+  id = rep(1:n_subjects, each = n_times),
+  time = rep(1:n_times, n_subjects),
+  dropout_time = rep(sample(2:(n_times+1), n_subjects, replace = TRUE), each = n_times)
+) %>%
+  mutate(
+    observed = time < dropout_time,
+    dropout_group = factor(dropout_time,
+                          levels = 2:(n_times+1),
+                          labels = paste("Dropout after Y", 1:n_times, sep=""))
+  )
+
+ggplot(dropout_data, aes(x = time, y = reorder(id, dropout_time), fill = observed)) +
+  geom_tile(aes(alpha = observed), color = "white", linewidth = 0.5) +
+  geom_tile(data = dropout_data %>% filter(observed),
+            aes(fill = dropout_group), color = "white", linewidth = 0.5, alpha = 1) +
+  scale_fill_manual(values = c("FALSE" = "gray85",
+                               "Dropout after Y1" = "#08519c",
+                               "Dropout after Y2" = "#3182bd",
+                               "Dropout after Y3" = "#6baed6",
+                               "Dropout after Y4" = "#9ecae1",
+                               "Dropout after Y5" = "#c6dbef"),
+                    name = "Status") +
+  scale_alpha_manual(values = c("FALSE" = 1, "TRUE" = 1), guide = "none") +
+  scale_x_continuous(breaks = 1:n_times, labels = paste0("Y", 1:n_times)) +
+  scale_y_discrete(breaks = seq(5, 20, 5)) +
+  labs(x = "Measurement Occasion",
+       y = "Individual (ordered by dropout time)",
+       title = "Monotone Missing Data Pattern",
+       subtitle = "Color gradient shows dropout timing (darker = earlier dropout)") +
+  theme_minimal(base_size = 14) +
+  theme(legend.position = "bottom",
+        panel.grid.minor = element_blank())
+```
+
+Notice: More observations at $Y_j$ than at $Y_{j+1}$ for all $j$.
+
+---
+
+## Dropout Taxonomy
+
+Applying the MCAR/MAR/MNAR hierarchy to dropout:
+
+| Type | Mechanism | Probability Model |
+|------|-----------|-------------------|
+| **Completely Random** | MCAR | $\Pr(D_i = k \mid D_i \geq k, Y_i, X_i) = \Pr(D_i = k \mid D_i \geq k, X_i)$ |
+| **Random** | MAR | Depends on previously observed outcomes |
+| **Informative** | MNAR | Depends on current/future unobserved outcomes |
+
+---
+
+## Dropout: The Key Question
+
+**Central issue:** Do those who drop out differ from those who stay?
+
+| If they... | Mechanism | Consequence |
+|------------|-----------|-------------|
+| Do NOT differ | MCAR | Any reasonable method valid |
+| DO differ (predictable from $Y_i^O$) | MAR | Need likelihood-based or weighted methods |
+| DO differ (depends on $Y_i^M$) | MNAR | Must model missingness mechanism |
+
+---
+
+## Simulation Study Setup
+
+We'll illustrate the three mechanisms via simulation.
+
+**Data Generating Process:**
+
+- $Y_{it} = \beta_0 + \beta_1 t + \varepsilon_{it}$ (linear trend)
+- $\text{Cov}(Y_{is}, Y_{it}) = \rho^{|s-t|}$ (AR(1) with $\rho = 0.7$)
+- $N = 1000$ subjects, $n = 5$ time points
+
+**Dropout Model:**
+
+$$\text{logit}\{\Pr(D_i = k \mid D_i \geq k, Y_{i,k-1}, Y_{ik})\} = \theta_1 + \theta_2(Y_{i,k-1} - \mu_{k-1}) + \theta_3(Y_{ik} - \mu_k)$$
+
+---
+
+## Simulation: Three Scenarios
+
+| Scenario | $\theta_2$ | $\theta_3$ | Mechanism |
+|----------|------------|------------|-----------|
+| A | 0 | 0 | MCAR |
+| B | 1.0 | 0 | MAR |
+| C | 0 | 0.8 | MNAR |
+
+---
+
+## Simulation: Data Generation Function
+
+::: {.callout-note}
+## Computational Note
+
+The following simulations generate N=1000 subjects x 5 timepoints and fit multiple models. With caching enabled, slides render quickly.
+:::
+
+```{r}
+#| label: sim-dropout-function
+#| code-fold: true
+#| code-summary: "Click to see simulation code"
+#| output-location: slide
+
+library(MASS)
+library(dplyr)
+library(ggplot2)
+
+simulate_dropout <- function(N = 1000, n_time = 5,
+                             beta0 = 5, beta1 = 0.25, rho = 0.7,
+                             theta1 = -0.5, theta2 = 0, theta3 = 0) {
+  # Generate AR(1) covariance
+  times <- 1:n_time
+  Sigma <- outer(times, times, function(s, t) rho^abs(s - t))
+
+  # Generate complete data
+  mu <- beta0 + beta1 * times
+  Y_complete <- mvrnorm(N, mu = mu, Sigma = Sigma)
+
+  # Generate dropout
+  dropout_time <- rep(n_time + 1, N)  # Initialize as completers
+
+  for (i in 1:N) {
+    for (k in 2:n_time) {
+      # Logistic dropout probability
+      lin_pred <- theta1 +
+                  theta2 * (Y_complete[i, k-1] - mu[k-1]) +
+                  theta3 * (Y_complete[i, k] - mu[k])
+
+      prob_dropout <- plogis(lin_pred)
+
+      if (runif(1) < prob_dropout) {
+        dropout_time[i] <- k
+        break
+      }
+    }
+  }
+
+  # Create observed data (set to NA after dropout)
+  Y_obs <- Y_complete
+  for (i in 1:N) {
+    if (dropout_time[i] <= n_time) {
+      Y_obs[i, dropout_time[i]:n_time] <- NA
+    }
+  }
+
+  # Return data frame
+  data.frame(
+    Y_complete = Y_complete,
+    Y_obs = Y_obs,
+    dropout_time = dropout_time,
+    subject = 1:N
+  )
+}
+```
+
+---
+
+## Figure 17.2: Complete Data (Baseline)
+
+```{r}
+#| label: fig-complete-data
+#| fig-cap: "Population regression line and empirical means at each occasion for complete data (no dropout)"
+#| fig-height: 4.5
+#| fig-width: 7
+#| output-location: slide
+
+set.seed(667)
+beta0 <- 5
+beta1 <- 0.25
+n_time <- 5
+
+# Simulate complete data (no dropout)
+dat_complete <- simulate_dropout(N = 1000, theta2 = 0, theta3 = 0)
+
+# Calculate means at each time
+means_complete <- colMeans(dat_complete[, paste0("Y_complete.", 1:n_time)])
+
+# Plot
+data.frame(
+  time = 1:n_time,
+  mean_obs = means_complete,
+  true_mean = beta0 + beta1 * (1:n_time)
+) %>%
+  ggplot(aes(x = time)) +
+  geom_line(aes(y = true_mean), linewidth = 1, color = "black") +
+  geom_point(aes(y = mean_obs), size = 3, color = "steelblue") +
+  scale_x_continuous(breaks = 1:n_time) +
+  labs(x = "Time", y = "Y",
+       title = "Complete Data: Sample Means vs Population Line",
+       subtitle = "No missing data - means coincide with population values") +
+  theme_minimal(base_size = 14)
+```
+
+Sample means virtually coincide with population regression line.
+
+---
+
+## Scenario A: MCAR Dropout
+
+```{r}
+#| label: sim-mcar
+#| output-location: slide
+
+set.seed(667)
+dat_mcar <- simulate_dropout(N = 1000,
+                              theta1 = -0.5, theta2 = 0, theta3 = 0)
+
+# Calculate observed means
+means_mcar <- colMeans(dat_mcar[, paste0("Y_obs.", 1:n_time)], na.rm = TRUE)
+
+# Dropout summary
+dropout_summary_mcar <- table(dat_mcar$dropout_time)
+cat("Dropout times:\n")
+print(dropout_summary_mcar)
+cat("\nProportion missing at each time:\n")
+print(round(colMeans(is.na(dat_mcar[, paste0("Y_obs.", 1:n_time)])), 2))
+```
+
+About 38% dropout at each occasion (constant hazard).
+
+---
+
+## Figure 17.3(a): MCAR Dropout
+
+```{r}
+#| label: fig-mcar-dropout
+#| fig-cap: "Scenario A (MCAR): Observed means track population line despite 85% missing at t=5"
+#| fig-height: 4.5
+#| fig-width: 7
+#| output-location: slide
+
+data.frame(
+  time = 1:n_time,
+  mean_obs = means_mcar,
+  true_mean = beta0 + beta1 * (1:n_time)
+) %>%
+  ggplot(aes(x = time)) +
+  geom_line(aes(y = true_mean), linewidth = 1, color = "black") +
+  geom_point(aes(y = mean_obs), size = 3, color = "steelblue") +
+  scale_x_continuous(breaks = 1:n_time) +
+  labs(x = "Time", y = "Y",
+       title = "Scenario A: MCAR Dropout",
+       subtitle = "Observed means unbiased despite heavy dropout") +
+  theme_minimal(base_size = 14)
+```
+
+**Key Observation:** Even with 85% missing at time 5, sample means are unbiased!
+
+::: {.notes}
+Labeled illustrative simulation (set.seed(667), the deck's simulate_dropout DGP), not a real dataset. The teaching point: under MCAR the dropout is unrelated to Y, so the survivors at each occasion are a random subsample. Their sample mean (steelblue points) still lands on the true population line (black) even when 85% are gone by t=5. Massive missingness costs precision, not validity. Have students predict what the next two figures (MAR, MNAR) will look like before you show them: once dropout depends on Y, the survivors are no longer representative and the points should pull off the line.
+:::
+
+---
+
+## Scenario B: MAR Dropout
+
+```{r}
+#| label: sim-mar
+#| output-location: slide
+
+set.seed(667)
+dat_mar <- simulate_dropout(N = 1000,
+                             theta1 = -0.5, theta2 = 1.0, theta3 = 0)
+
+# Calculate observed means
+means_mar <- colMeans(dat_mar[, paste0("Y_obs.", 1:n_time)], na.rm = TRUE)
+
+# Dropout summary
+cat("Proportion missing at each time:\n")
+print(round(colMeans(is.na(dat_mar[, paste0("Y_obs.", 1:n_time)])), 2))
+```
+
+Dropout depends on **previous** response: those with high $Y_{i,k-1}$ more likely to drop out.
+
+---
+
+## Figure 17.3(b): MAR Dropout
+
+```{r}
+#| label: fig-mar-dropout
+#| fig-cap: "Scenario B (MAR): Observed means below population line - available-data methods biased"
+#| fig-height: 4.5
+#| fig-width: 7
+#| output-location: slide
+
+data.frame(
+  time = 1:n_time,
+  mean_obs = means_mar,
+  true_mean = beta0 + beta1 * (1:n_time)
+) %>%
+  ggplot(aes(x = time)) +
+  geom_line(aes(y = true_mean), linewidth = 1, color = "black") +
+  geom_point(aes(y = mean_obs), size = 3, color = "coral") +
+  scale_x_continuous(breaks = 1:n_time) +
+  labs(x = "Time", y = "Y",
+       title = "Scenario B: MAR Dropout (depends on past Y)",
+       subtitle = "Observed means BIASED downward - high responders drop out preferentially") +
+  theme_minimal(base_size = 14)
+```
+
+Because those with large $Y_{i,k-1}$ drop out more, observed means are **biased low**.
+
+::: {.notes}
+Labeled illustrative simulation (theta2 = 1.0 makes dropout depend on the PREVIOUS observed value Y_{i,k-1}, so this is MAR). The coral points now sit BELOW the true line: high responders leave preferentially, so the survivors are systematically low. This is exactly the bias that sample means and standard GEE inherit. The crucial follow-up, made on the Table 17.3 slide: likelihood (ML/REML with the right covariance) recovers the truth here because the dropout depends only on observed data, so the missingness is ignorable for the likelihood. The naive sample mean does not know that.
+:::
+
+---
+
+## Scenario C: MNAR Dropout
+
+```{r}
+#| label: sim-nmar
+#| output-location: slide
+
+set.seed(667)
+dat_nmar <- simulate_dropout(N = 1000,
+                              theta1 = -0.5, theta2 = 0, theta3 = 0.8)
+
+# Calculate observed means
+means_nmar <- colMeans(dat_nmar[, paste0("Y_obs.", 1:n_time)], na.rm = TRUE)
+
+# Dropout summary
+cat("Proportion missing at each time:\n")
+print(round(colMeans(is.na(dat_nmar[, paste0("Y_obs.", 1:n_time)])), 2))
+```
+
+Dropout depends on **current (unobserved)** response: those with high $Y_{ik}$ more likely to drop out at time $k$.
+
+---
+
+## Figure 17.3(c): MNAR Dropout
+
+```{r}
+#| label: fig-nmar-dropout
+#| fig-cap: "Scenario C (MNAR): Observed means even more biased - dropout depends on unobserved Y"
+#| fig-height: 4.5
+#| fig-width: 7
+#| output-location: slide
+
+data.frame(
+  time = 1:n_time,
+  mean_obs = means_nmar,
+  true_mean = beta0 + beta1 * (1:n_time)
+) %>%
+  ggplot(aes(x = time)) +
+  geom_line(aes(y = true_mean), linewidth = 1, color = "black") +
+  geom_point(aes(y = mean_obs), size = 3, color = "firebrick") +
+  scale_x_continuous(breaks = 1:n_time) +
+  labs(x = "Time", y = "Y",
+       title = "Scenario C: MNAR Dropout (depends on current unobserved Y)",
+       subtitle = "Observed means STRONGLY BIASED - cannot predict from observed data alone") +
+  theme_minimal(base_size = 14)
+```
+
+Because those with large **unobserved** $Y_{ik}$ drop out, bias is substantial.
+
+::: {.notes}
+Labeled illustrative simulation (theta3 = 0.8 makes dropout depend on the CURRENT, unobserved value Y_{ik}, so this is MNAR). The firebrick points are pulled off the line just as in MAR, but now NO method that uses only the observed data can fix it: the dependence is on a value that was never recorded. On the Table 17.4 slide both ML and GEE come out biased. The honest teaching message: the only routes are joint modeling (selection or pattern-mixture) plus sensitivity analysis, and even then the answer is assumption-driven, not data-driven, because MNAR is unverifiable.
+:::
+
+---
+
+## Combined Comparison: Figure 17.3 (a, b, c)
+
+```{r}
+#| label: fig-combined-dropout
+#| fig-cap: "Side-by-side comparison of observed means under three dropout mechanisms"
+#| fig-height: 5
+#| fig-width: 10
+#| output-location: slide
+
+library(tidyr)
+
+# Calculate sample sizes at each timepoint for annotations
+n_obs_mcar <- colSums(!is.na(dat_mcar[, paste0("Y_obs.", 1:n_time)]))
+n_obs_mar <- colSums(!is.na(dat_mar[, paste0("Y_obs.", 1:n_time)]))
+n_obs_nmar <- colSums(!is.na(dat_nmar[, paste0("Y_obs.", 1:n_time)]))
+
+combined_data <- data.frame(
+  time = rep(1:n_time, 3),
+  mean_obs = c(means_mcar, means_mar, means_nmar),
+  mechanism = rep(c("(a) MCAR", "(b) MAR", "(c) MNAR"), each = n_time),
+  true_mean = rep(beta0 + beta1 * (1:n_time), 3),
+  n_obs = c(n_obs_mcar, n_obs_mar, n_obs_nmar)
+)
+
+ggplot(combined_data, aes(x = time)) +
+  geom_line(aes(y = true_mean), linewidth = 0.8, color = "black") +
+  geom_point(aes(y = mean_obs, color = mechanism), size = 3) +
+  geom_line(aes(y = mean_obs, color = mechanism), linewidth = 0.6, linetype = "dashed") +
+  geom_text(aes(label = paste0("n=", n_obs), y = mean_obs),
+            vjust = -0.8, size = 2.5, color = "gray30") +
+  scale_color_manual(values = c("(a) MCAR" = "steelblue",
+                                 "(b) MAR" = "coral",
+                                 "(c) MNAR" = "firebrick")) +
+  scale_x_continuous(breaks = 1:n_time) +
+  facet_wrap(~ mechanism, ncol = 3) +
+  labs(x = "Time", y = "Y",
+       title = "Comparison of Observed Means Under Different Dropout Mechanisms",
+       subtitle = "Black line = true population mean; Points = observed sample means (n = sample size)") +
+  theme_minimal(base_size = 13) +
+  theme(legend.position = "none",
+        strip.text = element_text(face = "bold"))
+```
+
+---
+
+## Table 17.2: ML vs GEE Parameter Estimates
+
+Now let's fit models and compare estimates.
+
+```{r}
+#| label: fit-models-mcar
+#| output-location: slide
+
+library(nlme)
+
+# Reshape MCAR data to long format
+dat_mcar_long <- dat_mcar %>%
+  dplyr::select(subject, starts_with("Y_obs")) %>%
+  pivot_longer(cols = starts_with("Y_obs"),
+               names_to = "time",
+               values_to = "y") %>%
+  mutate(time = as.numeric(gsub("Y_obs.", "", time))) %>%
+  filter(!is.na(y))
+
+# ML fit (with AR(1) covariance)
+fit_ml_mcar <- gls(y ~ time, data = dat_mcar_long,
+                   correlation = corAR1(form = ~ time | subject),
+                   method = "REML")
+
+# GEE fit (working independence)
+fit_gee_mcar <- geepack::geeglm(y ~ time, data = dat_mcar_long,
+                                id = subject,
+                                corstr = "independence")
+
+# Extract coefficients
+ml_mcar <- summary(fit_ml_mcar)$tTable
+gee_mcar <- summary(fit_gee_mcar)$coefficients
+```
+
+---
+
+## Table 17.2: Results under MCAR
+
+```{r}
+#| label: tbl-results-mcar
+#| echo: false
+
+results_mcar <- data.frame(
+  Parameter = c("Intercept", "time"),
+  ML_Estimate = round(ml_mcar[, "Value"], 3),
+  ML_SE = round(ml_mcar[, "Std.Error"], 3),
+  GEE_Estimate = round(gee_mcar[, "Estimate"], 3),
+  GEE_SE = round(gee_mcar[, "Std.err"], 3)
+)
+
+kable(results_mcar, row.names = FALSE,
+      col.names = c("Parameter", "Estimate", "SE", "Estimate", "SE"),
+      caption = "Scenario A (MCAR): ML and GEE both unbiased (true: beta0=5.0, beta1=0.25)") %>%
+  kable_styling(bootstrap_options = "striped", font_size = 13) %>%
+  add_header_above(c(" " = 1, "ML (AR1)" = 2, "GEE (Independence)" = 2))
+```
+
+Both methods provide unbiased estimates under MCAR.
+
+::: {.notes}
+Re-running the chunk (set.seed(667)) gives both slopes near the truth of 0.25 (ML and GEE about 0.27), confirming the "both unbiased" verdict. Under MCAR the survivors are a random subsample so the sample moments GEE relies on are unbiased, and the likelihood is valid too. This is the baseline case: the only cost of dropout here is wider standard errors. Tables 17.3 and 17.4 then break the symmetry between ML and GEE.
+:::
+
+---
+
+## Table 17.3: Results under MAR
+
+```{r}
+#| label: fit-models-mar
+#| echo: false
+
+# Reshape MAR data
+dat_mar_long <- dat_mar %>%
+  dplyr::select(subject, starts_with("Y_obs")) %>%
+  pivot_longer(cols = starts_with("Y_obs"),
+               names_to = "time",
+               values_to = "y") %>%
+  mutate(time = as.numeric(gsub("Y_obs.", "", time))) %>%
+  filter(!is.na(y))
+
+# ML fit
+fit_ml_mar <- gls(y ~ time, data = dat_mar_long,
+                  correlation = corAR1(form = ~ time | subject),
+                  method = "REML")
+
+# GEE fit
+fit_gee_mar <- geepack::geeglm(y ~ time, data = dat_mar_long,
+                               id = subject,
+                               corstr = "independence")
+
+ml_mar <- summary(fit_ml_mar)$tTable
+gee_mar <- summary(fit_gee_mar)$coefficients
+
+results_mar <- data.frame(
+  Parameter = c("Intercept", "time"),
+  ML_Estimate = round(ml_mar[, "Value"], 3),
+  ML_SE = round(ml_mar[, "Std.Error"], 3),
+  GEE_Estimate = round(gee_mar[, "Estimate"], 3),
+  GEE_SE = round(gee_mar[, "Std.err"], 3)
+)
+
+kable(results_mar, row.names = FALSE,
+      col.names = c("Parameter", "Estimate", "SE", "Estimate", "SE"),
+      caption = "Scenario B (MAR): ML unbiased, GEE biased (true: beta0=5.0, beta1=0.25)") %>%
+  kable_styling(bootstrap_options = "striped", font_size = 13) %>%
+  add_header_above(c(" " = 1, "ML (AR1)" = 2, "GEE (Independence)" = 2))
+```
+
+**Key result:** ML remains unbiased (correct covariance), GEE substantially biased.
+
+::: {.notes}
+This is the chapter's headline result and matches FLW p. 495-496. Re-running the chunk: under MAR the ML/REML slope stays near 0.25 (about 0.24) while the GEE slope collapses toward 0.10. Why the asymmetry: ML with the correct AR(1) covariance "borrows strength" from each subject's observed occasions to recover the population trend, because MAR missingness is ignorable for the likelihood. Standard GEE plugs in the empirical (biased) moments of the available data and has no such correction. The fix for GEE is inverse-probability weighting (IPW-GEE), shown later. Common student error: assuming GEE is robust to everything because it is "semiparametric." It is robust to covariance misspecification, NOT to MAR dropout.
+:::
+
+---
+
+## Table 17.4: Results under MNAR
+
+```{r}
+#| label: fit-models-nmar
+#| echo: false
+
+# Reshape MNAR data
+dat_nmar_long <- dat_nmar %>%
+  dplyr::select(subject, starts_with("Y_obs")) %>%
+  pivot_longer(cols = starts_with("Y_obs"),
+               names_to = "time",
+               values_to = "y") %>%
+  mutate(time = as.numeric(gsub("Y_obs.", "", time))) %>%
+  filter(!is.na(y))
+
+# ML fit
+fit_ml_nmar <- gls(y ~ time, data = dat_nmar_long,
+                   correlation = corAR1(form = ~ time | subject),
+                   method = "REML")
+
+# GEE fit
+fit_gee_nmar <- geepack::geeglm(y ~ time, data = dat_nmar_long,
+                                id = subject,
+                                corstr = "independence")
+
+ml_nmar <- summary(fit_ml_nmar)$tTable
+gee_nmar <- summary(fit_gee_nmar)$coefficients
+
+results_nmar <- data.frame(
+  Parameter = c("Intercept", "time"),
+  ML_Estimate = round(ml_nmar[, "Value"], 3),
+  ML_SE = round(ml_nmar[, "Std.Error"], 3),
+  GEE_Estimate = round(gee_nmar[, "Estimate"], 3),
+  GEE_SE = round(gee_nmar[, "Std.err"], 3)
+)
+
+kable(results_nmar, row.names = FALSE,
+      col.names = c("Parameter", "Estimate", "SE", "Estimate", "SE"),
+      caption = "Scenario C (MNAR): Both ML and GEE biased (true: beta0=5.0, beta1=0.25)") %>%
+  kable_styling(bootstrap_options = "striped", font_size = 13) %>%
+  add_header_above(c(" " = 1, "ML (AR1)" = 2, "GEE (Independence)" = 2))
+```
+
+**Both methods biased under MNAR!** Slope estimates far from truth (0.25).
+
+::: {.notes}
+Re-running the chunk: under MNAR both slopes fall well below 0.25 (ML about 0.14, GEE about 0.07). The point to land: ML's MAR guarantee evaporates here because the missingness is NOT ignorable, it depends on the unobserved current value. No amount of correct covariance modeling helps when the information needed lives in data you never collected. This motivates Part V's sensitivity analysis and the Chapter 18 joint-modeling preview. Be explicit that we cannot diagnose MNAR from these data; we know it only because we simulated it.
+:::
+
+---
+
+## Interpreting Model Output Under Missing Data
+
+::: {.callout-note}
+## How to Read These Results
+
+When interpreting results from missing data analysis, ask:
+
+**1. What mechanism did I assume?**
+
+- If MAR: Are coefficients interpretable as population parameters? Yes, IF model is correctly specified
+- If MNAR suspected: Coefficients may be biased; focus on sensitivity analysis range
+
+**2. What does the slope estimate mean?**
+
+- Under correct model: Estimated slope represents true population-average rate of change
+- Under MAR with correct covariance: ML "borrows information" from observed data to estimate what the full population trend would be
+
+**3. How do I report uncertainty?**
+
+- Standard errors account for sampling variability
+- They do NOT account for uncertainty in the missing data mechanism assumption
+- Always pair with sensitivity analysis results
+:::
+
+---
+
+## Table 17.5: Complete Summary
+
+```{r}
+#| label: tbl-complete-summary
+#| echo: false
+
+full_summary <- data.frame(
+  Dropout = rep(c("MCAR", "MAR", "MNAR"), each = 2),
+  Parameter = rep(c("Intercept", "time"), 3),
+  ML_Est = c(ml_mcar[, "Value"], ml_mar[, "Value"], ml_nmar[, "Value"]),
+  ML_SE = c(ml_mcar[, "Std.Error"], ml_mar[, "Std.Error"], ml_nmar[, "Std.Error"]),
+  GEE_Est = c(gee_mcar[, "Estimate"], gee_mar[, "Estimate"], gee_nmar[, "Estimate"]),
+  GEE_SE = c(gee_mcar[, "Std.err"], gee_mar[, "Std.err"], gee_nmar[, "Std.err"])
+)
+
+kable(full_summary,
+      digits = 3,
+      col.names = c("Dropout", "Parameter", "Estimate", "SE", "Estimate", "SE"),
+      caption = "Complete comparison: True values beta0=5.0, beta1=0.25") %>%
+  kable_styling(bootstrap_options = c("striped", "condensed"), font_size = 12) %>%
+  add_header_above(c(" " = 2, "ML (AR1)" = 2, "GEE (Indep)" = 2)) %>%
+  pack_rows("MCAR: Both unbiased", 1, 2) %>%
+  pack_rows("MAR: ML unbiased, GEE biased", 3, 4) %>%
+  pack_rows("MNAR: Both biased", 5, 6) %>%
+  row_spec(c(4, 6), bold = TRUE, background = "#ffcccc")
+```
+
+---
+
+## Key Takeaways from Simulation
+
+| Mechanism | Sample Means | ML | GEE |
+|-----------|--------------|-----|-----|
+| **MCAR** | Unbiased | Unbiased | Unbiased |
+| **MAR** | Biased | Unbiased (with correct covariance) | Biased |
+| **MNAR** | Strongly biased | Biased | Biased |
+
+---
+
+## Real-Data Case Study: Six Cities FEV1
+
+The motivating Six Cities study is in our `fev1` data: annual lung-function (log FEV1) on children, measured from about age 6 to 19. Missing data here are **real**, not imposed: children enter and leave the district at different ages.
+
+```{r}
+#| label: fev1-load
+#| echo: true
+#| output-location: slide
+
+# Real FLW longitudinal data (Six Cities pulmonary thread); download fallback
+fev1_url  <- "https://content.sph.harvard.edu/fitzmaur/ala2e/fev1.txt"
+fev1_file <- "../../data/fev1.txt"
+if (!file.exists(fev1_file)) {
+  fev1_file <- "data/fev1.txt"
+  if (!file.exists(fev1_file)) {
+    dir.create("data", showWarnings = FALSE)
+    download.file(fev1_url, fev1_file)
+  }
+}
+fev1 <- read.table(fev1_file, header = TRUE)
+
+# Real imbalance: how many measurement occasions does each child have?
+occ_per_child <- table(fev1$id)
+cat("Children:", length(unique(fev1$id)), "\n")
+cat("Total observations:", nrow(fev1), "\n")
+cat("Occasions per child (median):", median(occ_per_child), "\n")
+cat("Children with all 12 occasions:", sum(occ_per_child == 12), "\n")
+cat("Children with 3 or fewer:", sum(occ_per_child <= 3), "\n")
+```
+
+::: {.notes}
+This grounds the abstract taxonomy in a real FLW dataset and reconnects to the Six Cities motivating example from Part I. The headline is the imbalance: of `r length(unique(fev1$id))` children only `r sum(occ_per_child == 12)` are measured at all 12 occasions, while `r sum(occ_per_child <= 3)` have three or fewer. That is exactly the "imbalance, loss of precision, potential bias" trio from the opening slide, made concrete. Use the download-fallback chunk as a template students can reuse. Stress that here the missingness is genuine (mobility in and out of the school district), not simulated, so we cannot label the mechanism with certainty; the Six Cities Scenario A/B slide already framed both an MCAR (job transfer) and a non-ignorable (respiratory-driven relocation) story.
+:::
+
+---
+
+## FEV1: Complete-Case Throws Away Most Children
+
+```{r}
+#| label: fev1-fit
+#| echo: true
+#| output-location: slide
+
+library(nlme)
+library(dplyr)
+fev1 <- fev1 %>% mutate(age_c = age - 10)   # center age at 10 years
+
+# Available-data fit (REML): uses ALL children, including partial records
+fit_avail <- gls(logfev1 ~ age_c, data = fev1,
+                 correlation = corCAR1(form = ~ age | id), method = "REML")
+
+# Complete-case: only children with all 12 occasions
+cc_ids  <- as.integer(names(which(table(fev1$id) == 12)))
+fev1_cc <- fev1 %>% filter(id %in% cc_ids)
+fit_cc  <- gls(logfev1 ~ age_c, data = fev1_cc,
+               correlation = corCAR1(form = ~ age | id), method = "REML")
+
+avail <- summary(fit_avail)$tTable["age_c", ]
+cc    <- summary(fit_cc)$tTable["age_c", ]
+```
+
+Available-data (REML, all `r length(unique(fev1$id))` children): slope `r round(avail["Value"], 4)` (SE `r round(avail["Std.Error"], 4)`).
+
+Complete-case (only `r length(cc_ids)` children): slope `r round(cc["Value"], 4)` (SE `r round(cc["Std.Error"], 4)`).
+
+::: {.callout-note}
+## Reading it
+The two **slope estimates are close** here, but complete-case keeps only `r length(cc_ids)` of `r length(unique(fev1$id))` children and its **standard error more than doubles** (`r round(cc["Std.Error"], 4)` vs `r round(avail["Std.Error"], 4)`). When dropout is close to ignorable, the dominant cost of discarding data is **lost precision**, exactly the MCAR lesson. The available-data fit retains every observed measurement.
+:::
+
+::: {.notes}
+Numbers are pulled inline from the fitted objects so they cannot drift from the code. On the real Six Cities data the available-data REML slope of log FEV1 on centered age is `r round(avail["Value"], 4)` (SE `r round(avail["Std.Error"], 4)`); restricting to the `r length(cc_ids)` complete children gives `r round(cc["Value"], 4)` (SE `r round(cc["Std.Error"], 4)`). The estimates agree, which is the honest finding: this real dropout is plausibly close to MCAR/MAR for the age slope, so the penalty for complete-case is mainly the inflated SE, not bias. Resist the temptation to manufacture a dramatic bias here (pitfall 24: do not assert a contrast the data do not show). The simulated Tables 17.2-17.5 are where the bias contrast is isolated cleanly; this real case study shows the precision cost and the all-available-data principle on genuine data.
+:::
+
+---
+
+## Check Your Understanding: Part III
+
+::: {.callout-tip}
+## Quick Self-Check
+
+1. **Simulation Interpretation:** In the MAR simulation (Scenario B), why are the observed means biased downward?
+
+2. **Method Selection:** You have MAR data. Which of these methods will give unbiased estimates?
+   - (a) Complete-case analysis
+   - (b) GEE with independence working correlation
+   - (c) ML with correctly specified AR(1) covariance
+   - (d) ML with incorrectly specified independence covariance
+
+3. **Dropout Mechanism:** A subject's probability of dropping out at visit $k$ depends on their depression score at visit $k-1$ (which you observed). What mechanism is this?
+:::
+
+::: {.callout-note collapse="true"}
+## Answers
+
+1. In the MAR simulation, subjects with **high** $Y_{i,k-1}$ are more likely to drop out. This means the remaining (observed) subjects at later times have systematically **lower** values than the full population would have had, leading to downward-biased observed means.
+
+2. Only **(c) ML with correctly specified AR(1) covariance** gives unbiased estimates under MAR.
+   - (a) Complete-case is biased under MAR
+   - (b) Standard GEE uses biased sample moments under MAR
+   - (d) Misspecified covariance leads to bias under MAR
+
+3. **MAR** - The dropout depends on the *observed* previous value, not on the current unobserved value. In the Diggle-Kenward dropout taxonomy this is **"random dropout"** (MNAR is their "informative dropout").
+:::
+
+# Part IV: Methods for Handling Dropout
+
+---
+
+## Overview of Approaches
+
+| Method | Description |
+|--------|-------------|
+| **Complete-case** | Use only subjects with full data |
+| **Available-data** | Use all observed data |
+| **Likelihood-based** | ML/REML with correct model |
+| **Imputation** | Fill in missing values (LVCF, MI) |
+| **Weighting** | Inverse probability weighting |
+
+Each method makes different assumptions and has different validity conditions.
+
+---
+
+## 1. Complete-Case Analysis
+
+**Approach:** Exclude all subjects with any missing data
+
+**When valid:** MCAR only
+
+| Pros | Cons |
+|------|------|
+| Simple to implement | Highly inefficient |
+| Standard software works | Reduced statistical power |
+| | Biased under MAR or MNAR |
+| | Can exclude most of the sample |
+
+**Recommendation:** Rarely acceptable in practice
+
+---
+
+## Complete-Case Example
+
+```{r}
+#| label: complete-case-demo
+#| output-location: slide
+
+# Using MAR data from earlier
+complete_cases <- dat_mar_long %>%
+  group_by(subject) %>%
+  filter(n() == n_time) %>%
+  ungroup()
+
+cat("Original sample:", length(unique(dat_mar_long$subject)), "subjects\n")
+cat("Complete cases:", length(unique(complete_cases$subject)), "subjects\n")
+cat("Percent retained:",
+    round(100 * length(unique(complete_cases$subject)) / length(unique(dat_mar_long$subject)), 1), "%\n")
+
+# Fit model to complete cases only
+fit_cc <- lm(y ~ time, data = complete_cases)
+cat("\nComplete-case estimate of slope:", round(coef(fit_cc)[2], 3), "\n")
+cat("True value: 0.250\n")
+cat("Bias:", round(coef(fit_cc)[2] - 0.25, 3), "\n")
+```
+
+Under MAR, complete-case analysis is biased even though it uses "high quality" data!
+
+---
+
+## 2. Available-Data Analysis
+
+**Approach:** Use all observed data (not just complete cases)
+
+**Examples:** GLS, Standard GEE
+
+**When valid:** MCAR only
+
+**Why it fails under MAR:**
+
+Available-data methods assume sample means/covariances of $Y_i^O$ are unbiased for population parameters. This is TRUE under MCAR but FALSE under MAR!
+
+---
+
+## Available-Data: Why Bias Occurs Under MAR
+
+**Intuition:**
+
+Imagine a trial where sicker patients drop out more often.
+
+- Remaining patients at time $t$ are **healthier** than full population
+- Sample mean at time $t$ is **biased upward**
+- GEE uses these biased sample means
+- Result: Biased inference about population
+
+**Mathematical reason:**
+
+GEE estimating equations use:
+$$\sum_{i=1}^N D_i^T V_i^{-1} (Y_i^O - \mu_i(X_i; \beta)) = 0$$
+
+Under MAR, $E(Y_i^O \mid X_i) \neq \mu_i(X_i; \beta)$ in general.
+
+---
+
+## 3. Likelihood-Based Methods (ML/REML)
+
+**Approach:** Maximize likelihood based on observed data:
+
+$$L(\beta, \Sigma) = \prod_{i=1}^N f(Y_i^O \mid X_i; \beta, \Sigma)$$
+
+**Examples:** GLS with correctly specified covariance, LMMs (`lme`, `lmer`), GLMMs
+
+**When valid:** MCAR or MAR (if model is correct!)
+
+**Critical requirement under MAR:** Must correctly specify **both** mean model and covariance model.
+
+---
+
+## Why Correct Covariance Matters Under MAR
+
+Under MAR, prediction of missing values depends critically on the covariance structure.
+
+**Recall the conditional expectation formula:**
+
+$$E(Y_i^M \mid Y_i^O) = \mu_i^M + \Sigma_i^{MO} (\Sigma_i^O)^{-1} (Y_i^O - \mu_i^O)$$
+
+**Depends on covariance!**
+
+Misspecified covariance leads to wrong conditional mean and biased $\hat{\beta}$.
+
+---
+
+## Likelihood Example: Correct vs Misspecified Covariance
+
+```{r}
+#| label: covariance-misspec-demo
+#| output-location: slide
+
+# Using MAR data
+# Correct model: AR(1)
+fit_correct <- gls(y ~ time, data = dat_mar_long,
+                   correlation = corAR1(form = ~ time | subject),
+                   method = "REML")
+
+# Misspecified model: Independence
+fit_wrong <- gls(y ~ time, data = dat_mar_long,
+                 method = "REML")
+
+cat("True slope: 0.25\n\n")
+cat("Correct covariance (AR1):\n")
+cat("  Slope estimate:", round(coef(fit_correct)[2], 3), "\n")
+cat("  Bias:", round(coef(fit_correct)[2] - 0.25, 3), "\n\n")
+
+cat("Misspecified covariance (Independence):\n")
+cat("  Slope estimate:", round(coef(fit_wrong)[2], 3), "\n")
+cat("  Bias:", round(coef(fit_wrong)[2] - 0.25, 3), "\n")
+```
+
+Correct covariance leads to unbiased; Misspecified leads to biased (under MAR)!
+
+---
+
+## SAS Reference: ML under MAR (PROC MIXED)
+
+The likelihood-based MAR analysis (our primary approach) in SAS. PROC MIXED with REML uses **all available occasions**, so it is valid under MAR if the mean and covariance are correct (no imputation needed).
+
+```sas
+/* Likelihood-based analysis valid under MAR (data in long form) */
+proc mixed data = long method = reml;
+  class id;
+  model y = time / solution;
+  repeated time / subject = id type = un;   /* unstructured covariance */
+run;
+```
+
+For the multiple-imputation thread (a Chapter 18 preview), the SAS pipeline is PROC MI then PROC MIANALYZE:
+
+```sas
+proc mi data = wide nimpute = 20 seed = 667 out = imp;
+  var y1 y2 y3 y4 y5;                        /* monotone or MCMC imputation */
+run;
+proc mixed data = imp; by _Imputation_;
+  model y = time / solution covb;
+  ods output SolutionF = mixparms;
+run;
+proc mianalyze parms = mixparms;            /* Rubin's rules pooling */
+  modeleffects intercept time;
+run;
+```
+
+::: {.notes}
+This is the static SAS-equivalent reference slide the spec requires for a reference deck (not executed). Two points to make. (1) PROC MIXED with type=un and method=reml is the SAS twin of our gls/lme MAR analysis: it maximizes the observed-data likelihood and uses every recorded occasion, so it is the right primary tool under MAR with a flexible covariance. (2) The PROC MI / PROC MIANALYZE block is the SAS multiple-imputation pipeline; flag it as a Chapter 18 preview, since proper imputation modeling and Rubin's-rules pooling are covered there. PROC MI defaults to a monotone method when the pattern is monotone (dropout) and MCMC otherwise. Keep the seed (667) for reproducibility, mirroring our R convention.
+:::
+
+---
+
+## 4. Imputation Methods
+
+**Basic idea:** Fill in (impute) missing values, then analyze complete data.
+
+| Approach | Description |
+|----------|-------------|
+| **Ad hoc** | LVCF, baseline carried forward |
+| **Model-based single** | Conditional mean imputation |
+| **Multiple imputation** | Accounts for uncertainty |
+
+We'll focus heavily on LVCF because it's widely used (and widely misunderstood).
+
+---
+
+## Last Value Carried Forward (LVCF)
+
+**Procedure:**
+
+1. For each subject who drops out at time $k$
+2. Impute missing $Y_{ik}, Y_{i,k+1}, \ldots, Y_{in}$ with last observed value $Y_{i,k-1}$
+3. Analyze filled-in dataset as if complete
+
+**Assumption:**
+$$E(Y_{ij} \mid \text{dropout at } k, Y_{i,k-1}) = Y_{i,k-1} \text{ for all } j \geq k$$
+
+"No change after dropout"
+
+---
+
+## LVCF: The Conservative Treatment Effect Myth
+
+**Statistical folklore:** "LVCF gives conservative estimate of treatment effect"
+
+::: {.callout-warning}
+## Reality: FALSE!
+
+Bias can go **either direction** depending on:
+
+- Dropout rates in each group
+- Pattern of change over time
+- True treatment effect
+
+We will prove this mathematically.
+:::
+
+---
+
+## LVCF: When Might It Be Appropriate?
+
+**Rare scenario where LVCF is reasonable:** Dropout due to **cure or recovery**
+
+- Patient improves and stops treatment
+- Response likely remains at good level
+- Carrying forward "cured" state makes sense
+
+**In most clinical trials:** Dropout often due to:
+
+| Reason | LVCF Assumption |
+|--------|-----------------|
+| Lack of efficacy | Not plausible |
+| Side effects | Not plausible |
+| Administrative | Unrelated |
+
+---
+
+## LVCF: Additional Problems
+
+Beyond bias, LVCF has other serious flaws:
+
+| Problem | Consequence |
+|---------|-------------|
+| **Underestimates variance** | Treats imputed values as observed; SEs too small |
+| **Violates correlation structure** | Creates artificial "plateaus" in trajectories |
+| **Inflates Type I error** | Variability often increases over time |
+
+# Section 17.6: Mathematical Proof that LVCF is Biased
+
+---
+
+## LVCF Bias: Setup
+
+**Simple two-timepoint design:**
+
+| Component | Description |
+|-----------|-------------|
+| $Y_{i1}$ | Baseline (always observed) |
+| $Y_{i2}$ | Follow-up (sometimes missing) |
+| $\text{trt}_i$ | Treatment (1) vs Control (0) |
+| $R_{i2}$ | 1 if $Y_{i2}$ observed, 0 if missing |
+| $\pi_0$ | $\Pr(R_{i2} = 1 \mid \text{trt}_i = 0)$ (control retention) |
+| $\pi_1$ | $\Pr(R_{i2} = 1 \mid \text{trt}_i = 1)$ (treatment retention) |
+
+---
+
+## LVCF Bias: Pattern Mixture Model (Setup)
+
+Stratify by dropout status (completer vs dropout):
+
+**Change from baseline for controls:**
+
+$$E(Y_{i2} - Y_{i1} \mid \text{trt}_i = 0, R_{i2} = 0) = \alpha_1 \quad \text{(dropouts)}$$
+
+$$E(Y_{i2} - Y_{i1} \mid \text{trt}_i = 0, R_{i2} = 1) = \gamma_1 \quad \text{(completers)}$$
+
+**Interpretation:**
+
+- $\alpha_1$: How control dropouts change from baseline
+- $\gamma_1$: How control completers change from baseline
+
+---
+
+## LVCF Bias: Pattern Mixture Model (Treatment Group)
+
+**Change from baseline for treatment:**
+
+$$E(Y_{i2} - Y_{i1} \mid \text{trt}_i = 1, R_{i2} = 0) = \alpha_1 + \alpha_2 \quad \text{(dropouts)}$$
+
+$$E(Y_{i2} - Y_{i1} \mid \text{trt}_i = 1, R_{i2} = 1) = \gamma_1 + \gamma_2 \quad \text{(completers)}$$
+
+**Parameter interpretation:**
+
+- $\alpha_2$: **Treatment effect** for dropouts
+- $\gamma_2$: **Treatment effect** for completers
+
+---
+
+## LVCF Bias: True Treatment Effect
+
+**Target parameter** (what we want to estimate):
+
+$$\delta = E(Y_{i2} - Y_{i1} \mid \text{trt}_i = 1) - E(Y_{i2} - Y_{i1} \mid \text{trt}_i = 0)$$
+
+**Average over dropout status:**
+
+For treatment group:
+$$E(Y_{i2} - Y_{i1} \mid \text{trt}_i = 1) = (\alpha_1 + \alpha_2)(1 - \pi_1) + (\gamma_1 + \gamma_2)\pi_1$$
+
+For control group:
+$$E(Y_{i2} - Y_{i1} \mid \text{trt}_i = 0) = \alpha_1(1 - \pi_0) + \gamma_1\pi_0$$
+
+**Therefore:**
+$$\delta = \alpha_2 + (\pi_1 - \pi_0)(\gamma_1 - \alpha_1) + \pi_1(\gamma_2 - \alpha_2)$$
+
+---
+
+## LVCF Bias: LVCF Estimand
+
+**LVCF assumption:** $E(Y_{i2} \mid \text{trt}_i, R_{i2} = 0) = E(Y_{i1} \mid \text{trt}_i, R_{i2} = 0)$
+
+Equivalently: $E(Y_{i2} - Y_{i1} \mid \text{trt}_i, R_{i2} = 0) = 0$
+
+This means LVCF assumes $\alpha_1 = \alpha_2 = 0$.
+
+**LVCF treatment effect estimand:**
+
+$$\delta_{\text{LVCF}} = (\gamma_1 + \gamma_2)\pi_1 - \gamma_1\pi_0 = (\pi_1 - \pi_0)\gamma_1 + \pi_1\gamma_2$$
+
+---
+
+## LVCF Bias: General Formula
+
+**Bias = LVCF estimate - True effect:**
+
+$$\text{Bias} = \delta_{\text{LVCF}} - \delta$$
+
+After algebra:
+
+$$\text{Bias} = (\pi_1 - \pi_0)\alpha_1 - (1 - \pi_1)\alpha_2$$
+
+**Key insight:** Bias depends on:
+
+- Retention rate difference: $(\pi_1 - \pi_0)$, scaling the control dropout change $\alpha_1$
+- The treatment-by-dropout interaction $\alpha_2$, entering through $-(1 - \pi_1)\alpha_2$ (equivalently $\alpha_2(\pi_1 - 1)$)
+
+::: {.notes}
+This is the centerpiece result of Section 17.6. The bias is fully determined by the dropout-stratum change parameters alpha_1 (control dropouts' change) and alpha_2 (the extra change for treatment dropouts), weighted by the retention rates. The completer parameters gamma_1, gamma_2 cancel out of the bias because LVCF and the true effect treat completers identically; the discrepancy comes entirely from how the dropouts are handled. Common student error: writing the bias with an extra -alpha_2 term, which double-counts the treatment-dropout contribution. Sanity check it against the MCAR special case on the next slide (set gamma_k = alpha_k) and against the two concrete numeric examples (which set alpha_1 = alpha_2 = 0 so the carried-forward dropouts contribute a pure time-trend artifact).
+:::
+
+---
+
+## LVCF Bias: Under MCAR
+
+**Special case: MCAR dropout**
+
+Under MCAR, dropouts and completers have same expected change:
+$$\gamma_k = \alpha_k \quad \text{for } k = 1, 2$$
+
+True treatment effect: $\delta = \gamma_2 = \alpha_2$
+
+But LVCF gives:
+$$\delta_{\text{LVCF}} = (\pi_1 - \pi_0)\gamma_1 + \pi_1\gamma_2$$
+
+Therefore:
+$$\text{Bias}_{\text{MCAR}} = (\pi_1 - \pi_0)\gamma_1 + (\pi_1 - 1)\gamma_2$$
+
+::: {.notes}
+Set gamma_k = alpha_k in the general bias to get the MCAR case. The two forms agree: with gamma_k = alpha_k, the general (pi_1-pi_0)alpha_1 - (1-pi_1)alpha_2 equals (pi_1-pi_0)gamma_1 + (pi_1-1)gamma_2 term by term, since -(1-pi_1) = (pi_1-1). Use this as the live consistency check on the general formula: if a student wrote the bias with an extra -alpha_2, the MCAR special case would not match. The punchline, next slide: this is nonzero even under MCAR whenever the groups have a real time trend (gamma_1 != 0) and differential retention (pi_1 != pi_0). LVCF manufactures a treatment effect out of the natural time trend.
+:::
+
+---
+
+## LVCF Bias: The Counterintuitive Result
+
+::: {.callout-important}
+## Shocking Conclusion
+
+**Even under MCAR, LVCF is biased!**
+:::
+
+**Why does this happen?**
+
+- LVCF assumes $\alpha_1 = 0$ (no change after dropout)
+- But natural time trend $\gamma_1$ still exists
+- If retention rates differ ($\pi_1 \neq \pi_0$), LVCF misattributes the time trend to treatment effect
+
+---
+
+## LVCF Bias: Concrete Example
+
+**Scenario:** No treatment effect, but response changes over time
+
+| Parameter | Value |
+|-----------|-------|
+| $\gamma_1$ | 2.0 (both groups improve) |
+| $\gamma_2$ | 0 (no treatment effect) |
+| $\pi_0$ | 0.6 (60% control completes) |
+| $\pi_1$ | 0.8 (80% treatment completes) |
+
+**True treatment effect:** $\delta = 0$
+
+**LVCF estimand:**
+$$\delta_{\text{LVCF}} = (0.8 - 0.6) \times 2.0 + 0.8 \times 0 = 0.4$$
+
+**Bias:** 0.4 units (positive bias!)
+
+LVCF creates **spurious treatment effect** where none exists!
+
+::: {.notes}
+Walk the arithmetic slowly. Here alpha_1 = alpha_2 = 0 (the carried-forward dropouts are frozen at baseline, so their "change" is 0 by construction), gamma_1 = 2 (both groups truly improve), gamma_2 = 0 (no real treatment effect), pi_0 = 0.6, pi_1 = 0.8. True delta = 0. LVCF only credits the COMPLETERS with their real improvement, and the treatment arm has more completers (80% vs 60%), so LVCF gives the treatment arm more of the time-trend improvement: (0.8-0.6)*2 = 0.4. The lvcf-bias-sim chunk reproduces this (delta_LVCF about 0.4). The next slide swaps the retention rates and the bias flips sign to -0.4: same machinery, opposite conclusion. That is the proof that LVCF is NOT "conservative."
+:::
+
+---
+
+## LVCF Bias: Example in Opposite Direction
+
+**Scenario:** Same as before but swap dropout rates
+
+| Parameter | Value |
+|-----------|-------|
+| $\gamma_1$ | 2.0 |
+| $\gamma_2$ | 0 (no treatment effect) |
+| $\pi_0$ | 0.8 (80% control completes) |
+| $\pi_1$ | 0.6 (60% treatment completes) |
+
+**True treatment effect:** $\delta = 0$
+
+**LVCF estimand:**
+$$\delta_{\text{LVCF}} = (0.6 - 0.8) \times 2.0 + 0.6 \times 0 = -0.4$$
+
+**Bias:** -0.4 units (negative bias!)
+
+---
+
+## LVCF: Simulation Demonstration
+
+```{r}
+#| label: lvcf-bias-sim
+#| output-location: slide
+
+set.seed(667)
+N <- 1000
+gamma1 <- 2.0  # Both groups improve
+gamma2 <- 0.0  # No treatment effect
+
+# Scenario 1: Higher retention in treatment
+pi0_scenario1 <- 0.6
+pi1_scenario1 <- 0.8
+
+# Scenario 2: Higher retention in control
+pi0_scenario2 <- 0.8
+pi1_scenario2 <- 0.6
+
+simulate_lvcf_bias <- function(N, gamma1, gamma2, pi0, pi1) {
+  # Generate data
+  trt <- rbinom(N, 1, 0.5)
+  y1 <- rnorm(N, 10, 2)  # Baseline
+
+  # True change
+  true_change <- ifelse(trt == 0, gamma1, gamma1 + gamma2) + rnorm(N, 0, 1)
+  y2_true <- y1 + true_change
+
+  # Dropout
+  r2 <- rbinom(N, 1, ifelse(trt == 0, pi0, pi1))
+
+  # LVCF: If dropout, use y1 for y2
+  y2_lvcf <- ifelse(r2 == 1, y2_true, y1)
+
+  # Estimate treatment effect
+  delta_true <- mean(y2_true[trt == 1] - y1[trt == 1]) - mean(y2_true[trt == 0] - y1[trt == 0])
+  delta_lvcf <- mean(y2_lvcf[trt == 1] - y1[trt == 1]) - mean(y2_lvcf[trt == 0] - y1[trt == 0])
+
+  c(true = delta_true, lvcf = delta_lvcf, bias = delta_lvcf - delta_true)
+}
+
+result1 <- simulate_lvcf_bias(N, gamma1, gamma2, pi0_scenario1, pi1_scenario1)
+result2 <- simulate_lvcf_bias(N, gamma1, gamma2, pi0_scenario2, pi1_scenario2)
+
+cat("Scenario 1: pi0=0.6, pi1=0.8 (higher treatment retention)\n")
+cat("  True delta:", round(result1["true"], 2), "\n")
+cat("  LVCF delta:", round(result1["lvcf"], 2), "\n")
+cat("  Bias:", round(result1["bias"], 2), "(favors treatment)\n\n")
+
+cat("Scenario 2: pi0=0.8, pi1=0.6 (higher control retention)\n")
+cat("  True delta:", round(result2["true"], 2), "\n")
+cat("  LVCF delta:", round(result2["lvcf"], 2), "\n")
+cat("  Bias:", round(result2["bias"], 2), "(favors control)\n")
+```
+
+**Bias direction depends on dropout rates!** LVCF is NOT conservative.
+
+---
+
+## LVCF: Summary of Problems
+
+**Three fatal flaws:**
+
+| Flaw | Consequence |
+|------|-------------|
+| **Biased in either direction** | Can favor treatment or control; creates spurious effects |
+| **Underestimates variance** | SEs too small; p-values anti-conservative |
+| **Unrealistic assumptions** | "No change after dropout" rarely plausible |
+
+::: {.callout-warning}
+## Recommendation
+
+**Avoid LVCF** except in rare justified cases (e.g., cure scenarios).
+:::
+
+---
+
+## Pattern-Mixture Models: An Alternative Framework
+
+**Key idea:** Model outcomes differently for different dropout patterns
+
+**Pattern-mixture factorization:**
+
+$$f(Y_i, R_i \mid X_i) = f(Y_i \mid R_i, X_i) \times \Pr(R_i \mid X_i)$$
+
+**Why useful?**
+
+- Directly models heterogeneity across dropout groups
+- Can incorporate sensitivity parameters
+- Natural framework for tipping point analysis
+
+**Challenge:** Unobserved outcomes in dropout groups require assumptions or sensitivity analysis.
+
+---
+
+## Multiple Imputation: The 3-Step Procedure
+
+**Step 1: Create** $m$ complete datasets by imputing missing values $m$ times
+
+- Draw from $f(Y_i^M \mid Y_i^O, X_i)$ using proper model
+- Typically $m = 10-25$ imputations
+
+**Step 2: Analyze** each of the $m$ datasets separately
+
+- Get $\hat{\beta}_1, \ldots, \hat{\beta}_m$ and $\text{SE}_1, \ldots, \text{SE}_m$
+
+**Step 3: Pool** results using Rubin's rules
+
+- Combine estimates accounting for imputation uncertainty
+
+---
+
+## Multiple Imputation: Rubin's Rules
+
+**Combined estimate:**
+$$\hat{\beta}_{\text{MI}} = \frac{1}{m}\sum_{j=1}^m \hat{\beta}_j$$
+
+**Combined variance:**
+$$\text{Var}(\hat{\beta}_{\text{MI}}) = \bar{W} + \frac{m+1}{m}B$$
+
+Where:
+
+| Component | Formula | Interpretation |
+|-----------|---------|----------------|
+| $\bar{W}$ | $\frac{1}{m}\sum_{j=1}^m \text{SE}_j^2$ | Within-imputation variance |
+| $B$ | $\frac{1}{m-1}\sum_{j=1}^m (\hat{\beta}_j - \hat{\beta}_{\text{MI}})^2$ | Between-imputation variance |
+
+---
+
+## Multiple Imputation: Quick Example
+
+```{r}
+#| label: mi-demo
+#| message: false
+#| output-location: slide
+
+library(mice)
+
+# Use MAR data from earlier (small subset for demo)
+dat_mi <- dat_mar %>%
+  dplyr::select(subject, Y_obs.1, Y_obs.2, Y_obs.3, Y_obs.4, Y_obs.5) %>%
+  rename(y1 = Y_obs.1, y2 = Y_obs.2, y3 = Y_obs.3, y4 = Y_obs.4, y5 = Y_obs.5)
+
+# Perform MI (m=10 imputations)
+# method = "pmm": Predictive mean matching (preserves data distribution)
+imp <- mice(dat_mi[, -1], m = 10, method = "pmm", printFlag = FALSE, seed = 667)
+
+# Fit model to each imputed dataset
+fit_mi <- with(imp, lm(y5 ~ y1))
+
+# Pool results using Rubin's rules
+pooled <- pool(fit_mi)
+summary(pooled, conf.int = TRUE)[2, ]
+```
+
+MI properly accounts for imputation uncertainty. (Details in Chapter 18!)
+
+---
+
+## 5. Inverse Probability Weighting (IPW)
+
+**Key idea:** Weight observed data to correct for under-representation
+
+**Weight for subject $i$:**
+
+$$w_i = \frac{1}{\Pr(\text{subject } i \text{ remains in study})}$$
+
+Subjects with low probability of remaining get **high weights** (represent many similar dropouts).
+
+**Calculation for complete-case:**
+
+$$w_i = \frac{1}{\pi_{i1} \times \pi_{i2} \times \cdots \times \pi_{in}}$$
+
+where $\pi_{ik} = \Pr(D_i > k \mid D_i \geq k, Y_{i1}, \ldots, Y_{i,k-1}, X_i)$
+
+---
+
+## IPW: Estimation Procedure
+
+**Step 1:** Estimate dropout probabilities
+
+For each time $k = 2, \ldots, n$:
+
+- Use subjects still at risk at time $k-1$
+- Fit logistic regression for $\Pr(D_i > k \mid D_i \geq k)$
+- Obtain predicted probabilities $\hat{\pi}_{ik}$
+
+**Step 2:** Calculate weights
+
+$$\hat{w}_i = \frac{1}{\hat{\pi}_{i1} \times \hat{\pi}_{i2} \times \cdots \times \hat{\pi}_{in}}$$
+
+**Step 3:** Weighted analysis
+
+- Fit GEE with weights $\hat{w}_i$
+
+---
+
+## IPW: Simple Example
+
+```{r}
+#| label: ipw-demo
+#| output-location: slide
+
+# Using MAR data - estimate dropout at each time
+dat_mar_ipw <- dat_mar %>%
+  dplyr::select(subject, dropout_time, starts_with("Y_obs")) %>%
+  pivot_longer(cols = starts_with("Y_obs"),
+               names_to = "time",
+               values_to = "y",
+               values_drop_na = FALSE) %>%
+  mutate(time = as.numeric(gsub("Y_obs.", "", time)),
+         observed = !is.na(y)) %>%
+  arrange(subject, time) %>%
+  group_by(subject) %>%
+  mutate(y_lag = lag(y)) %>%
+  ungroup()
+
+# Fit dropout model: probability of observing Y at time t given Y at t-1
+dropout_model <- glm(observed ~ y_lag + time,
+                     data = dat_mar_ipw %>% filter(time > 1),
+                     family = binomial)
+
+# Predict probability of staying observed
+dat_mar_ipw$prob_stay <- predict(dropout_model,
+                                 newdata = dat_mar_ipw,
+                                 type = "response")
+
+# Calculate weights
+dat_mar_ipw <- dat_mar_ipw %>%
+  mutate(prob_stay = if_else(time == 1, 1, prob_stay)) %>%
+  group_by(subject) %>%
+  mutate(weight = 1 / cumprod(prob_stay)) %>%
+  ungroup() %>%
+  filter(observed)
+
+# Weighted GEE
+fit_ipw <- geepack::geeglm(y ~ time,
+                           data = dat_mar_ipw,
+                           id = subject,
+                           weights = weight,
+                           corstr = "independence")
+
+# Compare results
+cat("Comparison of slopes:\n")
+cat("  Unweighted GEE slope:", round(coef(fit_gee_mar)[2], 3),
+    "(biased - ignores dropout)\n")
+cat("  Weighted GEE slope:  ", round(coef(fit_ipw)[2], 3),
+    "(corrected for dropout)\n")
+cat("  True slope:           0.250\n")
+```
+
+IPW corrects bias! (Full implementation in Chapter 18)
+
+---
+
+## Methods Summary Table
+
+```{r}
+#| label: tbl-methods-summary
+#| echo: false
+
+methods_summary <- data.frame(
+  Method = c("Complete-case", "Available-data (GEE)", "ML/REML",
+             "LVCF", "Multiple Imputation", "IPW (Weighted GEE)"),
+  MCAR = c("Valid", "Valid", "Valid", "Biased*", "Valid", "Valid"),
+  MAR = c("Biased", "Biased", "Valid (dagger)", "Biased", "Valid (dagger)", "Valid (dagger)"),
+  MNAR = c("Biased", "Biased", "Biased", "Biased", "Biased", "Biased"),
+  Efficiency = c("Low", "Medium", "High", "NA", "High", "Medium-High"),
+  Notes = c("Throws away data", "Uses biased moments", "Needs correct Sigma",
+            "Never recommended", "Accounts for uncertainty", "Needs correct dropout model")
+)
+
+kable(methods_summary,
+      caption = "Summary of methods for handling dropout") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), font_size = 11) %>%
+  column_spec(1, bold = TRUE, width = "20%") %>%
+  row_spec(0, bold = TRUE) %>%
+  footnote(general = "* Even under MCAR! (dagger) If model correctly specified",
+           general_title = "Notes: ")
+```
+
+---
+
+## Check Your Understanding: Part IV
+
+::: {.callout-tip}
+## Quick Self-Check
+
+1. **LVCF Bias:** A treatment arm has 80% retention and a control arm has 60% retention. Both groups naturally improve by 3 units over time (no treatment effect). What bias will LVCF introduce?
+
+2. **IPW Concept:** Subject A has a 90% probability of remaining in the study; Subject B has a 30% probability. What are their IPW weights, and why does B get a larger weight?
+
+3. **Multiple Imputation:** Why do we impute multiple times (e.g., $m=20$) instead of just once?
+:::
+
+::: {.callout-note collapse="true"}
+## Answers
+
+1. Using the LVCF bias formula: $\text{Bias} = (\pi_1 - \pi_0)\gamma_1 = (0.8 - 0.6) \times 3 = 0.6$ units.
+   LVCF will show a **spurious treatment effect of 0.6 units** favoring treatment, even though the true effect is zero!
+
+2. Subject A: weight = $1/0.9 = 1.11$; Subject B: weight = $1/0.3 = 3.33$.
+   Subject B gets a larger weight because they are "rare" - their type of subject (low probability of remaining) is underrepresented in the observed data. B's observation needs to count for ~3 similar subjects who dropped out.
+
+3. Single imputation treats imputed values as if they were observed, **underestimating variance**. Multiple imputation captures the uncertainty in the imputation process through the between-imputation variance term in Rubin's rules. This gives correct standard errors and valid confidence intervals.
+:::
+
+::: {.callout-important}
+## The LVCF Fallacy
+
+**Never assume LVCF is "conservative."** The direction of bias depends on:
+
+- Differential dropout rates between groups
+- The natural trajectory of the outcome
+- The true treatment effect
+
+LVCF can create false positive results, false negative results, or attenuate/exaggerate true effects depending on these factors.
+:::
+
+# Part V: Practical Guidance
+
+---
+
+## Decision Framework
+
+```
+                Missing Data in Longitudinal Study
+                            |
+                            v
+        +-------------------------------------------+
+        | Missingness completely unrelated to Y?    |
+        +-----------------------+-------------------+
+                      |
+        +-------------+----------------+
+        |                              |
+       YES (MCAR)                     NO
+        |                              |
+        v                              v
+  +--------------+     +-------------------------------+
+  |    MCAR      |     | Predictable from observed Y?  |
+  |              |     +---------------+---------------+
+  | Any method:  |             |
+  | - ML/REML    |    +--------+----------+
+  | - GEE        |   YES (MAR)           NO (MNAR)
+  | - CC valid   |    |                   |
+  +--------------+    v                   v
+                +--------------+    +-----------------+
+                |     MAR      |    |      MNAR       |
+                |              |    |                 |
+                | Methods:     |    | Joint models:   |
+                | - ML/REML    |    | - Selection     |
+                | - MI         |    | - Pattern-mix   |
+                | - IPW-GEE    |    | - Sensitivity   |
+                +--------------+    +-----------------+
+```
+
+---
+
+## Practical Recommendations
+
+| Recommendation | Details |
+|----------------|---------|
+| **Default: MAR** | MCAR too restrictive; MAR allows likelihood-based inference |
+| **Model covariance carefully** | Try UN, AR(1), CS; use AIC/BIC for selection |
+| **Avoid LVCF** | Biased even under MCAR; only use if scientifically justified |
+| **Use modern methods** | ML/REML with correct model; MI; IPW for marginal models |
+
+---
+
+## Sensitivity Analysis
+
+**Always conduct sensitivity analyses!**
+
+**Under MAR:**
+
+- Try different covariance structures
+- Try different imputation models
+- Compare ML vs MI vs IPW
+
+**Under MNAR (or suspicion thereof):**
+
+- Specify multiple plausible MNAR models
+- Report range of estimates
+- Use pattern-mixture models with different assumptions
+- Tipping point analysis
+
+---
+
+## Tipping Point Analysis: Quantifying Robustness
+
+**Question:** How strong would MNAR have to be to overturn our conclusion?
+
+**Approach:**
+
+1. Start with MAR analysis (e.g., treatment effect = 5 units, p < 0.05)
+
+2. Introduce sensitivity parameter $\delta$:
+   $$E(Y_{\text{missing}} \mid Y_{\text{obs}}, X) = E_{\text{MAR}}(Y_{\text{missing}} \mid Y_{\text{obs}}, X) + \delta$$
+
+3. Re-analyze for range of $\delta$ values
+
+4. Find **tipping point**: smallest $|\delta|$ where conclusion changes
+
+**Interpretation:**
+
+- Small $|\delta_{\text{tip}}|$: conclusion fragile
+- Large $|\delta_{\text{tip}}|$: conclusion robust
+
+---
+
+## Reporting Checklist
+
+**Describe missingness patterns:**
+
+- Table showing $n$ observed at each time
+- Reasons for missing data (if known)
+- Dropout vs intermittent missingness
+
+**State assumption about missing data mechanism:**
+
+- MCAR, MAR, or MNAR
+- Justification based on study design/subject matter
+
+**Describe method used:**
+
+- Complete-case, ML, MI, IPW, etc.
+- Model specifications (mean + covariance)
+- Software used
+
+---
+
+## Reporting Checklist (continued)
+
+**Report sensitivity analyses:**
+
+- Multiple methods (if reasonable)
+- Multiple models under MAR
+- MNAR scenarios (if applicable)
+
+**Interpret appropriately:**
+
+- Acknowledge limitations
+- Discuss plausibility of MAR
+- If substantial dropout, acknowledge uncertainty
+
+**Example statement:**
+
+> "We analyzed data using maximum likelihood under the assumption that data are missing at random (MAR), conditional on observed outcomes and baseline covariates. We modeled the covariance using an unstructured matrix and confirmed robustness using multiple imputation with $m=20$ imputations."
+
+---
+
+## Common Pitfalls to Avoid
+
+| Pitfall | Reality |
+|---------|---------|
+| "The data are MCAR because dropout seems random" | MCAR is a strong assumption, rarely justified |
+| "LVCF is conservative" | NO! Bias can go either direction |
+| "GEE handles missing data" | Standard GEE valid under MCAR only |
+| "Using all available data is always better than complete-case" | Under MAR, both are biased! |
+
+---
+
+## Common Pitfalls (continued)
+
+| Pitfall | Reality |
+|---------|---------|
+| "My model is correct so MAR inference is valid" | Must check covariance specification! |
+| "MI means I can ignore missing data" | MI requires correct imputation model |
+| "Small amount of missing data means not a problem" | Even 10% missing can cause substantial bias |
+
+---
+
+## Illustrative Workflow: Putting It All Together
+
+::: {.callout-note}
+The numbers below are an **instructor illustration** (not a real analysis); they show how to reason from dropout reasons to a mechanism and an analysis plan.
+:::
+
+**Hypothetical trial:** Depression treatment, 4 visits over 12 weeks
+
+| Visit | Sample Size | Cumulative Dropout |
+|-------|-------------|-------------------|
+| Baseline | 200 | 0% |
+| Week 4 | 180 | 10% |
+| Week 8 | 155 | 22.5% |
+| Week 12 | 130 | 35% |
+
+**Main reasons for dropout (from exit interviews):**
+
+- Lack of improvement (40%)
+- Side effects (30%)
+- Moved/lost contact (20%)
+- Improved and stopped (10%)
+
+---
+
+## Case Study: Analysis
+
+**Assessment:**
+
+| Reason | Likely Mechanism |
+|--------|------------------|
+| Lack of improvement | MAR (predictable from observed trajectory) |
+| Side effects | MAR (predictable from observed symptoms) |
+| Moved/lost contact | MCAR (unrelated to outcome) |
+| Improved and stopped | MAR or MNAR |
+
+**Overall:** Likely **MAR**
+
+**Recommended approach:**
+
+1. Primary: ML with unstructured covariance
+2. Sensitivity: Multiple imputation (m=20)
+3. Sensitivity: IPW-GEE
+4. Sensitivity: Complete-case (expect bias)
+5. MNAR sensitivity: Pattern-mixture
+
+---
+
+## Illustrative Results Comparison (hypothetical numbers)
+
+::: {.callout-warning}
+The treatment effects, SEs, and p-values below are **fabricated for illustration** (not estimated from data). They show the *shape* of a sensitivity-analysis table: MAR methods agreeing, MNAR scenarios spanning a range.
+:::
+
+```{r}
+#| label: case-study-results
+#| echo: false
+
+# Hypothetical / illustrative numbers (NOT computed from data) - shape of a
+# sensitivity table only
+results_case <- data.frame(
+  Method = c("Complete-case", "ML (UN)", "MI (m=20)", "IPW-GEE", "MNAR (worse)", "MNAR (better)"),
+  Treatment_Effect = c(-2.8, -3.5, -3.4, -3.6, -2.9, -4.1),
+  SE = c(0.8, 0.9, 0.95, 1.0, 1.1, 1.0),
+  P_value = c(0.001, "<0.001", "<0.001", "<0.001", 0.008, "<0.001")
+)
+
+kable(results_case, row.names = FALSE,
+      col.names = c("Method", "Treatment Effect", "SE", "P-value"),
+      caption = "Hypothetical results: Change in depression score (negative = improvement)") %>%
+  kable_styling(bootstrap_options = "striped", font_size = 13) %>%
+  row_spec(2:4, background = "#E8F4F8") %>%
+  footnote(general = "MAR methods (rows 2-4) give consistent results; MNAR scenarios show range of uncertainty")
+```
+
+**Conclusion:** Robust effect under MAR; some sensitivity to MNAR assumptions but qualitative conclusion unchanged.
+
+---
+
+## Key Takeaways
+
+**Three critical insights:**
+
+| Insight | Details |
+|---------|---------|
+| **Mechanism matters** | MCAR: any method; MAR: need likelihood/weighted; MNAR: must model missingness |
+| **LVCF is problematic** | Biased even under MCAR; direction depends on dropout rates |
+| **Modern methods are accessible** | ML/REML (nlme, lme4); MI (mice, Amelia); IPW (geepack) |
+
+---
+
+## Key Takeaways (continued)
+
+**Practical wisdom:**
+
+- Assume MAR as default (not MCAR)
+- Model covariance carefully under MAR
+- Avoid LVCF except in rare justified cases
+- Conduct sensitivity analyses always
+- Report clearly what assumption you're making
+- Acknowledge uncertainty when substantial missing data
+
+---
+
+## Looking Ahead: Chapter 18
+
+Next lecture will cover:
+
+**Multiple Imputation in detail**
+
+- Proper imputation models
+- Software implementation
+- Combining results
+
+**Inverse Probability Weighting in detail**
+
+- Estimating weights
+- Stabilized weights
+- Doubly robust methods
+
+**Advanced Topics**
+
+- Joint models for outcome + missingness
+- Pattern-mixture models
+- Sensitivity analysis frameworks
+
+---
+
+## Resources & Further Reading
+
+**Key Papers:**
+
+- Rubin (1976): MCAR/MAR/MNAR taxonomy
+- Little & Rubin (2002): *Statistical Analysis with Missing Data*
+- Laird (1988): Missing data in longitudinal studies
+- Kenward & Molenberghs (1998): Methods for handling dropout
+
+**Critiques of LVCF:**
+
+- Molenberghs & Verbeke (2005, Chapter 27)
+- Cook et al. (2004)
+- Kenward & Molenberghs (2009)
+
+---
+
+## Common Mistakes in Missing Data Analysis
+
+::: {.callout-warning}
+## Top 10 Errors to Avoid
+
+| # | Mistake | Correct Approach |
+|---|---------|------------------|
+| 1 | Assuming MCAR without justification | Assume MAR as default; provide evidence if claiming MCAR |
+| 2 | "LVCF is conservative" | LVCF can bias in either direction; avoid unless scientifically justified |
+| 3 | "GEE handles missing data automatically" | Standard GEE only valid under MCAR; use IPW-GEE for MAR |
+| 4 | Ignoring covariance under MAR | ML under MAR requires correct covariance specification |
+| 5 | "More data is always better than complete-case" | Both are biased under MAR; neither is valid |
+| 6 | Single imputation | Use multiple imputation to account for uncertainty |
+| 7 | Not reporting missing data details | Always document rates, patterns, and assumed mechanism |
+| 8 | Skipping sensitivity analysis | Always assess robustness, especially if >10% missing |
+| 9 | "Small amount of missing is okay to ignore" | Even 10-15% missing can cause substantial bias under MAR/MNAR |
+| 10 | Treating "ignorable" as "can ignore" | "Ignorable" means ignore the missingness MODEL, not the problem |
+:::
+
+---
+
+## Summary
+
+Missing data are ubiquitous in longitudinal studies and require careful handling.
+
+**Framework:**
+
+1. Understand the **mechanism** (MCAR/MAR/MNAR)
+2. Choose **appropriate method** for that mechanism
+3. Model carefully (especially covariance under MAR)
+4. Conduct **sensitivity analyses**
+5. **Report transparently**
+
+**Remember:**
+
+- MAR is default assumption (not MCAR)
+- Likelihood-based methods valid under MAR if model correct
+- LVCF should be avoided
+- Modern methods (ML, MI, IPW) are accessible and preferred
+
+**Next:** Chapter 18 - Deep dive into MI and IPW methods
+
+---

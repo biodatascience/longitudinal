@@ -1,0 +1,1580 @@
+---
+title: "BIOS 667 - Lecture 18: Missing Data and Dropout - Multiple Imputation and Weighting (Ch. 18)"
+subtitle: "Fitzmaurice, Laird & Ware (2011) - Applied Longitudinal Data Analysis"
+author: "Naim Rashid"
+format:
+  revealjs:
+    theme: [default]
+    footer: BIOS 667 · UNC Gillings - Lecture 18 (Ch.18)
+    slide-number: true
+    hash: true
+    toc: false
+    code-overflow: wrap
+    code-line-numbers: false
+    math: mathjax
+    incremental: true
+    embed-resources: true
+    chalkboard: false
+    css: "../../unc-gillings.css"
+    scrollable: true
+execute:
+  warning: false
+  message: false
+---
+
+## Lecture Objectives
+
+This is **FLW Chapter 18**: the two methods you reach for when a likelihood-based analysis is no longer straightforward.
+
+- **Multiple imputation** (FLW 18.2): fill in, analyze, pool with Rubin's rules
+- **Inverse-probability-weighted GEE** (FLW 18.3): reweight observed data to correct MAR dropout in marginal models
+- Apply both to a **real FLW dataset** (TLC blood-lead trial, Section 18.4)
+- Use **pattern-mixture** and **selection** models as MNAR **sensitivity** tools
+- Map each method to its HW skill: MI and IPW-GEE feed HW6
+
+::: {.notes}
+This deck assumes L17 (Ch. 17) already covered the missing-data taxonomy and ignorability. Ch. 18 is the "what do you actually do" chapter. Set the frame early: MI and IPW-GEE are the two co-primary methods FLW develops here. The pattern-mixture and selection material is sensitivity analysis, not the headline. Roughly 5 minutes on objectives + roadmap + recall.
+:::
+
+---
+
+## Roadmap (delivered across 2 class periods)
+
+| Part | Topics | Day |
+|:-----|:-------|:----|
+| **I** | Recall: mechanisms and dropout; notation | 1 |
+| **II** | Multiple imputation (Rubin's rules) | 1 |
+| **III** | IPW / weighted GEE | 1 |
+| **IV** | Real Case Study: TLC trial (MI) | 2 |
+| **V** | MNAR sensitivity analysis (pattern-mixture, selection, delta) | 2 |
+| **VI** | Practical guidance, SAS, and summary | 2 |
+
+::: {.notes}
+Day 1 = Parts I-III (recall + the two co-primary methods). Day 2 = Parts IV-VI (real case study, sensitivity analysis, wrap-up). Each Part is a self-contained block. Adjust if your class moves faster on the recall.
+:::
+
+# Part I (Day 1): Recall and Notation
+
+---
+
+## Recall from Lecture 17 (Ch. 17)
+
+Lecture 17 covered the missing-data taxonomy. A one-line refresher:
+
+| Mechanism | Missingness depends on | Valid simple analysis |
+|:----------|:-----------------------|:----------------------|
+| **MCAR** | nothing | complete-case, ML, GEE |
+| **MAR** | observed data only | likelihood (ML/REML), MI, IPW-GEE |
+| **MNAR** | the unobserved response | needs sensitivity analysis |
+
+::: {.callout-note}
+## The one fact that drives this chapter
+Likelihood-based methods (ML/REML) are valid under **MAR** with a correctly specified model. But **standard GEE for discrete responses needs MCAR**. Ch. 18 gives two fixes that extend to MAR: **multiple imputation** and **IPW-GEE**.
+:::
+
+::: {.notes}
+Do NOT re-derive MCAR/MAR/MNAR here. Students saw the probability statements in L17. Spend at most 3-4 minutes confirming they remember the hierarchy, then move on. The callout is the bridge into the whole chapter: the GEE-needs-MCAR gap is exactly what 18.2 and 18.3 close.
+:::
+
+---
+
+{{< include _notation_box.qmd >}}
+
+---
+
+## Notation for this lecture (Ch. 18)
+
+::: {.notation-card style="font-size: 0.8em;"}
+
+| Symbol | Meaning (Ch. 18 local) |
+|:--|:--|
+| $R_{ij}$ | **response/missingness indicator**: $1$ if $Y_{ij}$ observed, $0$ if missing |
+| $D_i$ | dropout occasion, $D_i = 1 + \sum_j R_{ij}$ (FLW p. 526) |
+| $Y_i^{obs}, Y_i^{mis}$ | observed and missing parts of $\mathbf{Y}_i$ |
+| $\pi_{ij}$ | $\Pr(R_{ij}=1 \mid R_{i1}=\cdots=R_{i,j-1}=1, \cdot)$: conditional prob. of remaining |
+| $w_{ij}$ | IPW weight $= 1/(\pi_{i1}\pi_{i2}\cdots\pi_{ij})$ (FLW p. 529) |
+| $W, B, T$ | Rubin within-, between-, and total imputation variance |
+| $\delta$ | MNAR delta-adjustment offset on imputed values |
+
+:::
+
+::: {.callout-warning}
+## Notation collision, read carefully
+In this chapter $R_{ij}$ is the **missingness indicator**. This is the FLW Ch. 17-18 convention. It is **NOT** the course-canonical $R_i$ = within-subject **residual covariance** matrix from Chapters 7-8. Different object, same letter.
+:::
+
+::: {.notes}
+This slide exists specifically because of the $R$ collision. Say it out loud: capital-R-subscript-ij here means "was it observed", not the residual covariance. The residual covariance $R_i$ does not appear in this deck. Also flag $D_i$ = dropout occasion (a scalar summary of the $R_{ij}$ vector when missingness is monotone), and the weight $w_{ij}$ which we build in Part III.
+:::
+
+---
+
+## Dropout vs Intermittent Missing
+
+| Type | Pattern | Example |
+|:-----|:--------|:--------|
+| **Monotone dropout** | Once missing, stays missing | Subject withdraws from study |
+| **Intermittent** | Missing at some visits, returns later | Missed appointment |
+
+Dropout is the most common pattern in longitudinal studies.
+
+---
+
+## Why Dropout Is Problematic
+
+If dropout is related to the **unobserved** outcomes (MNAR):
+
+- The completers are a non-representative subsample
+- A complete-case analysis is biased
+- Even MAR breaks **standard GEE** for discrete responses
+
+::: {.callout-note}
+## What FLW Ch. 18 gives you
+Two co-primary methods that work under **MAR**: **multiple imputation** (Part II) and **IPW-GEE** (Part III). Then, because MAR cannot be checked from the data, **sensitivity analysis** for MNAR (Part V).
+:::
+
+::: {.notes}
+This closes Part I (the recall block). Total Part I time is short: roughly 10-12 minutes including notation. The simulated illustrative datasets used later are built in a hidden setup chunk so we can move straight into MI. Transition: "Method one, multiple imputation."
+:::
+
+---
+
+```{r}
+#| label: setup-shared
+#| include: false
+suppressPackageStartupMessages({
+  library(dplyr)
+  library(tidyr)
+  library(ggplot2)
+  library(nlme)
+  library(mice)
+  library(broom)
+  library(geepack)
+})
+
+# ----------------------------------------------------------------------
+# Illustrative MNAR DGP (labeled simulation), used in the sensitivity
+# section. This is a teaching data generator, NOT a fabricated diagnostic.
+# Dropout is a MONOTONE, post-baseline process: baseline (time 0) is fully
+# observed; from time 1 onward a subject can drop out, and once gone stays
+# gone. The MNAR hazard depends on the CURRENT (about-to-be-unobserved) y.
+# ----------------------------------------------------------------------
+set.seed(667)
+N <- 200
+n_times <- 5
+times <- 0:(n_times - 1)
+
+b0  <- rnorm(N, 0, 2)
+b1  <- rnorm(N, 0, 0.3)
+trt <- rep(c(0, 1), each = N / 2)
+
+dat_complete <- expand.grid(id = 1:N, time = times) |>
+  arrange(id, time) |>
+  mutate(
+    trt = trt[id], b0 = b0[id], b1 = b1[id],
+    y_true = 20 - 0.5 * time - 2 * trt - 0.8 * trt * time + b0 + b1 * time,
+    eps = rnorm(n(), 0, 1.5),
+    y = y_true + eps
+  )
+
+# Monotone MNAR dropout: hazard active only for time >= 1; depends on current y.
+dat_mnar <- dat_complete |>
+  group_by(id) |>
+  mutate(
+    haz = ifelse(time == 0, 0, plogis(-4 + 0.18 * y)),  # baseline never drops
+    drop_event = rbinom(n(), 1, haz),
+    dropped = cumsum(drop_event) > 0,                    # once gone, stays gone
+    observed = !dropped
+  ) |>
+  ungroup() |>
+  mutate(y_obs = ifelse(observed, y, NA))
+
+# Truth model on the complete data (defined here so every later chunk can use it).
+fit_truth <- lme(y ~ time * trt, random = ~ 1 | id,
+                 data = dat_complete, method = "REML")
+```
+
+---
+
+## Check Your Understanding: Part I
+
+::: {.callout-tip}
+## Quick Self-Check
+
+1. **Mechanism:** A subject drops out because of the poor outcome they would have reported at the missed visit. MCAR, MAR, or MNAR?
+
+2. **GEE gap:** Why does standard GEE for a binary response need MCAR, while a linear mixed model only needs MAR?
+
+3. **Direction:** If subjects with higher current $Y$ drop out, are the observed means biased up or down?
+:::
+
+::: {.callout-note collapse="true"}
+## Answers
+
+1. **MNAR** - dropout depends on the unobserved (would-be) response.
+
+2. The linear mixed model uses the full likelihood, which factors so the MAR missingness mechanism is ignorable. Standard GEE is not likelihood-based; it solves an estimating equation that is unbiased only if the observed cases are a random subset (MCAR). MI and IPW-GEE repair this to MAR.
+
+3. **Downward** - the high-$Y$ subjects leave, so the surviving (observed) sample has systematically lower $Y$.
+:::
+
+::: {.notes}
+Keep this brief. Q2 is the conceptual hinge of the whole chapter: likelihood ignorability vs estimating-equation bias. If students get only one thing from Part I, it is that GEE needs the stronger MCAR and Ch. 18 fixes that.
+:::
+
+# Part II (Day 1): Multiple Imputation
+
+---
+
+## Multiple Imputation: Concept
+
+FLW 18.2. A three-step process:
+
+1. **Impute** each missing value $m$ times, creating $m$ completed datasets
+2. **Analyze** each completed dataset with standard complete-data methods
+3. **Pool** the $m$ results with Rubin's rules
+
+Valid under **MAR** when the imputation model is correctly specified.
+
+::: {.callout-warning}
+## Single imputation is wrong
+Filling each gap with one value and analyzing as if complete treats imputed values as known. FLW calls the result **anti-conservative**: p-values too small, CIs too narrow (p. 516). Multiple imputation injects the imputation uncertainty back in.
+:::
+
+::: {.notes}
+Emphasize WHY multiple, not single. The whole machinery of Rubin's rules exists to propagate the uncertainty that single imputation throws away. Monotone vs non-monotone patterns matter for HOW you impute (18.2.1 regression / predictive mean matching for monotone; 18.2.2 data augmentation / chained equations for non-monotone), but the pooling is the same.
+:::
+
+---
+
+## Rubin's Combining Rules
+
+For a scalar parameter $\theta$ with $m$ imputations (FLW p. 516-517):
+
+**Point estimate** (average of the $m$ estimates):
+$$\bar{\theta} = \frac{1}{m} \sum_{k=1}^{m} \hat{\theta}_k$$
+
+**Total variance** $=$ within $+$ inflated between:
+$$T = \bar{W} + \left(1 + \frac{1}{m}\right) B,
+\qquad B = \frac{1}{m-1}\sum_{k=1}^{m}(\hat\theta_k - \bar\theta)^2$$
+
+$\bar W$ = average within-imputation variance; $B$ = between-imputation variance.
+
+::: {.notes}
+The $(1 + 1/m)$ factor is the finite-$m$ correction: with infinitely many imputations it would just be $\bar W + B$. This is exactly FLW eq. on p. 517. We will compute $W$, $B$, $T$ by hand in the Case Study so students see `pool()` is not a black box.
+:::
+
+---
+
+## Monotone vs Non-monotone Imputation
+
+| Pattern | FLW method (18.2.1-2) | R |
+|:--------|:----------------------|:--|
+| **Monotone** dropout | sequential regression / predictive mean matching | `mice` (or by hand) |
+| **Non-monotone** | data augmentation (MCMC) or chained equations (MICE) | `mice` |
+
+::: {.callout-note}
+## Auxiliary variables (FLW p. 524-525)
+Include variables that predict missingness and the outcome even if they are not in your analysis model (for example, side-effect indicators). They make MAR more plausible and improve the imputations. `mice` lets the imputation model be richer than the analysis model.
+:::
+
+::: {.notes}
+FLW spends 18.2.1 on monotone (the clean case: impute Y2 from Y1, then Y3 from Y1,Y2, ...) and 18.2.2 on non-monotone (needs iterative MCMC/chained equations). `mice` defaults to chained equations so it handles both. The auxiliary-variable point is one of the three scenarios FLW says MI beats likelihood (p. 524).
+:::
+
+# Part III (Day 1): Inverse-Probability-Weighted GEE
+
+---
+
+## The Problem IPW Solves (FLW 18.3)
+
+For a **discrete** longitudinal response there is no convenient joint likelihood, so we use **GEE**. But:
+
+- Standard GEE is consistent only under **MCAR**
+- Under MAR dropout, standard GEE can be **badly biased** (FLW p. 528)
+
+**IPW-GEE** weights each observed response by the inverse probability that the subject was still in the study, restoring consistency under MAR.
+
+::: {.notes}
+This is the co-primary method that the original deck was missing. Frame it as the GEE analog of what likelihood does for free: likelihood "automatically" handles MAR; GEE does not, so we patch the estimating equation with weights. Restrict to dropout (monotone) as FLW does (p. 526).
+:::
+
+---
+
+## IPW Weights: the Idea
+
+Let $\pi_{ij} = \Pr(R_{ij}=1 \mid \text{observed through } j-1,\ X_i,\ \text{past } Y)$
+be the conditional probability of remaining in the study at occasion $j$.
+
+The **unconditional** probability of being observed at $j$ is the cumulative product
+$\pi_{i1}\pi_{i2}\cdots\pi_{ij}$, so the weight is its inverse (FLW p. 529):
+
+$$w_{ij} = \big(\pi_{i1}\,\pi_{i2}\cdots\pi_{ij}\big)^{-1}.$$
+
+With $R_{i1}=1$ for everyone, $\pi_{i1}=1$ and $w_{i1}=1$. A subject who completes despite a 0.25 chance of doing so gets weight 4: she counts once for herself and 3 times for similar subjects who dropped out.
+
+::: {.notes}
+The "counts for herself plus the ones who look like her but left" intuition (FLW p. 527) is the single best way to explain inverse-probability weighting. Make sure they see that observed responses get weight $w_{ij}$ and unobserved ones get weight 0.
+:::
+
+---
+
+## Estimating the Weights
+
+Fit a **logistic regression** for the probability of remaining, using only observed history (FLW p. 530):
+
+$$\operatorname{logit}(\pi_{ij}) = \theta_1 Z_{ij1} + \cdots + \theta_q Z_{ijq},$$
+
+where $Z_{ij}$ holds covariates, indicators for occasion, and **past observed responses** $Y_{i,j-1},\dots$
+
+Build a **stacked** dataset: each subject contributes a binary $R_{ij}$ (observed?) from occasion 2 until dropout (or the last visit). Then $\hat\pi_{ij}$ are fitted values, and $\hat w_{ij}$ follows.
+
+::: {.callout-warning}
+## Two cautions FLW flags (p. 529)
+1. Small $\hat\pi_{ij}$ give **huge weights** that destabilize the fit. Inspect the weight distribution.
+2. With standard software, weights enter the GEE correctly only under a **working-independence** correlation (`corstr = "independence"`).
+:::
+
+::: {.notes}
+This is the recipe. The "stacked dataset" is the trick: turn "were you observed at occasion j given you were here at j-1" into a sequence of binary outcomes and run one logistic regression. Stress the working-independence requirement: it is why we set corstr="independence" in geeglm with weights.
+:::
+
+---
+
+## IPW-GEE: Worked Example (illustrative binary DGP)
+
+```{r}
+#| label: ipw-sim
+#| echo: true
+#| output-location: slide
+# Illustrative DGP (labeled simulation): binary "amenorrhea" response,
+# rising over time, two dose groups. MONOTONE MAR dropout: women NOT
+# experiencing the event (yprev = 0) are far more likely to drop out.
+set.seed(667)
+Nn <- 400; vtimes <- c(3, 6, 9, 12)
+bi   <- rnorm(Nn, 0, 1.2)
+dose <- rep(c(0, 1), each = Nn / 2)
+
+ipw_long <- expand.grid(id = 1:Nn, t = vtimes) |>
+  arrange(id, t) |>
+  mutate(dose = dose[id], bi = bi[id],
+         eta = -1.6 + 0.16 * t + 0.45 * dose + bi,
+         y_full = rbinom(n(), 1, plogis(eta))) |>
+  group_by(id) |>
+  mutate(occ = row_number(), yprev = lag(y_full)) |>
+  ungroup()
+
+# Monotone MAR dropout: depends on PREVIOUS observed response (observed -> MAR).
+set.seed(2024)
+ipw_long <- ipw_long |>
+  group_by(id) |>
+  mutate(p_drop = ifelse(occ == 1, 0,
+                         plogis(-0.4 - 2.0 * replace(yprev, is.na(yprev), 0))),
+         observed = cumsum(rbinom(n(), 1, p_drop)) == 0) |>
+  ungroup() |>
+  mutate(y = ifelse(observed, y_full, NA))
+
+round(tapply(ipw_long$observed, ipw_long$occ, mean), 3)  # % observed by occasion
+```
+
+---
+
+## Step 1-2: Estimate Propensities, Form Weights
+
+```{r}
+#| label: ipw-weights
+#| echo: true
+#| output-location: slide
+# Stacked data: from occasion 2, among those observed at the prior occasion.
+stacked <- ipw_long |>
+  group_by(id) |>
+  mutate(prev_obs = lag(observed, default = TRUE)) |>
+  ungroup() |>
+  filter(occ >= 2, prev_obs) |>
+  mutate(R = as.integer(observed))
+
+# Logistic model for remaining in the study (uses past observed response).
+pi_model <- glm(R ~ factor(t) + dose + yprev, data = stacked, family = binomial)
+
+# Predicted pi_ij for each subject-occasion, then cumulative-product weight.
+wdat <- ipw_long |>
+  group_by(id) |>
+  mutate(prev_obs = lag(observed, default = TRUE)) |>
+  ungroup()
+wdat$pi_hat <- 1
+idx <- wdat$occ >= 2 & wdat$prev_obs
+wdat$pi_hat[idx] <- predict(pi_model, newdata = wdat[idx, ], type = "response")
+
+wdat <- wdat |>
+  group_by(id) |>
+  arrange(occ) |>
+  mutate(w = 1 / cumprod(ifelse(is.na(pi_hat), 1, pi_hat))) |>
+  ungroup()
+
+obs_dat <- wdat |> filter(observed)
+summary(obs_dat$w)   # inspect for extreme weights (FLW p. 529 caution)
+```
+
+---
+
+## Step 3: Fit Weighted vs Unweighted GEE
+
+```{r}
+#| label: ipw-fit
+#| echo: true
+#| output-location: slide
+# Weights require working-independence in standard GEE software (FLW p. 530).
+gee_unw <- geeglm(y ~ factor(t) + dose, id = id, data = obs_dat,
+                  family = binomial, corstr = "independence")
+gee_ipw <- geeglm(y ~ factor(t) + dose, id = id, data = obs_dat,
+                  weights = w, family = binomial, corstr = "independence")
+# "Truth": the full-data fit we would have gotten with no dropout.
+gee_full <- geeglm(y_full ~ factor(t) + dose, id = id, data = ipw_long,
+                   family = binomial, corstr = "independence")
+
+data.frame(
+  term       = names(coef(gee_full)),
+  full_data  = round(coef(gee_full), 3),
+  unweighted = round(coef(gee_unw), 3),
+  IPW_GEE    = round(coef(gee_ipw), 3),
+  row.names  = NULL
+)
+```
+
+---
+
+## IPW-GEE: Reading the Result
+
+```{r}
+#| label: ipw-read
+#| echo: false
+b_full <- coef(gee_full); b_unw <- coef(gee_unw); b_ipw <- coef(gee_ipw)
+```
+
+The time trend is the biased parameter. Because women without the event drop out, the unweighted observed sample is **enriched** for the event over time, so the time effect is **overstated**.
+
+- Full-data log-OR at 12 months: **`r round(b_full["factor(t)12"], 3)`**
+- Unweighted GEE (biased): **`r round(b_unw["factor(t)12"], 3)`**
+- IPW-GEE (reweighted; corrects the direction, can overshoot): **`r round(b_ipw["factor(t)12"], 3)`**
+
+::: {.callout-note}
+## What to conclude
+Standard GEE under MAR dropout overstates the rise; IPW-GEE reweights the survivors and pulls the time trend back down across the full-data value (it can slightly overshoot in a single draw, since the weights are estimated). The time trend is the teaching contrast here; the noisier dose coefficient is not reliably debiased in one simulated draw. IPW-GEE needs the **dropout model** correct, not the working covariance.
+:::
+
+::: {.notes}
+Inline-R the three numbers so they never drift from the chunk. The teaching point is the contrast in the TIME trend, not the dose coefficient (the bias is larger and more interpretable there). If a student asks why IPW slightly overshoots: estimated weights have finite-sample noise, and a single simulated dataset is one draw. That is honest and fine. Note SEs from geeglm treat weights as fixed (FLW p. 531): slightly conservative, which is acceptable.
+:::
+
+---
+
+## IPW-GEE vs MI: When to Use Which
+
+| | Multiple Imputation | IPW-GEE |
+|:--|:--|:--|
+| Models | $f(Y^{mis}\mid Y^{obs},X)$ | the dropout propensity $\pi_{ij}$ |
+| Needs correct | imputation model | dropout model |
+| Best for | continuous, missing covariates, auxiliary vars | discrete responses, marginal/GEE, dropout-only |
+| Valid under | MAR | MAR |
+
+Both extend the analysis to **MAR**; neither rescues true **MNAR** without further assumptions.
+
+::: {.notes}
+FLW frames these as the two co-primary tools. MI is more general (handles missing covariates, non-monotone, auxiliary variables); IPW is cleaner for discrete GEE with monotone dropout. They are doubly-robust when combined, but that is beyond this chapter.
+:::
+
+# Part IV (Day 2): Case Study - TLC Trial (MI)
+
+---
+
+## Recap of Day 1
+
+- **MI** (18.2): impute $m$ times, analyze, pool with $T = \bar W + (1+1/m)B$
+- **IPW-GEE** (18.3): weight observed responses by $1/\prod_j \pi_{ij}$ to fix MAR dropout in GEE
+- Both valid under **MAR**; standard GEE needs MCAR
+
+Today: a **real** FLW dataset (TLC), then MNAR sensitivity analysis.
+
+::: {.notes}
+Open Day 2 with this 1-minute recap. Then the TLC case study makes MI concrete on the exact dataset FLW uses in Section 18.4 / Table 18.1.
+:::
+
+---
+
+## TLC Trial: the Real Ch. 18 Case Study
+
+FLW Section 18.4 uses the **Treatment of Lead-Exposed Children (TLC)** trial:
+
+- 100 children, succimer vs placebo
+- Blood lead measured at **weeks 0, 1, 4, 6** (continuous)
+- Complete data, but FLW **creates** an incomplete version under a **MAR** mechanism for teaching
+
+We reproduce that: load the real data, impose MAR missingness, then impute.
+
+::: {.callout-note}
+## Data and packages
+`tlc.csv` (local `data/`, else FLW site). Packages: `mice`, `dplyr`, `tidyr`, `nlme`.
+:::
+
+::: {.notes}
+This is the spec-required real Case Study. TLC is FLW's actual Ch. 18 MI example (and the same trial from Ch. 5 response profiles, so it ties back). The complete-data succimer-vs-placebo change at week 6 is -3.152 in FLW Table 18.1; our MI should land near it.
+:::
+
+---
+
+## Load TLC and Impose the MAR Mechanism
+
+```{r}
+#| label: tlc-load
+#| echo: true
+#| output-location: slide
+# Download-fallback load
+tlc_file <- "../../data/tlc.csv"
+if (!file.exists(tlc_file)) {
+  dir.create(dirname(tlc_file), showWarnings = FALSE, recursive = TRUE)
+  download.file("https://content.sph.harvard.edu/fitzmaur/ala2e/tlc.csv", tlc_file)
+}
+tlc_raw <- read.csv(tlc_file, check.names = FALSE, fileEncoding = "UTF-8-BOM")
+names(tlc_raw) <- c("id", "group", "y0", "y1", "y4", "y6")
+tlc_raw$group <- ifelse(trimws(tlc_raw$group) == "A", "S", "P")  # A = succimer
+
+# FLW-style MAR mechanism: succimer-group missingness at later weeks depends on
+# the OBSERVED baseline y0 (MAR); strength grows over time. Baseline fully observed.
+set.seed(667)
+tlc <- tlc_raw
+mar_miss <- function(y0, grp, strength) {
+  lp <- ifelse(grp == "S", 3.0 - 0.04 * y0, 3.0 - 0.04 * mean(tlc_raw$y0))
+  rbinom(length(y0), 1, pmin(plogis(-lp) * strength, 0.85)) == 1
+}
+tlc$y1[mar_miss(tlc$y0, tlc$group, 1.0)] <- NA
+tlc$y4[mar_miss(tlc$y0, tlc$group, 1.4)] <- NA
+tlc$y6[mar_miss(tlc$y0, tlc$group, 1.8)] <- NA
+
+colSums(is.na(tlc[, c("y0", "y1", "y4", "y6")]))   # y0 never missing
+```
+
+---
+
+## Missing-Data Pattern
+
+```{r}
+#| label: tlc-pattern
+#| echo: true
+#| output-location: slide
+tlc_mice <- tlc
+tlc_mice$group <- factor(tlc_mice$group)
+md.pattern(tlc_mice[, c("y0", "y1", "y4", "y6")], rotate.names = TRUE)
+```
+
+```{r}
+#| label: tlc-ncomplete
+#| echo: false
+n_complete <- sum(stats::complete.cases(tlc))
+```
+
+Only **`r n_complete` of 100** children have all four weeks observed. A complete-case analysis would discard most of the data.
+
+---
+
+## Impute and Pool (Rubin's Rules)
+
+```{r}
+#| label: tlc-mi
+#| echo: true
+#| output-location: slide
+imp_tlc <- mice(tlc_mice[, c("group", "y0", "y1", "y4", "y6")],
+                m = 20, method = "pmm", printFlag = FALSE,
+                seed = 667, maxit = 10)
+
+# Scientific question: succimer vs placebo change in blood lead, baseline to week 6.
+fit_tlc <- with(imp_tlc, lm(I(y6 - y0) ~ group))
+pooled_tlc <- pool(fit_tlc)
+summary(pooled_tlc)[, c("term", "estimate", "std.error", "statistic", "p.value")]
+```
+
+---
+
+## TLC: MI vs Complete-Case vs Truth
+
+```{r}
+#| label: tlc-compare
+#| echo: false
+mi_est   <- summary(pooled_tlc)$estimate[2]
+mi_se    <- summary(pooled_tlc)$std.error[2]
+cc_fit   <- lm(I(y6 - y0) ~ group, data = tlc[stats::complete.cases(tlc), ])
+cc_est   <- coef(cc_fit)["groupS"]
+truth_est <- coef(lm(I(y6 - y0) ~ group, data = tlc_raw))["groupS"]
+```
+
+| Method | Succimer vs placebo (week 6 change) |
+|:-------|:-----------------------------------:|
+| **Truth** (full TLC data) | `r round(truth_est, 3)` |
+| **Complete case** (`r n_complete` kids) | `r round(cc_est, 3)` |
+| **Multiple imputation** ($m=20$) | `r round(mi_est, 3)` (SE `r round(mi_se, 3)`) |
+
+::: {.callout-note}
+## Interpretation
+The full-data succimer advantage at week 6 is `r round(truth_est, 3)` ug/dL, matching FLW Table 18.1 (group x week-6 contrast = -3.152). MI uses all available data and recovers an estimate near the truth, while propagating the imputation uncertainty into its standard error.
+:::
+
+::: {.notes}
+This is the narrative-vs-output slide: every number is inline-R from the fitted objects, so it cannot drift. The headline: complete-case throws away most children; MI keeps everyone and lands close to the known truth. Note the SE is larger than a complete-data SE would be precisely because MI honestly reflects missing information.
+:::
+
+---
+
+## TLC: Manual Rubin's Rules
+
+```{r}
+#| label: tlc-rubin
+#| echo: true
+#| output-location: slide
+# Show pool() is not a black box: compute W, B, T by hand for the group effect.
+fits_list <- lapply(1:20, function(k) lm(I(y6 - y0) ~ group, data = complete(imp_tlc, k)))
+ests <- sapply(fits_list, function(f) coef(f)["groupS"])
+ses  <- sapply(fits_list, function(f) summary(f)$coefficients["groupS", "Std. Error"])
+
+m     <- 20
+Q_bar <- mean(ests)                 # pooled point estimate
+W_bar <- mean(ses^2)                # within-imputation variance
+B     <- var(ests)                  # between-imputation variance
+T_var <- W_bar + (1 + 1/m) * B      # Rubin total variance
+r     <- (1 + 1/m) * B / W_bar      # relative increase in variance
+fmi   <- (r + 2 / ((m - 1) + 3)) / (r + 1)  # fraction of missing information
+
+cat("Q_bar (pooled):", round(Q_bar, 3), "\n")
+cat("W_bar  (within):", round(W_bar, 4), "\n")
+cat("B      (between):", round(B, 4), "\n")
+cat("T = W_bar + (1+1/m) B:", round(T_var, 4), "  SE =", round(sqrt(T_var), 3), "\n")
+cat("FMI:", round(fmi, 3), " (fraction of information lost to missingness)\n")
+```
+
+# Part V (Day 2): MNAR Sensitivity Analysis
+
+---
+
+## Why Sensitivity Analysis?
+
+MI and IPW-GEE are valid under **MAR**. But MAR **cannot be tested** from the observed data.
+
+So after a MAR primary analysis, ask: **how would the conclusion change under MNAR?**
+
+The tools below are **sensitivity analyses**, not primary methods. We use the illustrative MNAR simulation from Part I.
+
+::: {.callout-warning}
+## Beyond FLW Ch. 18
+Pattern-mixture models, the Diggle-Kenward selection model, and the CCMV/NCMV/ACMV identifying restrictions are **not** developed in FLW Ch. 18. They are the broader MNAR literature (Molenberghs & Kenward, 2007; Little & Rubin, 2019). We present them as sensitivity tools and flag them as enrichment.
+:::
+
+::: {.notes}
+This reframing is the key audit fix: the original deck CENTERED pattern-mixture/selection. They belong here, as clearly-labeled sensitivity analysis, with a beyond-FLW flag. FLW's own MNAR sensitivity hook in this chapter is delta-adjustment via MI (the cleanest in-chapter route).
+:::
+
+---
+
+## Pattern-Mixture Models (sensitivity)
+
+**Idea**: Stratify by **dropout pattern**, fit separate models, then **combine**.
+
+$$f(Y, R) = f(Y \mid R) \cdot P(R)$$
+
+The marginal distribution of $Y$ is a **mixture** over patterns.
+
+---
+
+## Defining Dropout Patterns
+
+Common patterns based on **last observed time**:
+
+| Pattern | Description |
+|:--------|:------------|
+| $d = 1$ | Dropout after time 1 |
+| $d = 2$ | Dropout after time 2 |
+| ... | ... |
+| $d = T$ | Completer |
+
+---
+
+## Pattern-Mixture: Model Specification
+
+For each pattern $d$:
+
+$$Y_i \mid R_i = d \sim N(X_i \beta_d, \Sigma_d)$$
+
+Marginalize over patterns:
+
+$$E(Y) = \sum_{d} E(Y \mid R = d) \cdot P(R = d)$$
+
+---
+
+## Pattern-Mixture: Implementation
+
+```{r}
+#| label: pattern-mixture-setup
+#| echo: true
+#| output-location: slide
+# Define dropout pattern
+dat_pm <- dat_mnar |>
+  group_by(id) |>
+  summarise(
+    last_obs_time = max(time[observed]),
+    trt = first(trt),
+    .groups = "drop"
+  ) |>
+  mutate(pattern = factor(last_obs_time))
+
+# Merge back
+dat_pm_full <- dat_mnar |>
+  left_join(dat_pm |> dplyr::select(id, pattern), by = "id") |>
+  filter(observed)
+
+table(dat_pm$pattern)
+```
+
+---
+
+## Fitting Pattern-Specific Models
+
+```{r}
+#| label: pattern-specific-fits
+#| echo: true
+#| output-location: slide
+# Fit model within each pattern (for patterns with enough data)
+patterns_with_data <- dat_pm_full |>
+  group_by(pattern) |>
+  summarise(n = n_distinct(id)) |>
+  filter(n >= 10) |>
+  pull(pattern)
+
+fits_by_pattern <- lapply(patterns_with_data, function(p) {
+  dat_p <- dat_pm_full |> filter(pattern == p)
+  tryCatch({
+    lme(y_obs ~ time * trt, random = ~ 1 | id, data = dat_p, method = "REML")
+  }, error = function(e) NULL)
+})
+names(fits_by_pattern) <- patterns_with_data
+
+# Extract treatment effects at final time
+sapply(fits_by_pattern, function(fit) {
+  if (is.null(fit)) return(NA)
+  coef(summary(fit))["trt", "Value"]
+})
+```
+
+---
+
+## Combining Pattern-Specific Estimates
+
+::: {.callout-important}
+## The Key Step Students Often Miss
+
+To get a **marginal** treatment effect from pattern-mixture models, we must **average over patterns** weighted by pattern probabilities.
+:::
+
+```{r}
+#| label: pattern-mixture-combine
+#| echo: true
+#| output-location: slide
+
+# Calculate pattern weights (proportion of subjects in each pattern)
+pattern_weights <- dat_pm |>
+  count(pattern) |>
+  mutate(weight = n / sum(n))
+
+# Extract treatment effects and SEs from each pattern
+extract_trt_effect <- function(fit) {
+  if (is.null(fit)) return(c(estimate = NA, se = NA))
+  coefs <- coef(summary(fit))
+  c(estimate = coefs["trt", "Value"],
+    se = coefs["trt", "Std.Error"])
+}
+
+pattern_effects <- bind_rows(
+  lapply(names(fits_by_pattern), function(p) {
+    eff <- extract_trt_effect(fits_by_pattern[[p]])
+    data.frame(pattern = p, estimate = eff["estimate"], se = eff["se"])
+  })
+)
+
+# Merge with weights
+pattern_combined <- pattern_effects |>
+  left_join(pattern_weights, by = "pattern") |>
+  filter(!is.na(estimate))
+
+# Weighted average treatment effect (marginal estimate)
+marginal_estimate <- sum(pattern_combined$estimate * pattern_combined$weight) /
+                     sum(pattern_combined$weight)
+
+# Approximate SE using delta method (simplified)
+marginal_se <- sqrt(sum((pattern_combined$weight * pattern_combined$se)^2)) /
+               sum(pattern_combined$weight)
+
+cat("Pattern-Mixture Model Results:\n")
+cat("================================\n")
+pattern_combined |>
+  mutate(across(c(estimate, se, weight), ~round(., 3))) |>
+  print()
+
+cat("\n\nMarginal Treatment Effect (CCMV assumption):\n")
+cat("  Estimate:", round(marginal_estimate, 3), "\n")
+cat("  SE:", round(marginal_se, 3), "\n")
+cat("  95% CI: [", round(marginal_estimate - 1.96*marginal_se, 3), ",",
+    round(marginal_estimate + 1.96*marginal_se, 3), "]\n")
+
+cat("\nComparison to truth:", round(fixef(fit_truth)["trt"], 3), "\n")
+```
+
+---
+
+## Identifying Restrictions
+
+**Problem**: Cannot estimate $E(Y_{mis} \mid R = d)$ directly from data.
+
+**Solution**: Apply **identifying restrictions** to extrapolate:
+
+| Restriction | Assumption |
+|:------------|:-----------|
+| CCMV | Complete Case Missing Value: use completer parameters |
+| NCMV | Neighboring Case Missing Value: borrow from adjacent pattern |
+| ACMV | Available Case Missing Value: weighted average |
+
+---
+
+## Identifying Restrictions: Detailed Explanation
+
+::: {.callout-note}
+## What Each Restriction Assumes
+
+**CCMV (Complete Case Missing Value):**
+
+For subjects who dropped out at time $k$, assume their unobserved values at times $k, k+1, \ldots$ have the **same distribution as completers** at those times.
+
+- Simple to implement: use completer-based parameters for all patterns
+- Assumption: Dropouts would have behaved like completers after dropout
+- This is often **optimistic** about dropouts
+
+**NCMV (Neighboring Case Missing Value):**
+
+For subjects who dropped out at time $k$, assume their unobserved value at time $k$ has the same distribution as subjects who dropped out at time $k+1$ (the next pattern).
+
+- "Borrow" from the nearest pattern with observed data
+- Less extreme than CCMV for early dropouts
+
+**ACMV (Available Case Missing Value):**
+
+A weighted combination of information from all patterns that observed each time point.
+
+- Most complex to implement
+- Often considered the most realistic "MAR-like" restriction
+:::
+
+---
+
+## Implementing CCMV Identifying Restriction
+
+```{r}
+#| label: ccmv-implementation
+#| echo: true
+#| output-location: slide
+
+# Under CCMV, we use completer model parameters for all dropout patterns
+# This means we assume dropouts would have followed the same trajectory as completers
+
+# Get completer pattern (last time point = 4 for 0-indexed times 0-4)
+completer_fit <- fits_by_pattern[["4"]]
+
+if (!is.null(completer_fit)) {
+  # Extract completer model coefficients
+  completer_coefs <- fixef(completer_fit)
+
+  cat("CCMV Identifying Restriction:\n")
+  cat("==============================\n")
+  cat("Under CCMV, we assume dropouts would have had outcomes\n")
+  cat("distributed like completers at unobserved time points.\n\n")
+  cat("Completer model coefficients:\n")
+  print(round(completer_coefs, 3))
+
+  cat("\nUnder CCMV, marginal treatment effect = completer treatment effect\n")
+  cat("Treatment effect:", round(completer_coefs["trt"], 3), "\n")
+} else {
+  cat("Completer pattern model did not converge.\n")
+}
+```
+
+---
+
+## Pattern-Mixture Summary
+
+**Advantages**:
+
+- Transparent about what is assumed
+- Naturally accommodates MNAR
+
+**Disadvantages**:
+
+- Requires identifying restrictions (untestable)
+- Many patterns with small samples
+
+---
+
+## Check Your Understanding: Part II
+
+::: {.callout-tip}
+## Quick Self-Check
+
+1. **Pattern-Mixture Concept:** A study has 4 time points. Subject A drops out after time 2; Subject B completes all visits. Under pattern-mixture modeling, would these subjects share the same model parameters?
+
+2. **Combining Estimates:** You have treatment effects of -2.0 (early dropouts, 30% of sample) and -3.0 (completers, 70% of sample). What is the marginal treatment effect under the weighting approach?
+
+3. **CCMV Assumption:** Under CCMV, what are we assuming about subjects who dropped out early?
+:::
+
+::: {.callout-note collapse="true"}
+## Answers
+
+1. **No** - Pattern-mixture models fit separate models for each dropout pattern. Subject A contributes to the "dropout after time 2" model; Subject B contributes to the "completer" model. They may have different intercepts, slopes, and treatment effects.
+
+2. $\text{Marginal} = 0.30 \times (-2.0) + 0.70 \times (-3.0) = -0.6 - 2.1 = -2.7$
+
+3. Under CCMV, we assume that subjects who dropped out early would have had outcomes **distributed like completers** at the time points they missed. This is often optimistic because dropouts may actually be doing worse (or better) than completers at unobserved times.
+:::
+
+---
+
+## Selection Models (sensitivity)
+
+::: {.callout-warning}
+## Beyond FLW Ch. 18
+Selection models, and the Diggle-Kenward model specifically, are not in FLW Ch. 18. They belong to the broader MNAR literature (Diggle & Kenward, 1994; Molenberghs & Kenward, 2007). Shown here as a second sensitivity lens.
+:::
+
+Model the **joint distribution** of outcome and missingness as outcome times selection:
+
+$$f(Y, R) = f(Y) \cdot P(R \mid Y)$$
+
+The selection model specifies how missingness **depends on** $Y$.
+
+::: {.notes}
+Pattern-mixture factors $f(Y\mid R)P(R)$; selection factors $f(Y)P(R\mid Y)$. Same joint, two readings. Selection is the more "natural" causal story (the response drives dropout) but is poorly identified, which is exactly why it is a sensitivity tool, not a primary method.
+:::
+
+---
+
+## Selection Model: Specification
+
+**Outcome model:**
+$$Y_i \sim N(X_i \beta, \Sigma)$$
+
+**Selection (dropout) model:**
+$$\text{logit}[P(R_{ij} = 0 \mid Y)] = \gamma_0 + \gamma_1 Y_{ij} + \gamma_2 Y_{i,j-1} + \ldots$$
+
+If $\gamma_1 \neq 0$, dropout depends on current (unobserved) outcome = **MNAR**.
+If dropout depends only on past observed $Y$, this is **MAR**.
+
+---
+
+## Diggle-Kenward Selection Model
+
+A classic MNAR selection model (Diggle & Kenward, 1994):
+
+$$\text{logit}[P(D_i = j \mid Y_i)] = \alpha_0 + \alpha_1 Y_{ij}$$
+
+where $D_i$ is dropout time.
+
+The model jointly estimates outcome and dropout parameters.
+
+---
+
+## Selection Model: Simulation Example
+
+```{r}
+#| label: selection-model-demo
+#| echo: true
+#| output-location: slide
+# Selection-model intuition: contrast a naive observed-data fit with the truth.
+# In practice a full selection model needs joint ML (e.g. SAS PROC NLMIXED).
+#
+# Illustrative MNAR DGP from Part I: dropout hazard rises with the current y.
+# A MAR-style analysis of the observed data ignores that; the truth model uses
+# the complete data (fit_truth was built in the shared setup chunk).
+fit_mar <- lme(y_obs ~ time * trt, random = ~ 1 | id,
+               data = dat_pm_full, method = "REML")
+
+data.frame(
+  Model = c("Truth (complete)", "MAR (observed)"),
+  Intercept = round(c(fixef(fit_truth)[1], fixef(fit_mar)[1]), 3),
+  Time = round(c(fixef(fit_truth)[2], fixef(fit_mar)[2]), 3),
+  Trt = round(c(fixef(fit_truth)[3], fixef(fit_mar)[3]), 3),
+  Time_x_Trt = round(c(fixef(fit_truth)[4], fixef(fit_mar)[4]), 3)
+)
+```
+
+---
+
+## Selection Model: Simplified Working Example
+
+::: {.callout-note}
+## A Two-Step Approximation
+
+Full selection models require joint maximum likelihood, which is computationally complex. Here we show a simplified two-step approach for understanding the concept.
+:::
+
+```{r}
+#| label: selection-model-twostep
+#| echo: true
+#| output-location: slide
+
+# Step 1: Estimate the selection (dropout) model from observed data.
+# Among subjects still in the study at time t-1, model whether they are
+# observed at time t (R_it), using the previous observed response.
+dat_dropout <- dat_mnar |>
+  group_by(id) |>
+  mutate(
+    y_prev   = lag(y, 1),                       # previous (observed) Y
+    prev_obs = lag(observed, default = TRUE),   # in the study at t-1?
+    R        = as.integer(observed)             # observed at t?
+  ) |>
+  ungroup() |>
+  filter(time > 0, prev_obs)                    # at-risk rows after baseline
+
+# Fit selection (remaining-in-study) model
+dropout_model <- glm(R ~ y_prev + time + trt,
+                     data = dat_dropout,
+                     family = binomial)
+
+cat("Selection (Dropout) Model:\n")
+cat("==========================\n")
+cat("logit(P(dropout at t)) = beta0 + beta1*Y_{t-1} + beta2*time + beta3*trt\n\n")
+summary(dropout_model)$coefficients |> round(3)
+```
+
+---
+
+## Selection Model: Interpretation
+
+```{r}
+#| label: selection-model-interpret
+#| echo: true
+#| output-location: slide
+
+# The model is for REMAINING in the study (R = 1). The y_prev coefficient
+# is the log-OR of staying per 1-unit increase in the previous response.
+dropout_coefs <- coef(dropout_model)
+or_remain <- exp(dropout_coefs["y_prev"])
+
+cat("Selection Model Interpretation (modeling P(remain)):\n")
+cat("====================================================\n\n")
+cat("Coefficient for previous Y (y_prev):", round(dropout_coefs["y_prev"], 3), "\n")
+cat("  OR for remaining per +1 in Y_{t-1}:", round(or_remain, 3), "\n")
+cat("  -> OR for DROPPING per +1 in Y_{t-1}:", round(1 / or_remain, 3), "\n\n")
+
+if (dropout_coefs["y_prev"] < 0) {
+  cat("  y_prev < 0: HIGHER previous Y -> LOWER odds of remaining,\n")
+  cat("  i.e. subjects with higher outcomes are more likely to drop out.\n")
+}
+cat("\n  This uses PAST observed Y (so it is MAR-testable). It becomes MNAR\n")
+cat("  only if the CURRENT, unobserved Y drives dropout, which cannot be\n")
+cat("  estimated from the observed data.\n\n")
+
+cat("NOTE: a full selection model jointly estimates the outcome and selection\n")
+cat("models by maximum likelihood. This two-step version is for intuition only.\n")
+```
+
+---
+
+## Selection Model: Key Points
+
+**Advantages**:
+
+- Explicitly models the selection mechanism
+- Can test sensitivity to MNAR assumptions
+
+**Disadvantages**:
+
+- Difficult to fit (joint likelihood)
+- Highly sensitive to model specification
+- Often poorly identified
+
+---
+
+## Check Your Understanding: Part III
+
+::: {.callout-tip}
+## Quick Self-Check
+
+1. **Selection vs Pattern-Mixture:** Which factorization corresponds to the selection model?
+   - (a) $f(Y, R) = f(Y | R) \cdot P(R)$
+   - (b) $f(Y, R) = f(Y) \cdot P(R | Y)$
+
+2. **MAR in Selection Models:** In the dropout model $\text{logit}[P(R=0 | Y)] = \gamma_0 + \gamma_1 Y_{current}$, what value of $\gamma_1$ would make this MAR instead of MNAR?
+
+3. **Identifiability:** Why are selection models often poorly identified?
+:::
+
+::: {.callout-note collapse="true"}
+## Answers
+
+1. **(b)** - Selection models factor as $f(Y) \cdot P(R | Y)$: first model the outcome, then model how missingness depends on the outcome. Pattern-mixture models use factorization (a).
+
+2. $\gamma_1 = 0$ - If dropout does not depend on the current (unobserved) outcome value, then missingness depends only on covariates and past observed values, which is MAR. Any $\gamma_1 \neq 0$ makes it MNAR.
+
+3. Selection models are poorly identified because the key parameter $\gamma_1$ (dependence on unobserved Y) cannot be directly estimated from observed data. The unobserved Y values are... unobserved! This means the model relies heavily on distributional assumptions and extrapolation, making results sensitive to model specification.
+:::
+
+---
+
+## Sensitivity Analysis Approaches
+
+| Approach | Description |
+|:---------|:------------|
+| **Tipping point** | How extreme must MNAR be to change conclusions? |
+| **Delta adjustment** | Add offset $\delta$ to imputed values for dropouts |
+| **Pattern-mixture with varying restrictions** | Try CCMV, NCMV, etc. |
+| **Selection model with varying $\gamma$** | Vary the MNAR parameter |
+
+---
+
+## Delta-Adjustment Method
+
+**Idea**: Impute under MAR, then shift imputed values by $\delta$.
+
+- $\delta = 0$: MAR assumption
+- $\delta > 0$: Dropouts would have had higher values
+- $\delta < 0$: Dropouts would have had lower values
+
+---
+
+## Delta-Adjustment: Implementation
+
+```{r}
+#| label: delta-adjustment
+#| echo: true
+#| output-location: slide
+# Reshape the illustrative MNAR data to wide for mice
+dat_wide <- dat_mnar |>
+  dplyr::select(id, time, trt, y_obs) |>
+  pivot_wider(names_from = time, values_from = y_obs, names_prefix = "y")
+
+# Impute ONCE under MAR, reuse for every delta (faster and self-consistent)
+m_imp <- 10
+imp_base <- mice(dat_wide, m = m_imp, method = "pmm", printFlag = FALSE, seed = 123)
+imp_long_all <- complete(imp_base, action = "long") |>
+  pivot_longer(starts_with("y"), names_to = "tv", values_to = "y") |>
+  mutate(time = as.numeric(gsub("y", "", tv)))
+
+# Flag which (id, time) cells were originally missing (so delta hits only imputed)
+orig_missing <- dat_wide |>
+  pivot_longer(starts_with("y"), names_to = "tv", values_to = "y") |>
+  mutate(time = as.numeric(gsub("y", "", tv)), was_missing = is.na(y)) |>
+  dplyr::select(id, time, was_missing)
+
+imp_flagged <- imp_long_all |> left_join(orig_missing, by = c("id", "time"))
+
+# Apply a delta offset to imputed cells, refit, and pool with Rubin's rules
+analyze_with_delta <- function(delta) {
+  imp_flagged |>
+    mutate(y_adj = ifelse(was_missing, y + delta, y)) |>
+    group_by(.imp) |>
+    do(tidy(lm(y_adj ~ time * trt, data = .))) |>
+    ungroup() |>
+    group_by(term) |>
+    summarise(
+      # std.error first: it needs the full per-imputation `estimate` vector for the
+      # between-imputation variance var(estimate). Collapsing estimate first would
+      # make var() see a scalar and return NA (dplyr evaluates summarise() in order).
+      std.error = sqrt(mean(std.error^2) + (1 + 1/m_imp) * var(estimate)),
+      estimate  = mean(estimate),
+      .groups   = "drop"
+    ) |>
+    mutate(delta = delta)
+}
+
+deltas <- c(-2, -1, 0, 1, 2)
+sensitivity_results <- bind_rows(lapply(deltas, analyze_with_delta))
+
+sensitivity_results |>
+  filter(term == "trt") |>
+  dplyr::select(delta, estimate, std.error) |>
+  mutate(
+    lower = estimate - 1.96 * std.error,
+    upper = estimate + 1.96 * std.error
+  )
+```
+
+---
+
+## Visualizing Sensitivity Analysis
+
+```{r}
+#| label: viz-sensitivity
+#| echo: true
+#| output-location: slide
+sens_trt <- sensitivity_results |>
+  filter(term == "trt") |>
+  mutate(
+    lower = estimate - 1.96 * std.error,
+    upper = estimate + 1.96 * std.error
+  )
+
+ggplot(sens_trt, aes(x = delta, y = estimate)) +
+  geom_point(size = 3) +
+  geom_errorbar(aes(ymin = lower, ymax = upper), width = 0.1) +
+  geom_hline(yintercept = 0, linetype = 2, color = "red") +
+  geom_hline(yintercept = fixef(fit_truth)["trt"], linetype = 3, color = "blue") +
+  labs(
+    title = "Sensitivity Analysis: Treatment Effect by Delta",
+    subtitle = "Blue dashed = true effect; Red dashed = null",
+    x = expression(delta ~ "(adjustment to imputed values)"),
+    y = "Estimated Treatment Effect"
+  ) +
+  theme_minimal()
+```
+
+---
+
+## Tipping Point Analysis
+
+**Question**: At what value of $\delta$ does the treatment effect become non-significant?
+
+This tells us how extreme MNAR must be to overturn our conclusions.
+
+---
+
+## Tipping Point: Interpretation
+
+```{r}
+#| label: tipping-point
+#| echo: true
+#| output-location: slide
+# Find tipping point (where CI includes 0)
+sens_trt |>
+  mutate(
+    significant = (lower > 0) | (upper < 0),
+    direction = ifelse(estimate > 0, "positive", "negative")
+  ) |>
+  dplyr::select(delta, estimate, lower, upper, significant)
+```
+
+If tipping point requires implausibly large $\delta$, results are **robust**.
+
+---
+
+## Check Your Understanding: Part V
+
+::: {.callout-tip}
+## Quick Self-Check
+
+1. **Delta Interpretation:** In the delta-adjustment sensitivity analysis, what does $\delta = -2$ mean in practical terms?
+
+2. **Tipping Point:** Your MAR analysis shows treatment effect = -3.0 (95% CI: -4.5, -1.5), significant at p < 0.001. The tipping point occurs at $\delta = 1.5$. How do you interpret this?
+
+3. **Plausibility:** How would you assess whether a tipping point value of $\delta$ is clinically plausible?
+:::
+
+::: {.callout-note collapse="true"}
+## Answers
+
+1. $\delta = -2$ means we assume that **dropouts would have had outcomes 2 units LOWER** than what MAR imputation predicts. If higher values are better (e.g., quality of life), this assumes dropouts are doing worse than MAR suggests.
+
+2. The tipping point at $\delta = 1.5$ means that if dropouts had outcomes **1.5 units higher** than MAR predicts, the treatment effect would become non-significant. Since this is a relatively small shift compared to the effect size (3.0 units), the result has **moderate robustness**. Clinical judgment is needed to assess if $\delta = 1.5$ is plausible.
+
+3. To assess plausibility:
+   - Compare $\delta$ to the outcome's standard deviation (is it a small or large shift?)
+   - Consider clinical meaning (would dropouts realistically differ by this amount?)
+   - Examine reasons for dropout (do they suggest better or worse outcomes?)
+   - Look at observed differences between completers and early dropouts at shared timepoints
+:::
+
+# Part VI (Day 2): Practical Guidance and Summary
+
+---
+
+## Decision Framework
+
+```{r}
+#| label: decision-flowchart
+#| echo: false
+#| fig-width: 10
+#| fig-height: 5.5
+decision_data <- data.frame(
+  question = c(
+    "1. Characterize missing data pattern",
+    "2. Assess plausibility of MAR",
+    "3. Primary analysis under MAR (MI or IPW-GEE)",
+    "4. Sensitivity analysis for MNAR",
+    "5. Report and interpret"
+  ),
+  y = 5:1
+)
+
+ggplot(decision_data, aes(x = 1, y = y, label = question)) +
+  geom_label(hjust = 0, size = 6, fill = "lightblue") +
+  geom_segment(aes(x = 1.02, xend = 1.02, y = y - 0.6, yend = y - 0.4),
+               arrow = grid::arrow(length = grid::unit(0.15, "cm")),
+               data = decision_data[1:4, ]) +
+  xlim(0.9, 3) + ylim(0.5, 5.5) +
+  theme_void() +
+  labs(title = "Missing Data Analysis Workflow")
+```
+
+::: {.notes}
+This is the one-slide summary of the chapter's workflow: characterize, judge MAR, run a MAR-valid primary analysis (MI or IPW-GEE), stress-test with sensitivity analysis, report transparently. The figure is on its own slide so it does not overflow.
+:::
+
+---
+
+## Step 1: Characterize Missing Data
+
+- Document amount and pattern of missingness
+- Compare baseline characteristics: completers vs dropouts
+- Examine timing and predictors of dropout
+
+---
+
+## Step 2: Assess MAR Plausibility
+
+| Evidence for MAR | Evidence Against |
+|:-----------------|:-----------------|
+| Dropout predicted by observed baseline/time-varying | Clinical reasons suggest dropout related to unobserved outcomes |
+| No strong theoretical reason for MNAR | Treatment side effects causing dropout |
+
+---
+
+## Step 3: Primary Analysis Under MAR
+
+**For continuous outcomes:**
+
+- Mixed models (ML/REML) are valid under MAR
+- GEE with appropriate weighting
+- Multiple imputation with careful model specification
+
+---
+
+## Step 4: Sensitivity Analysis
+
+Even if MAR seems plausible:
+
+- Conduct pattern-mixture or selection model analysis
+- Perform tipping point analysis
+- Report range of estimates under different assumptions
+
+---
+
+## Step 5: Reporting Recommendations
+
+| Element | Description |
+|:--------|:------------|
+| Missing data summary | Rates, patterns, predictors |
+| Primary analysis | Method, assumptions |
+| Sensitivity analysis | Methods tried, range of results |
+| Interpretation | Robustness of conclusions |
+
+---
+
+## Common Mistakes to Avoid
+
+| Mistake | Better Approach |
+|:--------|:----------------|
+| Complete case analysis only | Use all available data |
+| Assuming MCAR without testing | Assess predictors of missingness |
+| Ignoring MNAR possibility | Always do sensitivity analysis |
+| Single imputation | Use multiple imputation |
+| Not reporting missing data details | Document thoroughly |
+
+---
+
+## Software Summary
+
+| Task | R Package/Function |
+|:-----|:-------------------|
+| Mixed models under MAR | `nlme::lme`, `lme4::lmer` |
+| GEE / IPW-GEE | `geepack::geeglm(..., weights = w)` |
+| Multiple imputation | `mice::mice` then `pool()` |
+| Pattern-mixture (sensitivity) | Custom coding or `JointAI` |
+| Selection models (sensitivity) | `JM`, `mmrm`, custom |
+
+---
+
+## SAS Reference: Multiple Imputation (FLW 18.2/18.6)
+
+```sas
+/* Step 1: impute m = 20 completed data sets (wide TLC data) */
+proc mi data=tlc nimpute=20 seed=667 out=tlc_imp;
+  class group;
+  var y0 y1 y4 y6 group;
+  fcs reg;                 /* fully conditional specification (chained eqns) */
+run;
+
+/* Step 2: analyze each completed data set; outest=cov keeps the covariance */
+proc reg data=tlc_imp outest=est covout noprint;
+  by _Imputation_;
+  model chg6 = group;      /* chg6 = y6 - y0 created in a data step */
+run;
+
+/* Step 3: pool with Rubin's rules */
+proc mianalyze data=est;
+  modeleffects Intercept group;
+run;
+```
+
+::: {.notes}
+This is the canonical SAS MI workflow FLW 18.6 describes: PROC MI to create the completed sets, PROC REG (or GENMOD/MIXED) BY _Imputation_, then PROC MIANALYZE to combine with Rubin's rules. Shown for reference, not run. `fcs reg` is the chained-equations route; `mcmc` would be the data-augmentation route for non-monotone data.
+:::
+
+---
+
+## SAS Reference: IPW-GEE (FLW 18.3/18.7)
+
+```sas
+/* Step 1: stacked data set, model probability of remaining (R = 1) */
+proc logistic data=stacked descending;
+  class time;
+  model R = time dose yprev;     /* past observed response predicts staying */
+  output out=pihat p=pi_hat;     /* fitted pi_ij */
+run;
+
+/* Step 2: cumulative-product weight w_ij = 1 / (pi_i1*...*pi_ij) in a data step */
+/*         (computed by id, then merged back onto the analysis data)            */
+
+/* Step 3: weighted GEE under working independence (required for weights) */
+proc genmod data=analysis descending;
+  class id time;
+  weight w;                       /* inverse-probability weights */
+  model y = time dose / dist=bin link=logit;
+  repeated subject=id / type=ind; /* working independence */
+run;
+```
+
+::: {.notes}
+FLW 18.3/18.7: PROC LOGISTIC on the stacked data gives the pi_ij; a data step forms the cumulative-product weights; PROC GENMOD with WEIGHT and type=ind (working independence) is the IPW-GEE. FLW notes the WEIGHT statement only enters the GEE correctly under working independence (p. 530), which is exactly the geeglm corstr="independence" we used in R.
+:::
+
+---
+
+## Common Mistakes in MNAR and Sensitivity Analysis
+
+::: {.callout-warning}
+## Errors to Avoid
+
+| # | Mistake | Correct Approach |
+|---|---------|------------------|
+| 1 | Claiming data are MAR without justification | MAR is an assumption; assess predictors of missingness, but acknowledge it cannot be verified |
+| 2 | Skipping sensitivity analysis | Always conduct sensitivity analysis, even if MAR seems plausible |
+| 3 | Pattern-mixture without combining step | Must weight pattern-specific estimates by pattern proportions for marginal inference |
+| 4 | Using single imputation | Always use multiple imputation ($m \geq 20$) to capture uncertainty |
+| 5 | Interpreting tipping point without clinical context | Evaluate whether the tipping point $\delta$ is clinically plausible |
+| 6 | Ignoring selection model limitations | Selection models are poorly identified; use for sensitivity, not definitive answers |
+| 7 | MI with incomplete imputation model | Include auxiliary variables; ensure imputation model is at least as rich as analysis model |
+| 8 | Assuming MNAR = "analysis is hopeless" | MNAR means we need sensitivity analysis, not that we cannot make inference |
+| 9 | Reporting only one analysis | Report MAR analysis AND sensitivity analysis range |
+| 10 | Forgetting the FMI | Report fraction of missing information; helps assess impact of missingness |
+:::
+
+---
+
+## Interpreting MNAR Sensitivity Results
+
+::: {.callout-note}
+## How to Present Your Findings
+
+**Example Write-Up:**
+
+> "Under the MAR assumption, the treatment effect was estimated as -3.2 units (95% CI: -4.5, -1.9, p < 0.001). We conducted sensitivity analysis using delta-adjustment to explore departures from MAR. The tipping point analysis showed that the treatment effect would become non-significant only if dropouts had outcomes at least 2.5 units higher than predicted under MAR (delta = 2.5). Given that the outcome SD is approximately 3.0 units, this represents a shift of nearly one standard deviation, which we consider clinically implausible based on exit interview data suggesting dropouts were, if anything, doing worse. We therefore conclude that the treatment effect is robust to plausible departures from MAR."
+
+**Key Elements:**
+
+1. Report MAR analysis as primary
+2. Describe sensitivity analysis method
+3. Report tipping point in interpretable units
+4. Assess clinical plausibility
+5. State your conclusion about robustness
+:::
+
+---
+
+::: {.callout-important}
+## Golden Rule for MNAR Analysis
+
+**Sensitivity analysis is not optional.** Since MNAR cannot be tested from observed data, you must:
+
+1. Conduct your primary analysis under MAR (the most plausible "ignorable" assumption)
+2. Explicitly test robustness to MNAR through sensitivity analysis
+3. Report the range of conclusions under plausible MNAR scenarios
+4. Let clinical/scientific judgment inform what "plausible" means
+
+If your conclusion holds across the plausible range, it is robust. If it changes, acknowledge the uncertainty.
+:::
+
+---
+
+## Key Takeaways
+
+1. **FLW Ch. 18 = two co-primary methods**: multiple imputation and IPW-GEE, both valid under MAR
+
+2. **Multiple imputation**: impute $m$ times, analyze, pool with $T = \bar W + (1 + 1/m)B$; handles missing covariates and auxiliary variables
+
+3. **IPW-GEE**: reweight observed responses by $1/\prod_j \pi_{ij}$ to fix MAR dropout where standard GEE needs MCAR
+
+4. **Pattern-mixture and selection models** are MNAR **sensitivity** tools (beyond Ch. 18 proper), not the primary analysis
+
+5. **Sensitivity analysis is essential**: conclusions should not hinge on the untestable MAR assumption. Report transparently.
+
+---
+
+## Course Wrap-Up: What We Covered
+
+| Topic | Chapters |
+|:------|:---------|
+| Longitudinal data structures | 1-2 |
+| Linear models for longitudinal data | 3-6 |
+| Covariance modeling | 7-9 |
+| Mixed-effects models | 8-9 |
+| Generalized linear models and GLMMs | 11, 14 |
+| Marginal models and GEE | 12-13 |
+| Missing data | 17-18 |
+
+---
+
+## Longitudinal Analysis: The Big Picture
+
+1. **Choose the right model** for your research question:
+   - Population-average effects: Marginal/GEE
+   - Subject-specific trajectories: Mixed models
+
+2. **Model the covariance** appropriately
+
+3. **Handle missing data** with care
+
+4. **Validate assumptions** through diagnostics
+
+---
+
+## Final Thoughts
+
+Longitudinal data analysis requires careful attention to:
+
+- **Correlation structure** within subjects
+- **Missing data** mechanisms and their implications
+- **Model interpretation** (marginal vs conditional)
+- **Sensitivity** of conclusions to assumptions
+
+---
+
+## References and Further Reading
+
+- Fitzmaurice, Laird & Ware (2011). *Applied Longitudinal Analysis*, 2nd ed. Ch. 17-18 (missing data and dropout).
+- Rubin (1987). *Multiple Imputation for Nonresponse in Surveys* (Rubin's combining rules).
+- van Buuren (2018). *Flexible Imputation of Missing Data*, 2nd ed. (the `mice` reference).
+- Robins, Rotnitzky & Zhao (1995). Inverse-probability weighting for longitudinal data.
+- Diggle & Kenward (1994); Molenberghs & Kenward (2007). *Missing Data in Clinical Studies* (selection/pattern-mixture, beyond FLW Ch. 18).
+- Little & Rubin (2019). *Statistical Analysis with Missing Data*, 3rd ed.
+
+---
+
+## Thank You!
+
+Questions?
+
+Course materials available on the course website.
+
+Good luck with your research!

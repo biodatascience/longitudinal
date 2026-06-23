@@ -1,0 +1,457 @@
+---
+title: "BIOS 667 - Homework 3"
+subtitle: "Covariance Structures & Linear Mixed Effects Models - Ch. 7-9"
+author: "Your Name"
+date: today
+format:
+  html:
+    embed-resources: true
+    toc: true
+    toc-depth: 3
+    code-fold: true
+execute:
+  warning: false
+  message: false
+---
+
+## Instructions
+
+**Collaboration Policy:** You may discuss problems with classmates, but all submitted work must be your own.
+
+**AI Use Policy:** AI tools may be used for code assistance. Disclose any AI use in your submission.
+
+**Submission:** Submit a rendered HTML file to Gradescope by the due date.
+
+**Due Date:** TBD - Check Canvas
+
+**Data:** This homework uses three datasets from Fitzmaurice, Laird and Ware (2011):
+
+1. **Dental Growth Study** (Potthoff and Roy, 1964): distance (mm) from the center of the pituitary gland to the pteryomaxillary fissure for 11 girls and 16 boys at ages 8, 10, 12, and 14 (Questions 1-4). FLW Ch. 7-8 canonical dataset.
+2. **ACTG 193A CD4 trial** (FLW Ch. 8, Problem 8.2): log CD4 counts over time for 1309 AIDS patients randomized to one of four treatment regimens (Question 3, Part e).
+3. **Maternal-age / infant-birth-weight study** (FLW Ch. 9, Problem 9.1): infant birth weight and mother's age across five births for 878 mothers (Question 5). Used for the fixed-vs-random-effects and Mundlak between/within decomposition.
+
+## Grading Rubric
+
+| Category | Weight | Description |
+|----------|--------|-------------|
+| Interpretation & Reasoning | 40% | Conceptual understanding, correct interpretations |
+| Analysis & Setup | 40% | Code correctness, model specification |
+| Clarity & Presentation | 20% | Writing quality, formatting, organization |
+
+## Setup
+
+```{r}
+#| label: setup
+#| include: true
+library(nlme)
+library(lme4)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(emmeans)
+library(knitr)
+set.seed(667)
+
+# Helper: load a dataset from the local data/ dir, falling back to the
+# repo-local copy (../../data) and finally to the FLW website. No absolute paths.
+get_data <- function(filename, url) {
+  local_file <- file.path("data", filename)
+  if (!file.exists(local_file)) {
+    dir.create("data", showWarnings = FALSE)
+    repo_copy <- file.path("../../data", filename)
+    if (file.exists(repo_copy)) {
+      file.copy(repo_copy, local_file)
+    } else {
+      download.file(url, local_file)
+    }
+  }
+  local_file
+}
+
+# Load and prepare the dental data
+dental_file <- get_data("dental.txt",
+                        "https://content.sph.harvard.edu/fitzmaur/ala2e/dental.txt")
+# Read the raw data
+dental_raw <- read.table(dental_file,
+                          skip = 28, # Skip header lines
+                          col.names = c("id", "gender", "age8", "age10", "age12", "age14"))
+
+# Convert to long format
+dental <- dental_raw %>%
+  pivot_longer(cols = starts_with("age"),
+               names_to = "age_label",
+               values_to = "distance") %>%
+  mutate(
+    age = as.numeric(gsub("age", "", age_label)),
+    age_c = age - 11,  # Center at age 11 (midpoint)
+    age_f = factor(age, levels = c(8, 10, 12, 14)),
+    age_idx = as.integer(factor(age)),  # For corSymm
+    id = factor(id),
+    gender = factor(gender, levels = c("F", "M"), labels = c("Female", "Male"))
+  ) %>%
+  arrange(id, age)
+
+# ---- ACTG 193A CD4 data (FLW Ch. 8, Problem 8.2) ----
+# Columns (space-delimited, no header): ID Group Age Gender Week Log(CD4 + 1)
+cd4_file <- get_data("cd4.dat",
+                     "https://content.sph.harvard.edu/fitzmaur/ala2e/cd4.dat")
+cd4 <- read.table(cd4_file, header = FALSE,
+                  col.names = c("id", "group", "age", "gender", "week", "logcd4")) %>%
+  mutate(
+    id = factor(id),
+    group = factor(group,
+                   labels = c("ZDV+ddI alt", "ZDV+ZAL", "ZDV+ddI", "ZDV+ddI+NVP"))
+  )
+
+# ---- Maternal-age / infant birth weight data (FLW Ch. 9, Problem 9.1) ----
+# Columns (space-delimited, no header): MID Order Wt Age CID
+# 878 mothers x 5 births = 4390 rows. Maternal Age is time-varying.
+birthwt_file <- get_data("birthwt.dat",
+                         "https://content.sph.harvard.edu/fitzmaur/ala2e/birthwt.dat")
+birthwt <- read.table(birthwt_file, header = FALSE,
+                      col.names = c("MID", "Order", "Wt", "Age", "CID")) %>%
+  mutate(MID = factor(MID))
+
+# Display data structure
+head(dental, 8)
+```
+
+---
+
+## Question 1: Covariance Structure Fundamentals (20 points)
+
+The dental data measures children repeatedly at ages 8, 10, 12, and 14. Before fitting models, we need to understand why covariance structure matters.
+
+### Part (a) - **WRITE:** Why does within-subject correlation matter for inference? (5 pts)
+
+Explain why ignoring within-subject correlation can lead to incorrect inference in longitudinal studies. Reference both the variance of within-subject changes and standard errors of treatment effects.
+
+*Your answer here*
+
+### Part (b) - **CODE:** Compute empirical covariance and correlation matrices (5 pts)
+
+Compute the sample covariance and correlation matrices from the dental data. Display both matrices with appropriate formatting.
+
+```{r}
+#| label: q1b-empirical-cov
+
+# Your code here
+```
+
+### Part (c) - **WRITE:** Interpret the empirical covariance structure (5 pts)
+
+Based on the empirical covariance and correlation matrices, describe the pattern of correlations. Do correlations decay with increasing time separation? Are variances constant over time? What covariance structures might be appropriate?
+
+```{r}
+#| label: q1c-interpretation
+
+# Your code here (optional supporting code for your interpretation)
+```
+
+*Your answer here*
+
+### Part (d) - **CODE:** Visualize the correlation structure (5 pts)
+
+Create a heatmap of the empirical correlation matrix using ggplot2.
+
+```{r}
+#| label: q1d-heatmap
+#| fig-width: 6
+#| fig-height: 5
+
+# Your code here
+```
+
+---
+
+## Question 2: Comparing Covariance Structures with GLS (20 points)
+
+We will fit generalized least squares (GLS) models with different covariance structures and compare them using information criteria.
+
+### Part (a) - **CODE:** Fit GLS models with different covariance structures (6 pts)
+
+Fit GLS models with the mean structure `distance ~ gender * age_f` and the following covariance structures:
+1. Independence (baseline)
+2. Compound Symmetry (CS)
+3. AR(1)
+4. Unstructured (UN) with heterogeneous variances
+
+```{r}
+#| label: q2a-gls-fits
+
+# Your code here
+```
+
+### Part (b) - **CODE:** Compare models using information criteria (4 pts)
+
+Create a table comparing AIC, BIC, and log-likelihood for all models. Identify the best-fitting model.
+
+```{r}
+#| label: q2b-model-comparison
+
+# Your code here
+```
+
+*Your answer here*
+
+### Part (c) - **WRITE:** Interpret the estimated correlation parameters (5 pts)
+
+Report and interpret the estimated correlation parameters from the CS and AR(1) models. Compare these to the empirical correlations computed in Question 1.
+
+```{r}
+#| label: q2c-correlation-params
+
+# Your code here
+```
+
+*Your answer here*
+
+### Part (d) - **CODE:** Visualize implied correlation matrices (5 pts)
+
+Create side-by-side heatmaps showing the implied correlation matrices from the CS, AR(1), and UN models.
+
+```{r}
+#| label: q2d-implied-correlations
+#| fig-width: 10
+#| fig-height: 4
+
+# Your code here
+```
+
+---
+
+## Question 3: Linear Mixed Effects Models (20 points)
+
+Now we will fit linear mixed effects models to account for individual heterogeneity.
+
+### Part (a) - **CODE:** Fit random intercept and random slope models (5 pts)
+
+Fit the following mixed models using `nlme::lme`:
+1. Random intercept only (RI)
+2. Random intercept and random slope on centered age (RI+RS)
+
+Use `distance ~ gender * age_c` as the fixed effects and REML estimation.
+
+```{r}
+#| label: q3a-lme-fits
+
+# Your code here
+```
+
+### Part (b) - **WRITE:** Interpret the variance components (4 pts)
+
+Report and interpret the variance components from both models. Calculate the ICC (intraclass correlation coefficient) for the random intercept model.
+
+```{r}
+#| label: q3b-variance-components
+
+# Your code here
+```
+
+*Your answer here*
+
+### Part (c) - **CODE:** Compare RI and RS models (4 pts)
+
+Compare the random intercept and random slope models using AIC and a likelihood ratio test. Note the boundary issue for testing variance components.
+
+```{r}
+#| label: q3c-model-comparison
+
+# Your code here
+```
+
+*Your answer here*
+
+### Part (d) - **WRITE:** Explain the connection between mixed models and covariance patterns (3 pts)
+
+Explain how the random intercept model induces a compound symmetry covariance structure. Write out the implied covariance matrix for a subject with 4 observations.
+
+*Your answer here*
+
+### Part (e) - **CODE:** Random intercept and slope on the ACTG CD4 trial (4 pts)
+
+The dental design is balanced and has only four occasions. To see random intercepts and slopes on a richer, unbalanced longitudinal study, we turn to the AIDS Clinical Trial Group (ACTG) 193A trial (FLW Ch. 8, Problem 8.2). Patients with advanced immune suppression were randomized to one of four daily regimens, and `logcd4` = log(CD4 count + 1) was recorded over the first 40 weeks. The number of visits per patient ranges from 1 to 9.
+
+Fit a random-intercept-and-random-slope model with `logcd4 ~ week * group` as the fixed effects and `~ week | id` as the random effects (REML). Report the variance components and the treatment-by-time contrast (the `week:group` interaction). Interpret each variance component and the treatment contrast in context.
+
+```{r}
+#| label: q3e-cd4-lme
+
+# Your code here
+```
+
+*Your answer here*
+
+---
+
+## Question 4: BLUP Predictions and Model Diagnostics (20 points)
+
+### Part (a) - **CODE:** Extract and visualize BLUPs (6 pts)
+
+Extract the BLUPs (Best Linear Unbiased Predictors) of the random effects from the random slope model. Create a histogram of the random intercepts and a scatter plot of random intercepts vs. random slopes.
+
+```{r}
+#| label: q4a-blups
+#| fig-width: 10
+#| fig-height: 4
+
+# Your code here
+```
+
+### Part (b) - **WRITE:** Explain shrinkage in BLUPs (5 pts)
+
+Explain the concept of shrinkage in BLUPs. Why are the estimated random effects "pulled" toward zero? How does this affect predictions for subjects with few observations or high measurement error?
+
+*Your answer here*
+
+### Part (c) - **CODE:** Subject-specific predictions (5 pts)
+
+Create a spaghetti plot showing:
+1. The raw data points for each child
+2. Population-average predictions (fixed effects only)
+3. Subject-specific predictions (fixed + random effects)
+
+Color by gender and show a subset of 6 children for clarity.
+
+```{r}
+#| label: q4c-predictions
+#| fig-width: 10
+#| fig-height: 6
+
+# Your code here
+```
+
+### Part (d) - **CODE:** Residual diagnostics (4 pts)
+
+Create diagnostic plots for the random slope model:
+1. Normalized residuals vs. fitted values
+2. QQ-plot of random intercepts
+
+```{r}
+#| label: q4d-diagnostics
+#| fig-width: 10
+#| fig-height: 4
+
+# Your code here
+```
+
+*Your answer here*
+
+---
+
+## Question 5: Fixed Effects vs Random Effects (20 points)
+
+This question explores the distinction between fixed effects (within estimator) and random effects approaches using the FLW Ch. 9 worked example: the **maternal-age / infant-birth-weight study** (Problem 9.1). Linked records on 878 mothers, each with five births, were obtained from a CDC study in Georgia (1980-1992). The outcome `Wt` is infant birth weight (grams), and the time-varying covariate `Age` is the mother's age (years) at each birth. Because each mother is observed at five different maternal ages, `Age` varies **both within mothers** (a mother ages across her births) **and between mothers** (some mothers are systematically older), so the between/within decomposition is meaningful here.
+
+::: {.callout-note}
+## Notation reconciliation
+
+The Ch. 9 fixed-vs-random-effects literature writes the subject-specific effect as $\alpha_i$ and time-varying covariates as $x_{it}$ (econometrics convention). These map to the course canon as $\alpha_i \equiv b_{0i}$ (the random intercept, $b_{0i} \sim N(0, \sigma_{b_0}^2)$, an element of the random-effects covariance $G$) and $x_{it} \equiv X_{ij}$ (the covariate row for subject $i$ at occasion $j$).
+:::
+
+### Part (a) - **WRITE:** Conceptual distinction between FE and RE (5 pts)
+
+Explain the key assumption difference between fixed effects (FE) and random effects (RE) models. When would you prefer FE over RE?
+
+*Your answer here*
+
+### Part (b) - **CODE:** Random effects vs fixed effects on maternal age (6 pts)
+
+Fit the random-effects (random-intercept) model and the fixed-effects (within) estimator for the effect of maternal `Age` on infant birth weight `Wt`, and compare the two age coefficients (FLW Problems 9.1.1, 9.1.4, 9.1.7).
+
+::: {.callout-tip collapse="true"}
+## Hint: RE and the within (FE) estimator
+
+The random-effects model is a random intercept on mother:
+
+```r
+re_bw <- lme(Wt ~ Age, random = ~ 1 | MID, data = birthwt, method = "REML")
+```
+
+The fixed-effects (within) estimator demeans within each mother, then regresses the demeaned outcome on demeaned age (the mother-specific intercepts are swept out):
+
+```r
+birthwt_fe <- birthwt %>%
+  group_by(MID) %>%
+  mutate(Wt_w = Wt - mean(Wt), Age_w = Age - mean(Age)) %>%
+  ungroup()
+fe_bw <- lm(Wt_w ~ Age_w - 1, data = birthwt_fe)
+```
+
+Compare the `Age` coefficient from `re_bw` with the `Age_w` coefficient from `fe_bw`.
+:::
+
+```{r}
+#| label: q5b-bw-fe-re
+
+# Your code here
+```
+
+*Your answer here*
+
+### Part (c) - **WRITE:** Interpret the cross-sectional vs longitudinal age effects (4 pts)
+
+The RE and FE estimates differ. Explain what this divergence tells you about the relationship between maternal age and the mother-specific effect, and why the cross-sectional and longitudinal effects of aging need not be equal.
+
+*Your answer here*
+
+### Part (d) - **CODE:** The Mundlak (between/within) decomposition (5 pts)
+
+Implement the Mundlak / contextual decomposition (FLW Problem 9.1.8): include the mother-mean maternal age **and** the within-mother deviation as separate predictors, so the model estimates a cross-sectional coefficient $\beta_2^{(C)}$ and a longitudinal coefficient $\beta_2^{(L)}$. Confirm the within coefficient matches the FE estimate from Part (b), and carry out the formal test of $\beta_2^{(C)} = \beta_2^{(L)}$ (Problem 9.1.12).
+
+::: {.callout-tip collapse="true"}
+## Hint: Understanding the Mundlak Approach
+
+The Mundlak approach splits a time-varying covariate $X$ into its subject mean and the within-subject deviation:
+
+$$Y_{ij} = \beta_1 + \beta_2^{(C)} \bar{X}_i + \beta_2^{(L)} (X_{ij} - \bar{X}_i) + b_i + \varepsilon_{ij}$$
+
+- $\beta_2^{(C)}$ on $\bar{X}_i$ is the **cross-sectional (between-subject)** effect
+- $\beta_2^{(L)}$ on $(X_{ij} - \bar{X}_i)$ is the **longitudinal (within-subject)** effect, and equals the FE estimate
+
+**Important:** add the subject mean of the **covariate** $X$ (here `Age`), NOT of the outcome $Y$ (`Wt`). Adding $\bar{Y}_i$ would be endogenous.
+
+```r
+birthwt_mundlak <- birthwt %>%
+  group_by(MID) %>%
+  mutate(Age_bar = mean(Age), Age_dev = Age - Age_bar) %>%
+  ungroup()
+
+mundlak_bw <- lme(Wt ~ Age_bar + Age_dev, random = ~ 1 | MID,
+                  data = birthwt_mundlak, method = "REML")
+```
+
+For the formal test of $\beta_2^{(C)} = \beta_2^{(L)}$, refit as `Wt ~ Age + Age_bar`: the coefficient on `Age_bar` is the contextual difference $\beta_2^{(C)} - \beta_2^{(L)}$, and its Wald test is exactly the test of equality (the regression form of the Hausman test).
+:::
+
+```{r}
+#| label: q5d-mundlak
+
+# Your code here
+```
+
+*Your answer here*
+
+---
+
+## Peer Review Section
+
+After submission, you will be assigned peer reviews. Use this rubric:
+
+| Criterion | Excellent (5) | Good (3-4) | Needs Work (1-2) |
+|-----------|---------------|------------|------------------|
+| Code correctness | All code runs, correct output | Minor errors | Major errors |
+| Interpretations | Clear, accurate, in context | Mostly correct | Missing key points |
+| Covariance structure choice | Justified by empirical patterns | Reasonable but limited justification | No justification |
+| Mixed model specification | Correct random effects, diagnostics | Minor issues | Major specification errors |
+| Presentation | Well-organized, readable | Adequate | Difficult to follow |
+
+---
+
+## Reminders
+
+- [ ] Knit document before submission
+- [ ] Check that all code executes without errors
+- [ ] Ensure figures are visible and properly labeled
+- [ ] Format tables appropriately
+- [ ] Include AI disclosure if applicable

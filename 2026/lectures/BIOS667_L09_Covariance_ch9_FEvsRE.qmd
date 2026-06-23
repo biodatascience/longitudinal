@@ -1,0 +1,548 @@
+---
+title: "BIOS 667 - Lecture 9: Fixed vs Random Effects (Ch. 9)"
+subtitle: "Fitzmaurice, Laird & Ware (2011) - Applied Longitudinal Data Analysis"
+author: "Naim Rashid"
+format:
+  revealjs:
+    theme: [default]
+    footer: BIOS 667 · UNC Gillings - Lecture 9 (Ch.9)
+    slide-number: true
+    hash: true
+    toc: false
+    code-overflow: wrap
+    code-line-numbers: false
+    math: mathjax
+    incremental: true
+    embed-resources: true
+    chalkboard: false
+    css: "../../unc-gillings.css"
+    scrollable: true
+execute:
+  warning: false
+  message: false
+---
+
+## Lecture Objectives
+
+By the end of this lecture, you will be able to:
+
+- Write the **fixed-effects (FE)** model as OLS with subject indicators (FLW eq. 9.1) and recognize the **random-effects (RE)** model as the **Chapter 8 random-intercept mixed model**
+- State the single question that separates them: is the subject effect $\alpha_i$ **uncorrelated** with the covariates, $\operatorname{Cov}(\alpha_i, X_{ij}) = 0$?
+- Fit FE (subject dummies / within) and RE (mixed model) and show they **agree** when the assumption holds (congruent case)
+- Use FLW's centerpiece tool to adjudicate: the **between/within decomposition** model (FLW eq. 9.5) and the test of $H_0:\ \beta^{(C)} = \beta^{(L)}$
+- *(Supplement)* Recognize the econometrics idiom (`plm`, Swamy-Arora, the Hausman test) as analogues of the same ideas
+
+---
+
+::: {.callout-warning}
+## Terminology Alert: "Random Effects" Has Two Meanings
+
+| Context | "Random Effects" Means | Package |
+|---------|------------------------|---------|
+| **Biostatistics (FLW Ch. 8-9)** | Subject-specific random intercept $b_i \sim N(0,\sigma_b^2)$ in a mixed model | `nlme`, `lme4` |
+| **Econometrics** | The Swamy-Arora RE estimator, framed around **endogeneity** | `plm` |
+
+In **FLW Ch. 9** (this lecture), the RE model **is** the Ch. 8 random-intercept mixed model. The whole question is whether the subject effect is uncorrelated with the covariates, $\operatorname{Cov}(\alpha_i, X_{ij}) = 0$.
+
+We will use FLW's biostatistics framing as the primary content. The econometrics terms ("endogeneity", "Swamy-Arora", "Hausman test") appear later as **flagged synonyms**, not the definitional core.
+:::
+
+---
+
+## Roadmap
+
+| Section | Topic |
+|:--------|:------|
+| 1 | The two models: FE (eq. 9.1) and RE (= Ch. 8 mixed model) |
+| 2 | The one assumption that separates them: $\operatorname{Cov}(\alpha_i, X_{ij})=0$ |
+| 3 | Six Cities case study: FE = RE (congruent) |
+| 4 | FLW's centerpiece: between/within decomposition (eq. 9.5) and the $\beta^{(C)}=\beta^{(L)}$ test |
+| 5 | What the test tells you, and how to report |
+| 6 | **Beyond FLW:** the econometrics idiom (`plm`, Swamy-Arora, Hausman, robust SEs, two-way FE) |
+
+---
+
+{{< include _notation_box.qmd >}}
+
+## Notation for this lecture (FLW Ch. 9)
+
+::: {.callout-warning}
+## Reading $\alpha_i$ in this chapter
+The canonical card above gives the course-wide convention. Ch. 9 adds one symbol:
+
+| Symbol | Meaning here (Ch. 9) |
+|:--|:--|
+| $\alpha_i$ | the **subject-specific effect** for subject $i$ (FLW eq. 9.1). The RE model treats it as random, $\alpha_i \sim N(0,\sigma_b^2)$, exactly the random intercept $b_i$ from Ch. 8. The FE model treats it as a **fixed parameter** estimated with a subject indicator (dummy) variable. |
+| $\beta^{(C)},\ \beta^{(L)}$ | the **between-subject (cross-sectional)** and **within-subject (longitudinal)** covariate effects in FLW's decomposition model (eq. 9.5). |
+
+Do not confuse $\alpha_i$ with the GEE working-correlation parameter also written $\alpha$ (a different use, Ch. 12-13). The Ch. 8 objects $\mathbf{Z}_i$, $\mathbf{b}_i \sim N(0,G)$ are the same random effects; here the relevant one is the random intercept $\alpha_i$, and the question is whether to treat it as fixed or random.
+:::
+
+# Part 1: The Two Models
+
+## The Fixed-Effects Model (FLW eq. 9.1)
+
+FE is **ordinary least squares with a subject indicator (dummy) for every subject**:
+
+$$
+Y_{ij} = X_{ij}\,\beta + W_i'\gamma + \alpha_i + \varepsilon_{ij}
+$$
+
+- $\alpha_i$ is a **fixed parameter** (one per subject), not random.
+- The subject dummies absorb **all time-invariant** subject characteristics, observed or not.
+- Identifies $\beta$ from **within-subject** variation only (the "within estimator").
+- FLW Section 9.7 fits this with `PROC GLM` (CLASS / ABSORB the subject id).
+
+::: {.callout-note}
+Time-invariant covariates $W_i$ are **collinear** with the subject dummies, so FE cannot estimate their effects $\gamma$.
+:::
+
+---
+
+## The Random-Effects Model (= the Ch. 8 mixed model)
+
+The Ch. 9 RE model is exactly the **Chapter 8 random-intercept linear mixed model**:
+
+$$
+Y_{ij} = X_{ij}\,\beta + \alpha_i + \varepsilon_{ij}, \qquad \alpha_i \sim N(0,\sigma_b^2)
+$$
+
+- $\alpha_i$ is now **random** (the random intercept $b_i$ from Ch. 8).
+- Fit by REML / ML; FLW Section 9.6 uses `PROC MIXED`.
+- Gains efficiency by **pooling** between- and within-subject information.
+- **Key assumption:** $\operatorname{Cov}(\alpha_i, X_{ij}) = 0$ (the subject effect is uncorrelated with the covariates).
+
+::: {.callout-tip}
+There is no new "RE estimator" to learn here. RE **is** the Ch. 8 mixed model. Ch. 9 only asks whether its uncorrelatedness assumption is reasonable.
+:::
+
+---
+
+## The One Question That Separates Them
+
+::: {.callout-important}
+## FLW's framing
+FE and RE differ in exactly one assumption:
+
+$$
+\operatorname{Cov}(\alpha_i, X_{ij}) = 0 \quad?
+$$
+
+- **If yes:** RE (the mixed model) is consistent **and** more efficient. FE and RE agree. Prefer RE.
+- **If no:** RE is biased because it forces the subject effect to be uncorrelated with $X$. FE is still consistent (it sweeps $\alpha_i$ out entirely).
+:::
+
+| | $\alpha_i$ treated as | Uses | Consistent if $\operatorname{Cov}(\alpha_i,X)\neq 0$? |
+|:--|:--|:--|:--|
+| **FE** | fixed parameter | within variation | Yes |
+| **RE** (Ch. 8 mixed) | random, $N(0,\sigma_b^2)$ | between + within | No |
+
+---
+
+## What "Within" and "Between" Mean
+
+A covariate carries **two** kinds of information:
+
+- **Within-subject:** how $Y$ changes as $X$ changes **over time for the same subject** ($X_{ij} - \bar X_i$).
+- **Between-subject:** how subjects with **different average** $X$ levels differ ($\bar X_i$).
+
+FE uses **only** the within part. RE (the mixed model) **blends** the two under the assumption that both carry the same $\beta$.
+
+::: {.callout-note}
+FLW's centerpiece (Part 4) lets the within effect $\beta^{(L)}$ and the between effect $\beta^{(C)}$ differ, then **tests whether they are equal**. Equality is exactly the RE assumption.
+:::
+
+# Part 2: Six Cities Case Study
+
+## The Six Cities Study (FLW Ch. 9 running example)
+
+FLW's Ch. 9 case study is the **Six Cities** study of lung growth in girls from Topeka, Kansas.
+
+| Feature | Detail |
+|:--|:--|
+| Subjects | Girls measured repeatedly as they grow |
+| Outcome | $\log(\text{FEV}_1 / \text{height}^2)$ |
+| Covariate | `age` |
+| Question | What is the effect of age on (height-adjusted) lung function? |
+
+We model FLW's outcome $\;Y_{ij} = \log(\text{FEV}_1) - 2\log(\text{height})\;$ as a function of age, and ask whether **FE and RE agree**.
+
+---
+
+## Load the Six Cities Data
+
+```{r}
+#| label: setup
+#| echo: true
+#| output-location: slide
+set.seed(667)
+# Defensive package loads: a missing package does not hard-fail the render
+pkgs <- c("nlme", "dplyr", "ggplot2")
+for (p in pkgs) {
+  if (requireNamespace(p, quietly = TRUE)) suppressMessages(library(p, character.only = TRUE))
+}
+
+# Six Cities data: local copy first, download fallback
+fev_url  <- "https://content.sph.harvard.edu/fitzmaur/ala2e/fev1.txt"
+fev_file <- "../../data/fev1.txt"
+if (!file.exists(fev_file)) download.file(fev_url, fev_file)
+fev <- read.table(fev_file, header = TRUE)   # id, ht, age, baseht, baseage, logfev1
+
+# FLW Ch. 9 outcome: log(FEV1 / height^2)
+fev$y <- fev$logfev1 - 2 * log(fev$ht)
+
+# Subject-mean and within-centered age (for the decomposition later)
+fev <- fev |>
+  group_by(id) |>
+  mutate(age_bar = mean(age), age_w = age - age_bar) |>
+  ungroup()
+
+c(n_subjects = length(unique(fev$id)), n_obs = nrow(fev))
+```
+
+---
+
+## Six Cities: Spaghetti Plot
+
+```{r}
+#| label: spaghetti
+#| echo: true
+#| output-location: slide
+set.seed(667)
+samp_ids <- sample(unique(fev$id), 25)
+ggplot(fev |> filter(id %in% samp_ids),
+       aes(x = age, y = y, group = id)) +
+  geom_line(alpha = 0.5, colour = "steelblue") +
+  geom_point(alpha = 0.4, size = 0.8, colour = "steelblue") +
+  labs(title = "Six Cities: log(FEV1 / height^2) vs age (25 girls)",
+       x = "Age (years)", y = "y = log(FEV1) - 2 log(height)") +
+  theme_minimal()
+```
+
+::: {.callout-note}
+## Reading it
+Lung function rises with age within each girl. The roughly parallel within-subject slopes are what FE estimates; whether the between-subject pattern matches is the Ch. 9 question.
+:::
+
+---
+
+## Fit FE and RE on Six Cities
+
+```{r}
+#| label: fit-fe-re
+#| echo: true
+#| output-location: slide
+# RE = the Chapter 8 random-intercept mixed model (PROC MIXED in FLW)
+re <- lme(y ~ age, random = ~ 1 | id, data = fev, method = "REML")
+
+# FE = OLS with a subject indicator (dummy) per subject; within estimator.
+# Regressing on within-centered age + subject dummies gives the within slope
+# (PROC GLM with CLASS/ABSORB id in FLW Section 9.7).
+fe <- lm(y ~ age_w + factor(id), data = fev)
+
+data.frame(
+  model       = c("RE (mixed model, lme)", "FE (OLS + subject dummies)"),
+  age_slope   = c(fixef(re)["age"], coef(fe)["age_w"])
+)
+```
+
+::: {.callout-note}
+## Reading it
+Both slopes are **0.0298** (about 3% per year increase in height-adjusted lung function). FE = RE: this is FLW's **congruent** case. The subject effect appears uncorrelated with age, so the mixed model and the dummy-variable fit agree.
+:::
+
+---
+
+## Six Cities: FLW's SAS Output (static)
+
+FLW Section 9.6-9.7 fits the same models in SAS. The age effect is identical across approaches:
+
+```sas
+/* RE: random-intercept mixed model (FLW Section 9.6) */
+PROC MIXED DATA=fev1 METHOD=REML;
+  CLASS id;
+  MODEL y = age / SOLUTION;
+  RANDOM INTERCEPT / SUBJECT=id;
+RUN;
+/* age effect ~ 0.0298 */
+
+/* FE: OLS with subject indicators (FLW Section 9.7) */
+PROC GLM DATA=fev1;
+  ABSORB id;
+  MODEL y = age / SOLUTION;
+RUN;
+/* within age effect ~ 0.0298  (congruent with RE) */
+```
+
+::: {.callout-tip}
+Same numbers, two idioms: a mixed model (`PROC MIXED` / `lme`) and dummy-variable OLS (`PROC GLM ABSORB` / `lm(... + factor(id))`).
+:::
+
+# Part 3: FLW's Centerpiece, the Decomposition
+
+## Between/Within Decomposition (FLW eq. 9.5)
+
+Rather than choose FE **or** RE, FLW recommends fitting **one richer mixed model** that splits the covariate into its between and within parts:
+
+$$
+Y_{ij} = \beta^{(C)}\,\bar X_i \;+\; \beta^{(L)}\,(X_{ij} - \bar X_i) \;+\; \alpha_i + \varepsilon_{ij}
+$$
+
+| Coefficient | Name | Interpretation |
+|:--|:--|:--|
+| $\beta^{(C)}$ | between / cross-sectional | how subjects with different **average** $X$ differ |
+| $\beta^{(L)}$ | within / longitudinal | how $Y$ changes as $X$ changes **within** a subject |
+
+::: {.callout-tip}
+FLW frames this combined model as **more attractive** than the binary FE-vs-RE choice: it reports both effects and contains the adjudication test inside it.
+:::
+
+---
+
+## The Adjudication Test: $H_0:\ \beta^{(C)} = \beta^{(L)}$
+
+The RE (mixed) model assumes the between and within effects are the **same** $\beta$. So the assumption $\operatorname{Cov}(\alpha_i, X_{ij}) = 0$ is equivalent to:
+
+$$
+H_0:\ \beta^{(C)} = \beta^{(L)}
+$$
+
+- **Fail to reject:** between and within agree, so RE is valid (and more efficient). Use RE. *(Congruent.)*
+- **Reject:** the effects differ, so the pooled RE estimate is a misleading blend. Report $\beta^{(L)}$ (within, FE-like) and $\beta^{(C)}$ (between) separately.
+
+::: {.callout-note}
+A convenient equivalent fit: regress on $X_{ij}$ **and** $\bar X_i$. The coefficient on $\bar X_i$ is the **contextual** effect $\beta^{(C)} - \beta^{(L)}$, and testing it equals zero is the same test.
+:::
+
+---
+
+## Decomposition on Six Cities
+
+```{r}
+#| label: decomp
+#| echo: true
+#| output-location: slide
+# FLW eq. 9.5: between (age_bar) + within (age_w) effects in one mixed model
+dec <- lme(y ~ age_w + age_bar, random = ~ 1 | id, data = fev, method = "REML")
+
+data.frame(
+  effect      = c("within  beta^(L)  (age_w)", "between beta^(C)  (age_bar)"),
+  estimate    = c(fixef(dec)["age_w"], fixef(dec)["age_bar"])
+)
+```
+
+::: {.callout-note}
+## Reading it
+$\beta^{(L)} = 0.0298$ (within) and $\beta^{(C)} = 0.031$ (between) are very close. Their near-equality is the visual signal that FE and RE will agree.
+:::
+
+---
+
+## Test $\beta^{(C)} = \beta^{(L)}$ via the Contextual Coefficient
+
+```{r}
+#| label: context-test
+#| echo: true
+#| output-location: slide
+# Equivalent fit: x and x-bar. The age_bar coefficient is the CONTEXTUAL effect
+# beta^(C) - beta^(L); testing it = 0 tests H0: beta^(C) = beta^(L).
+dec2 <- lme(y ~ age + age_bar, random = ~ 1 | id, data = fev, method = "ML")
+round(summary(dec2)$tTable["age_bar", ], 4)
+```
+
+::: {.callout-note}
+## Reading it
+The contextual coefficient is $\approx 0.001$ with **p $\approx$ 0.72**: we **fail to reject** $H_0:\ \beta^{(C)} = \beta^{(L)}$. We reach the same **congruent** conclusion as FLW's case study (FLW report a chi-square of 0.04 on 1 df, $p > 0.80$; our fit on these data gives $p \approx 0.72$). Both clearly fail to reject. The between and within age effects are statistically indistinguishable, so the RE mixed model is appropriate and we report the single age effect of about 3% per year.
+:::
+
+---
+
+## Check Your Understanding: Decomposition
+
+::: {.callout-tip collapse="true"}
+## Pause and Reflect
+
+1. In FLW's decomposition (eq. 9.5), what do $\beta^{(L)}$ and $\beta^{(C)}$ represent?
+2. Why is testing $H_0:\ \beta^{(C)} = \beta^{(L)}$ the right way to decide between FE and RE?
+3. In the Six Cities analysis, we failed to reject. What do we report, and why?
+
+**Answers:** (1) $\beta^{(L)}$ is the **within-subject (longitudinal)** effect (change over time within a girl); $\beta^{(C)}$ is the **between-subject (cross-sectional)** effect (differences across girls with different mean age). (2) The RE mixed model assumes one common $\beta$ for both sources, which holds exactly when $\beta^{(C)} = \beta^{(L)}$, i.e. when $\operatorname{Cov}(\alpha_i, X_{ij})=0$. (3) We report the single RE age effect ($\approx 0.0298$, 3%/yr) from the more efficient mixed model, because between and within agree (congruent).
+:::
+
+# Part 4: Choosing and Reporting
+
+## FLW's Recommended Workflow
+
+1. Fit the **RE mixed model** (Ch. 8 random intercept). This is your default.
+2. Fit the **decomposition model** (eq. 9.5): split each subject-varying covariate into $\bar X_i$ (between) and $X_{ij}-\bar X_i$ (within).
+3. **Test** $\beta^{(C)} = \beta^{(L)}$ (the contextual coefficient).
+4. **If congruent:** report the parsimonious RE effect.
+   **If not:** report $\beta^{(L)}$ (within) and $\beta^{(C)}$ (between) separately, and note that a single pooled effect would be misleading.
+
+::: {.callout-tip}
+The decomposition model is strictly more informative than a binary FE/RE choice: it gives you the test **and** both effects in one fit.
+:::
+
+---
+
+## FE vs RE: What Each Buys You
+
+| Model | Treats $\alpha_i$ as | Strength | Cost |
+|:--|:--|:--|:--|
+| **FE** (dummies / within) | fixed | Consistent even if $\operatorname{Cov}(\alpha_i,X)\neq 0$; sweeps out all time-invariant confounding | Cannot estimate time-invariant covariates $W_i$; less efficient |
+| **RE** (Ch. 8 mixed) | random | Efficient; estimates $W_i$; gives subject-level predictions (BLUPs) | Biased if $\operatorname{Cov}(\alpha_i,X)\neq 0$ |
+| **Decomposition** (eq. 9.5) | random | Reports both $\beta^{(C)}$ and $\beta^{(L)}$; contains the test | One extra term per covariate |
+
+---
+
+## Common Mistakes to Avoid
+
+::: {.callout-important}
+## Critical Errors Students Make
+
+| Mistake | Why It Is Wrong | Correct Approach |
+|:--|:--|:--|
+| Treating "RE" as a new estimator | In Ch. 9 the RE model **is** the Ch. 8 random-intercept mixed model | Fit it with `lme`/`lmer` as before |
+| Interpreting the FE slope as an "overall effect" | FE estimates the **within-subject** effect only | State it as the within effect $\beta^{(L)}$ |
+| Assuming FE removes all confounding | FE removes only **time-invariant** confounding | Adjust time-varying confounders explicitly |
+| Putting subject **means of $Y$** in the decomposition | Creates a feedback problem; decompose **covariates** ($\bar X_i$), not the outcome | Use $\bar X_i$ and $X_{ij}-\bar X_i$ |
+| Confusing Ch. 8 and Ch. 9 "random effects" | Same term, the biostatistics one is the random intercept | See the terminology callout at the start |
+:::
+
+---
+
+## Key Takeaways
+
+| Item | Key Property |
+|:--|:--|
+| **FE** | OLS with subject dummies (eq. 9.1); within estimator; robust to time-invariant confounding |
+| **RE** | The Ch. 8 random-intercept mixed model; efficient if $\operatorname{Cov}(\alpha_i,X)=0$ |
+| **Decomposition (eq. 9.5)** | FLW's centerpiece: $\beta^{(C)}$ (between) + $\beta^{(L)}$ (within) in one mixed model |
+| **Adjudication** | Test $H_0:\ \beta^{(C)}=\beta^{(L)}$; Six Cities is congruent (FE = RE = 0.0298; contextual test non-significant, $p \approx 0.72$) |
+
+# Beyond FLW: The Econometrics Idiom
+
+::: {.callout-warning}
+## This section is supplementary
+Panel-data econometrics teaches the **same** FE/RE ideas in a different vocabulary, with the `plm` package (Croissant & Millo 2008, *J. Stat. Softw.*). FLW does **not** present Ch. 9 this way; the Hausman test gets a single parenthetical sentence in FLW Section 9.4. We include it so you can read the econometrics literature, but the **primary** method for this course is FLW's decomposition test above.
+
+**Translation:** "endogeneity" = $\operatorname{Cov}(\alpha_i,X)\neq 0$. "Swamy-Arora RE" = the GLS estimator for the random-intercept model. "Hausman test" = the econometrics analogue of FLW's $\beta^{(C)}=\beta^{(L)}$ test. "Mundlak / correlated RE" = FLW's decomposition model (eq. 9.5).
+:::
+
+---
+
+## `plm`: FE and RE the Econometrics Way
+
+```{r}
+#| label: plm-setup
+#| echo: true
+#| output-location: slide
+have_plm <- requireNamespace("plm", quietly = TRUE)
+if (have_plm) suppressMessages(library(plm))
+if (requireNamespace("lmtest", quietly = TRUE)) suppressMessages(library(lmtest))
+if (requireNamespace("sandwich", quietly = TRUE)) suppressMessages(library(sandwich))
+
+if (have_plm) {
+  fe_p <- plm(y ~ age, data = fev, index = "id", model = "within")
+  re_p <- plm(y ~ age, data = fev, index = "id",
+              model = "random", random.method = "swar")  # Swamy-Arora
+  print(data.frame(
+    model     = c("FE (plm within)", "RE (plm Swamy-Arora)"),
+    age_slope = c(coef(fe_p)["age"], coef(re_p)["age"])
+  ))
+} else {
+  message("plm not installed; skipping econometrics supplement.")
+}
+```
+
+::: {.callout-note}
+## Reading it
+`plm` reproduces the same age slope ($\approx 0.0298$) we got from `lm(... + factor(id))` and `lme()`. The within / Swamy-Arora estimators are the econometrics names for FE and RE.
+:::
+
+---
+
+## The Hausman Test (econometrics analogue)
+
+The Hausman test (Hausman 1978, *Econometrica*) compares the FE and RE coefficient vectors. It is the econometrics analogue of FLW's $\beta^{(C)} = \beta^{(L)}$ test, **not** the method FLW teaches.
+
+```{r}
+#| label: hausman
+#| echo: true
+#| output-location: slide
+if (have_plm) {
+  print(phtest(fe_p, re_p))
+}
+```
+
+::: {.callout-note}
+## Reading it
+Fail to reject (p large): no evidence that FE and RE disagree, the same congruent conclusion as the $\beta^{(C)}=\beta^{(L)}$ test. **Caveat:** `phtest()` requires two `plm` objects (do not pass an `lme` fit); the classical version assumes homoskedasticity.
+:::
+
+---
+
+## Robust Hausman and Two-Way FE
+
+```{r}
+#| label: robust-hausman
+#| echo: true
+#| output-location: slide
+if (have_plm && requireNamespace("sandwich", quietly = TRUE)) {
+  # Robust (clustered) Hausman, for heteroskedasticity / serial correlation
+  print(phtest(fe_p, re_p,
+        vcov = function(z) vcovHC(z, method = "arellano", type = "HC0", cluster = "group")))
+
+  # Two-way FE: also absorb common time shocks (here, rounded age groups)
+  fev$age_grp <- factor(round(fev$age))
+  fe_tw <- plm(y ~ age, data = fev, index = c("id", "age_grp"),
+               model = "within", effect = "twoways")
+  cat("Two-way FE age slope:", round(coef(fe_tw)["age"], 4), "\n")
+}
+```
+
+::: {.callout-tip}
+Robust SEs (`vcovHC`, Croissant & Millo 2008) and two-way FE are econometrics conveniences. The biostatistics route to the same robustness is the decomposition model plus a mixed-model covariance structure (Ch. 7-8).
+:::
+
+---
+
+## Supplement: The Endogeneity Mechanism (simulation)
+
+To **see** what makes FE and RE disagree, simulate a covariate correlated with $\alpha_i$. This illustrates the mechanism; it is not from FLW.
+
+```{r}
+#| label: sim-mechanism
+#| echo: true
+#| output-location: slide
+gen_panel <- function(n = 100, T = 6, beta = 1, rho_xa = 0) {
+  alpha <- rnorm(n, 0, 1)
+  data.frame(id = rep(1:n, each = T)) |>
+    mutate(a = rep(alpha, each = T),
+           x = rnorm(n * T, 0, 1) + rho_xa * a,   # rho_xa > 0: x correlated with alpha
+           y = 2 + beta * x + a + rnorm(n * T, 0, 1))
+}
+set.seed(667)
+fit_both <- function(rho) {
+  d <- gen_panel(rho_xa = rho)
+  d <- d |> group_by(id) |> mutate(xb = mean(x), xw = x - xb) |> ungroup()
+  c(FE_within = coef(lm(y ~ xw + factor(id), data = d))["xw"],
+    RE_mixed  = fixef(lme(y ~ x, random = ~ 1 | id, data = d))["x"])
+}
+rbind(`Scenario A: rho_xa = 0 (congruent)` = round(fit_both(0), 3),
+      `Scenario B: rho_xa = 0.5 (RE biased)` = round(fit_both(0.5), 3))
+```
+
+::: {.callout-note}
+## Reading it
+Scenario A ($\operatorname{Cov}(\alpha_i,X)=0$): FE $\approx$ RE $\approx$ true $\beta=1$. Scenario B ($\operatorname{Cov}(\alpha_i,X)>0$): RE is pulled **above** 1 while FE stays near 1. This bias is exactly what the $\beta^{(C)}=\beta^{(L)}$ test (or its Hausman analogue) detects.
+:::
+
+---
+
+## References (supplement)
+
+- Fitzmaurice, Laird & Ware (2011), *Applied Longitudinal Data Analysis*, Ch. 9 (Sections 9.4, 9.6-9.8) and eq. (9.1), (9.5).
+- Croissant, Y. & Millo, G. (2008). Panel Data Econometrics in R: The `plm` Package. *Journal of Statistical Software*, 27(2).
+- Hausman, J. A. (1978). Specification Tests in Econometrics. *Econometrica*, 46(6), 1251-1271.
+- Mundlak, Y. (1978). On the Pooling of Time Series and Cross Section Data. *Econometrica*, 46(1), 69-85.

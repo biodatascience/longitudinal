@@ -1,0 +1,1185 @@
+---
+title: "BIOS 667 - Lecture 14: Generalized Linear Mixed Effects Models (Ch. 14)"
+subtitle: "Fitzmaurice, Laird & Ware (2011) - Applied Longitudinal Data Analysis"
+author: "Naim Rashid"
+format:
+  revealjs:
+    theme: [default]
+    footer: BIOS 667 · UNC Gillings - Lecture 14 (Ch.14)
+    slide-number: true
+    hash: true
+    toc: false
+    code-overflow: wrap
+    code-line-numbers: false
+    math: mathjax
+    incremental: true
+    embed-resources: true
+    chalkboard: false
+    css: "../../unc-gillings.css"
+    scrollable: true
+execute:
+  warning: false
+  message: false
+---
+
+## Lecture Objectives
+
+- Position **GLMMs** within the marginal-mixed-transition modeling triad
+- Derive the GLMM likelihood and understand why **integrals over random effects** drive computation
+- Fit and interpret subject-specific effects for binary and count outcomes in R
+- Master the **critical distinction** between marginal and conditional interpretations
+- Work a real FLW Ch. 14 Case Study (seizure-count data) end to end
+- Diagnose model fit, test variance components correctly, and report results honestly
+
+::: {.notes}
+This is a two-class deck. Day 1 (Part I) is the conceptual core: what a GLMM is, why the conditional mean is the natural target, and the conditional-vs-marginal distinction that students will get wrong on the exam if we are not relentless about it. Day 2 (Part II) is the worked machinery: predictions taxonomy, the real seizure Case Study, count/overdispersion, variance-component testing, diagnostics, pitfalls. Tell students up front that the single learning objective they must not miss is "GLMM coefficients are conditional on the random effects."
+:::
+
+---
+
+{{< include _notation_box.qmd >}}
+
+---
+
+## Notation (this lecture)
+
+::: {.notation-card}
+| Symbol | Meaning |
+|:--|:--|
+| $Y_{ij}\mid \mathbf{b}_i$ | outcome conditional on the random effects $\mathbf{b}_i$ |
+| $g(\cdot)$ | link: $g\!\left(E[Y_{ij}\mid \mathbf{b}_i]\right) = X_{ij}\beta + Z_{ij}\mathbf{b}_i$ |
+| $\mathbf{b}_i \in \mathbb{R}^q$ | subject-specific random effects, $\mathbf{b}_i \sim N_q(0, G)$ |
+| $\pi_{ij}$ | binary response probability (recall L11) |
+| $\phi$ | dispersion parameter (recall L11) |
+| $f_G(\mathbf{b}_i)$ | random-effects density, $N(\mathbf{b}_i;\,0,G)$ |
+:::
+
+::: {.notes}
+This card adds only the GLMM-specific symbols on top of the running notation box. Keep this slide a table; the "why" goes here in notes. Two collisions to police all lecture: (1) the random-effects DENSITY is $f_G(\mathbf{b}_i)$ or $N(\mathbf{b}_i;0,G)$, never $\phi(\cdot)$, because $\phi$ is the reserved dispersion parameter from L11. (2) $g(\cdot)$ here is the link function, distinct from the group index $g$. Random effects $\mathbf{b}_i$ are bold (vector); the row designs $X_{ij},Z_{ij}$ stay plain per the canon.
+:::
+
+---
+
+## Roadmap
+
+**Part I (Day 1) - Concepts**
+
+1. Motivating examples and the model hierarchy
+2. GEE vs GLMM: terminology, missing-data asymmetry
+3. GLMM anatomy and the likelihood integral
+4. Binary random-intercept GLMM: subject-specific interpretation
+5. Conditional vs marginal effects; Jensen; the Zeger approximation
+
+**Part II (Day 2) - Worked machinery**
+
+6. Predictions taxonomy (subject / at-RE / true marginal)
+7. Real Case Study: FLW seizure-count data (Table 14.6)
+8. Overdispersion, variance-component testing, diagnostics
+9. Convergence recipe, pitfalls, reporting
+
+# Part I (Day 1): Concepts {background-color="#13294B"}
+
+::: {.notes}
+Part I budget: roughly one 75-minute class. Goal by the end of Day 1: a student can write the two-level GLMM, say in words what "conditional on $\mathbf{b}_i$" means, and explain why the population-average odds ratio is closer to 1 than the subject-specific one. Everything in Part I is what FLW Ch. 14 actually establishes (subject-specific interpretation, latent heterogeneity). The explicit marginal-vs-conditional numeric contrast and the attenuation formula are previews of Ch. 16 (flagged where they appear).
+:::
+
+---
+
+## Where We Are
+
+| Chapter | Topic | Focus |
+|---------|-------|-------|
+| 11 | Generalized linear models | Discrete outcomes, one observation |
+| 12-13 | Marginal models + GEE | Population-average inference |
+| **14** | **GLMMs** | **Subject-specific inference for discrete outcomes** |
+
+::: {.notes}
+Anchor the lecture in the triad. Ch. 11 gave the GLM for a single response; Ch. 12-13 added correlation through a working correlation and answered the population-average question. Ch. 14 adds latent subject random effects and answers a different question: the within-subject effect. Stress that this is a sibling of the LME chapters (Ch. 8) but for non-Gaussian outcomes.
+:::
+
+---
+
+## GLMMs Excel When
+
+- Subject heterogeneity drives the association
+- Covariate effects are interpreted **conditional** on latent subject traits
+- Predicted subject trajectories or shrinkage estimates are needed
+- Interest is at the **individual level**
+
+::: {.notes}
+Give a one-line clinical framing for each bullet. The recurring exam trap: students treat "GLMM" and "GEE" as interchangeable correlated-data tools. They are not: they target different estimands. We make that explicit next.
+:::
+
+---
+
+## GEE vs GLMM: Translation Guide
+
+| **GEE (marginal)** | **GLMM (conditional)** |
+|---------|----------|
+| Population-averaged effect | Subject-specific effect |
+| Working correlation $\operatorname{Corr}_i(\alpha)$ | Correlation induced from $G$ |
+| Robust (sandwich) SE | Model-based SE |
+| $\text{OR}_{\text{population}}$ | $\text{OR}_{\text{conditional}}$ |
+| "Average over people" | "Within a person, holding $\mathbf{b}_i$ fixed" |
+| Valid inference needs **MCAR** | Valid inference under **MAR** |
+
+**Key insight:** Both answer valid but *different* scientific questions.
+
+::: {.notes}
+The last row is the missing-data asymmetry students must learn (FLW p. 528, footnote to the amenorrhea example). Likelihood-based GLMM inference is valid under MAR; standard GEE requires MCAR for valid inference under dropout (IPW-GEE extends GEE to MAR with a correctly specified dropout model, L13). Do not let the table imply GEE and GLMM are two ways to get the same number; they estimate different parameters. Common student error: comparing a GEE OR and a GLMM OR as if one were "wrong."
+:::
+
+---
+
+## When to Choose Which
+
+| Choose **GLMM** when | Choose **GEE** when |
+|---|---|
+| Subject-specific effect is the question | Population-averaged effect is the question |
+| Need individual trajectory predictions | Covariance is a nuisance |
+| Heterogeneity is scientifically interesting | Want robust, low-assumption inference |
+| Cluster sizes adequate ($n_i \geq 5$ for binary) | Very small clusters ($n_i = 2$-$3$), sparse binary |
+| Missing data plausibly **MAR** | Missing data plausibly **MCAR** |
+
+::: {.notes}
+Consolidated decision slide (was two slides). Hit the missing-data row again: it is the cleanest single discriminator when the scientific question is ambiguous. If dropout is non-trivial and only MAR is defensible, the likelihood-based GLMM has the weaker assumption. Reserve "GLMM for individual prediction, GEE for public-health/population statements" as the one-line takeaway.
+:::
+
+---
+
+## Why GLMMs Matter: Asthma Example
+
+| Analysis | Treatment OR | Interpretation |
+|----------|--------------|----------------|
+| GEE (marginal) | 1.8 | Population: steroid raises odds of control 80% |
+| GLMM (conditional) | 2.4 | Within child: steroid raises odds 140% |
+
+**Why do they differ?** Averaging the nonlinear logit over between-child variability shrinks the **population-averaged** OR toward 1 (non-collapsibility / Jensen). The subject-specific OR is larger. This is **attenuation, not differential benefit.**
+
+::: {.callout-note}
+Forward reference: we make this precise on the Jensen slides and quantify it with the Zeger approximation (a Ch. 16 result).
+:::
+
+::: {.notes}
+This slide previously gave the WRONG mechanism ("high-risk children benefit more, amplifying within-person effects"). That would require a treatment-correlated random SLOPE (heterogeneous treatment effects). For a random-INTERCEPT logistic model there is no such heterogeneity: the conditional OR exceeds the marginal OR purely because averaging a nonlinear link over the random-intercept distribution pulls the population-average effect toward the null. Say it as: "same treatment effect for every child on the logit scale; the population-average OR is attenuated by Jensen." This is internally consistent with the Jensen and Zeger slides later. Define non-collapsibility here at first use (next slide pins it down).
+:::
+
+---
+
+## Non-collapsibility (define it now)
+
+> **Non-collapsibility:** an odds ratio computed within strata can differ from the odds ratio computed in the pooled (marginal) population *even when there is no confounding.*
+
+- Risk differences and (log) rate ratios are collapsible; **odds ratios are not**
+- Mixing subjects with different baseline risk ($\mathbf{b}_i$) shifts the marginal OR toward 1
+- This is a property of the **odds-ratio scale**, not a bias
+
+::: {.notes}
+Students conflate non-collapsibility with confounding. It is not confounding: there is no common cause, and the marginal OR is not "biased," it is a different estimand. Tiny mental example: two strata each with OR = 2.4; the pooled OR can be 1.8 with zero confounding. This is exactly the asthma table. Rate ratios in the Poisson Case Study later ARE collapsible on the log scale, which is why the count example does not show the same conditional-vs-marginal gap on the multiplicative scale.
+:::
+
+---
+
+## Model Hierarchy
+
+**Level 1** (conditional on $\mathbf{b}_i \in \mathbb{R}^q$):
+$$Y_{ij} \mid \mathbf{b}_i \sim \text{EF}(\mu_{ij}, \phi), \quad g(\mu_{ij}) = \eta_{ij} = X_{ij}\beta + Z_{ij}\mathbf{b}_i$$
+
+**Level 2:**
+$$\mathbf{b}_i \sim N(0, G)$$
+
+- **EF** = exponential-family distribution (binomial, Poisson, ...; recall L11)
+- Grounding links: **logit** for binary $\pi_{ij}$, **log** for Poisson rates
+
+::: {.notes}
+Spell out EF the first time (a student review flagged that it was unglossed). Connect to L11: same exponential family, same link menu, but now the linear predictor carries a subject random term $Z_{ij}\mathbf{b}_i$. Emphasize that $\beta$ lives INSIDE the link, conditional on $\mathbf{b}_i$; that single fact is the source of every interpretation subtlety in the rest of the lecture. Contrast with the LME (Ch. 8) where the identity link makes conditional and marginal means coincide; the nonlinearity here breaks that.
+:::
+
+---
+
+## Jensen's Inequality and Marginal Means
+
+**Marginal mean:** $E(Y_{ij}) \neq g^{-1}(X_{ij}\beta)$ because of **Jensen's inequality**:
+
+$$E\!\left[g^{-1}(\eta + b)\right] \neq g^{-1}\!\left(E[\eta + b]\right) \quad \text{for nonlinear } g^{-1}$$
+
+**Key:** random effects create heterogeneity; averaging over it **attenuates** effects on the probability scale.
+
+::: {.callout-note}
+The explicit conditional-vs-marginal numeric contrast (next two slides) previews **FLW Ch. 16** (Fig. 16.1). Ch. 14 itself establishes the conditional interpretation; we show the contrast now to motivate it.
+:::
+
+::: {.notes}
+Flag this as Ch. 16 preview material per the book-fidelity audit: FLW develops the explicit marginal-vs-conditional numerical illustration and the attenuation factor in Ch. 16, not Ch. 14. We keep it here because it is the cleanest motivation for "conditional $\neq$ marginal," but label it honestly so the course matrix stays consistent. The transition: "let us put numbers on this."
+:::
+
+---
+
+## Jensen's Inequality: Concrete Numerical Example
+
+**Setup:** logistic model, random intercept $b_i$ taking three equally likely values $\{-2, 0, 2\}$.
+
+At $\eta = 0$:
+
+| $b_i$ | $\eta + b_i$ | $P(Y=1 \mid b_i) = \text{expit}(\eta + b_i)$ |
+|:-----:|:------------:|:-------------------------------------------:|
+| -2 | -2 | 0.119 |
+| 0 | 0 | 0.500 |
+| +2 | +2 | 0.881 |
+
+Plug-in at $b=0$: 0.500. Average of probabilities: $(0.119+0.500+0.881)/3 = 0.500$. **They match here** because $\eta=0$ is symmetric.
+
+::: {.notes}
+This is the FLW Ch. 16 "simple numerical illustration" (Fig 16.1). The symmetric case matching is the setup for the punchline on the next slide: move off symmetry and the two diverge. Keep students focused on "plug-in $b=0$" vs "average the probabilities" as two different operations.
+:::
+
+---
+
+## Jensen's Inequality: The Calculation
+
+Now try $\eta = 1$:
+
+| $b_i$ | $\eta + b_i$ | $P(Y=1 \mid b_i)$ |
+|:-----:|:------------:|:-----------------:|
+| -2 | -1 | 0.269 |
+| 0 | 1 | 0.731 |
+| +2 | 3 | 0.953 |
+
+- **Plug-in at $b=0$:** $\text{expit}(1) = 0.731$
+- **Average the probabilities:** $(0.269+0.731+0.953)/3 = 0.651$
+
+**Difference: 8 percentage points.** This is why `re.form=NA` does NOT give marginal predictions.
+
+::: {.callout-note collapse="true"}
+## Quick Check
+Why is the true marginal probability (0.651) *lower* than the plug-in at $b=0$ (0.731)?
+
+**Answer:** above $\eta = 0$ the logistic curve is concave, so $E[g(X)] \leq g(E[X])$. The $b_i=-2$ subject pulls the average down more than $b_i=+2$ can pull it up (the curve flattens near 1).
+:::
+
+::: {.notes}
+The 8-point gap is the whole lecture in one number: at $b=0$ is conditional, the average is marginal, and they differ for nonlinear links. Tie forward to the predictions taxonomy in Part II (`re.form=NA` = plug-in at $b=0$, Monte Carlo = averaging). The Quick Check answer is the concavity argument; have students articulate "which subjects dominate the average."
+:::
+
+---
+
+## Likelihood Challenge
+
+**Subject-specific contribution:**
+$$L_i(\beta, G) = \int_{\mathbb{R}^q} \prod_{j=1}^{n_i} f(y_{ij} \mid \mathbf{b}_i;\, \beta)\; f_G(\mathbf{b}_i)\; d\mathbf{b}_i$$
+
+- $f_G(\mathbf{b}_i) = N(\mathbf{b}_i;\, 0, G)$ is the random-effects density
+- **No closed form** when $f(\cdot\mid\mathbf{b}_i)$ is non-Gaussian
+- This integral is what makes GLMM fitting hard
+
+::: {.notes}
+Notation fix: the random-effects density is $f_G(\mathbf{b}_i)$, NOT $\phi(\mathbf{b}_i;G)$; $\phi$ is the dispersion parameter. Walk the integral: the conditional likelihood given $\mathbf{b}_i$ is a product of independent EF terms (easy), but we observe $Y$ marginally, so we integrate out the unobserved $\mathbf{b}_i$. For the Gaussian LME this integral is closed form (Ch. 8); for binomial/Poisson it is not, which forces the numerical methods on the next slide.
+:::
+
+---
+
+## Estimation: ML via Numerical Integration
+
+```
+Random intercept only, moderate n_i (>=5)?
+  -> Laplace approximation (lme4 default, nAGQ = 1): fast, usually adequate
+Random slopes, or small/sparse clusters?
+  -> Adaptive Gauss-Hermite quadrature (nAGQ = 5-50): more accurate
+Complex G, sparse data, full uncertainty wanted?
+  -> Bayesian MCMC (brms, MCMCglmm)
+```
+
+::: {.callout-note}
+**Recipe:** start at Laplace, confirm with a few quadrature points, escalate only if estimates move. FLW's Ch. 14 case studies all use **ML via 50-point adaptive Gaussian quadrature** (PROC GLIMMIX).
+:::
+
+::: {.callout-warning}
+**PQL / MQL** are **Ch. 15 (approximate methods)**, not Ch. 14 estimation. They are biased for sparse binary data; we treat them next chapter.
+:::
+
+::: {.notes}
+Consolidated the old decision-tree + methods-detail pair into one recipe (a student review noted the tree routed among methods the next slide had not defined yet). Flag PQL/MQL as Ch. 15 per the book-fidelity audit: FLW Ch. 14 fits everything by adaptive quadrature; PQL/MQL and their differing inferential targets are Ch. 15. Quadrature scales exponentially with dim($\mathbf{b}_i$), so the practical limit is $q = 2$-$3$ random effects. The seizure Case Study has $q = 2$ (intercept + slope) and Laplace already nails the FLW Table 14.6 numbers, which we will show.
+:::
+
+---
+
+## R Setup
+
+```{r}
+#| label: setup
+#| echo: true
+#| output-location: slide
+suppressPackageStartupMessages({
+  library(dplyr)
+  library(tidyr)
+  library(ggplot2)
+  library(lme4)
+  library(emmeans)
+  library(broom.mixed)
+  library(patchwork)
+})
+theme_set(theme_minimal(base_size = 16))
+```
+
+---
+
+## Example 1: Binary Asthma Control Trial (simulated)
+
+::: {.callout-warning}
+**Simulated to isolate a teaching point** (the conditional-vs-marginal gap on the binary/logit scale). The real FLW Ch. 14 Case Study is the seizure data, worked in Part II.
+:::
+
+- 120 children, quarterly visits for 2 years
+- Outcome: **controlled asthma** (1) vs uncontrolled (0)
+- Predictors: treatment (steroid vs usual care), visit time, baseline severity
+- Random intercept captures latent propensity for control
+
+::: {.notes}
+Label this clearly as instructor simulation, not FLW Ch. 14 data (book-fidelity audit). It earns its place because logit-scale attenuation is easiest to teach on a clean binary DGP where we know the truth. The amenorrhea data (FLW Table 14.2) is the book's binary example; we use the seizure data as the worked real Case Study and keep this simulation only for the conditional-vs-marginal mechanics.
+:::
+
+---
+
+## Example 1: Data Simulation
+
+```{r}
+#| label: asthma-sim
+#| echo: true
+#| output-location: slide
+set.seed(667)
+n_subj <- 120; visits <- 8
+asthma_dat <- tibble(
+  id    = rep(1:n_subj, each = visits),
+  visit = rep(0:(visits - 1), times = n_subj),
+  weeks = rep(0:(visits - 1), times = n_subj) * 12,
+  treat = factor(rep(sample(c("Steroid","Usual"), n_subj, replace = TRUE), each = visits)),
+  severity = rep(sample(c("Mild","Moderate","Severe"), n_subj, replace = TRUE,
+                        prob = c(0.5, 0.35, 0.15)), each = visits)
+) %>%
+  mutate(
+    sev_score = case_when(severity == "Mild" ~ 0, severity == "Moderate" ~ 0.6, TRUE ~ 1.2),
+    treat_num = if_else(treat == "Steroid", 0.6, 0),   # TRUTH: steroid log-OR = 0.6
+    time_eff  = 0.05 * weeks / 12,                      # TRUTH: time log-OR per yr = 0.05
+    rand_int  = rep(rnorm(n_subj, sd = 0.9), each = visits),  # TRUTH: RE intercept SD = 0.9
+    linpred   = -1 + treat_num + time_eff - 0.8 * sev_score + # TRUTH: severity log-OR = -0.8
+                0.15 * treat_num * (weeks / 12) + rand_int,    # TRUTH: treat x time = 0.15
+    prob      = plogis(linpred),
+    control   = rbinom(n_subj * visits, size = 1, prob = prob)
+  )
+asthma_dat$treat <- relevel(asthma_dat$treat, ref = "Usual")
+```
+
+::: {.notes}
+Every hardcoded constant is now tagged as the data-generating truth so students can compare the glmer estimates back to it (a student review asked for this). Point out: true steroid log-OR = 0.6 (conditional OR = 1.82), true RE intercept SD = 0.9. After the fit we compare estimates to these truths. Note time-invariant treatment/severity, time-varying outcome.
+:::
+
+---
+
+## Fit the Random-Intercept Logistic GLMM
+
+```{r}
+#| label: asthma-fit
+#| echo: true
+#| output-location: slide
+glmm_fit <- glmer(
+  control ~ treat * weeks + severity + (1 | id),
+  data = asthma_dat,
+  family = binomial(link = "logit")
+)
+broom.mixed::tidy(glmm_fit, effects = "fixed", conf.int = TRUE) %>%
+  dplyr::select(term, estimate, std.error, conf.low, conf.high)
+```
+
+```{r}
+#| label: asthma-fit-check
+#| echo: false
+.b_treat <- unname(fixef(glmm_fit)["treatSteroid"])
+.sd_re   <- as.numeric(attr(lme4::VarCorr(glmm_fit)$id, "stddev"))
+```
+
+::: {.callout-note}
+Recovered steroid log-OR `r round(.b_treat, 2)` (truth 0.6) and random-intercept SD `r round(.sd_re, 2)` (truth 0.9): the conditional estimates track the DGP.
+:::
+
+::: {.notes}
+The recap callout reads the recovered values inline from the fitted object (never hardcoded) and compares to the simulation truths. $(1|id)$ absorbs within-child correlation; the interaction estimates a differential slope; Laplace is the default. Stress that $\exp(\beta)$ here is a CONDITIONAL (within-child) odds ratio, set up on the next slide.
+:::
+
+---
+
+## Interpreting the Fixed Effects (conditional)
+
+- $\exp(\beta)$ is an **odds ratio conditional on the random intercept** (within a given child)
+- Positive steroid effect = better control **for the same child**
+- The interaction tests diverging within-child trajectories
+- **Critical:** these are NOT population-averaged effects
+
+::: {.notes}
+This is the slide where students must internalize "conditional." Make them say the interpretation out loud with the words "for a child with a given latent propensity" or "holding $b_i$ fixed." The marginal/population-average version is attenuated and we compute it next with the Zeger approximation. The classic exam error is reporting $\exp(\hat\beta)$ as "the" odds ratio with no frame of reference.
+:::
+
+---
+
+## Conditional vs Marginal: Why They Differ
+
+| Reason | Explanation |
+|--------|-------------|
+| **Non-collapsibility** | Odds ratios do not average over subgroups (unlike risk differences / log rate ratios) |
+| **Jensen's inequality** | $E[g^{-1}(\eta + b)] \neq g^{-1}(E[\eta + b])$ for nonlinear link $g$ |
+| **Averaging direction** | Averaging the nonlinear link over $\mathbf{b}_i$ pulls the marginal effect toward the null |
+
+::: {.notes}
+Trimmed the old four-row table that included a "correlated random effects amplify the conditional effect" row, which conflated the random-INTERCEPT mechanism (Jensen/non-collapsibility) with a random-SLOPE phenomenon. For the random-intercept model the gap is entirely Jensen + non-collapsibility, with no appeal to treatment-effect heterogeneity. Keep the message: same conditional effect for everyone, attenuated marginal effect.
+:::
+
+---
+
+## Converting Conditional to Marginal (Zeger approx.)
+
+For **random-intercept logistic** models (Zeger, Liang & Albert 1988; **FLW Ch. 16 / p. 477**):
+
+$$\beta^{\text{marg}} \approx \frac{\beta^{\text{cond}}}{\sqrt{1 + c_2^{2}\,\sigma_b^2}}, \qquad c_2^{2} \approx 0.346$$
+
+::: {.callout-note}
+The **multiplier** under the root is $c_2^2 \approx 0.346$, where $c_2 = 16\sqrt{3}/(15\pi) \approx 0.588$. FLW p. 477 also uses $k = 0.588$ directly; $0.346 = (1/1.7)^2$ is the probit-matching teaching form.
+:::
+
+::: {.notes}
+Two fixes here. (1) Flag this as Ch. 16 / Zeger-Liang-Albert 1988 per the book-fidelity audit; Ch. 14 itself only establishes the conditional interpretation. (2) The constant 0.346 is the MULTIPLIER $c_2^2$, not $c_2$. $c_2 = 0.588$ (= $16\sqrt3/(15\pi)$, FLW p. 477). Do not write "$c_2 = 0.346$". This is a rough approximation, random-intercept-logistic only.
+:::
+
+---
+
+## Where Does 0.346 Come From?
+
+::: {.callout-warning}
+Derivation **sketch** (not examinable). The point is *that* averaging attenuates, by roughly this factor.
+:::
+
+1. The logistic CDF $F_{\text{logit}}(x) = 1/(1+e^{-x})$ is well approximated by the probit $\Phi(x/1.7)$, where $\Phi$ is the **standard-normal** CDF.
+2. For a probit link the marginalization integral is closed form:
+$$\int_{-\infty}^{\infty} \Phi\!\left(\frac{\eta + b}{c}\right) f_G(b)\, db = \Phi\!\left(\frac{\eta}{\sqrt{c^2 + \sigma_b^2}}\right)$$
+3. Matching the logistic to the probit gives $c = 1.7$, so the slope attenuation multiplier is $c^{-2} = (1.7)^{-2} \approx 0.346$.
+
+::: {.notes}
+Three expression fixes from the audit. (1) Restore the integral sign on step 2 (it previously read as a product). (2) Use distinct symbols: $F_{\text{logit}}$ for the logistic CDF, reserve $\Phi$ for the standard-normal CDF only. (3) State plainly $0.346 = (1/1.7)^2$. Label the slide a sketch so students do not try to reproduce the algebra on an exam. The substantive takeaway is the attenuation, not the derivation.
+:::
+
+---
+
+## Applying the Zeger Approximation
+
+```{r}
+#| label: zeger-apply
+#| echo: true
+#| output-location: slide
+beta_cond <- fixef(glmm_fit)["treatSteroid"]
+var_u     <- as.numeric(attr(VarCorr(glmm_fit)$id, "stddev"))^2
+atten     <- sqrt(1 + 0.346 * var_u)      # 0.346 = c_2^2 multiplier
+beta_marg <- beta_cond / atten
+
+cat("Conditional beta (GLMM):", round(beta_cond, 3),
+    " -> OR =", round(exp(beta_cond), 2), "\n")
+cat("Marginal beta (Zeger):  ", round(beta_marg, 3),
+    " -> OR =", round(exp(beta_marg), 2), "\n")
+cat("Attenuation factor:     ", round(atten, 3), "\n")
+```
+
+::: {.notes}
+All numbers come from the fitted object; nothing is hardcoded. The conditional OR is larger than the Zeger-approximated marginal OR, the attenuation we predicted. Reinforce: the marginal number here is an analytic APPROXIMATION (Ch. 16), not what GEE would actually return on this data. Have students read off the attenuation factor and connect it to $\sigma_b^2$.
+:::
+
+---
+
+## Side-by-Side: Conditional vs Marginal
+
+```{r}
+#| label: zeger-table
+#| echo: false
+comparison_table <- tibble(
+  Analysis = c("GLMM (Conditional)", "Zeger-approximated marginal"),
+  `Treatment OR` = c(round(exp(beta_cond), 2), round(exp(beta_marg), 2)),
+  Interpretation = c(
+    "Within-child effect: child's latent propensity held fixed",
+    "Population-average effect (analytic approximation)"
+  )
+)
+knitr::kable(comparison_table)
+```
+
+::: {.notes}
+Relabeled the second row from "GEE-equivalent (Marginal)" to "Zeger-approximated marginal" per the audit: the Zeger formula is an analytic approximation to the marginal effect, not what GEE estimates. If you actually ran GEE on this data you would get a close-but-not-identical number; the point is the direction and rough magnitude of attenuation.
+:::
+
+---
+
+## Check Your Understanding: Zeger
+
+A GLMM for smoking cessation gives conditional log-OR $\beta^{\text{cond}} = 1.1$ (OR = 3.0) and $\sigma_b^2 = 2.0$. Approximate marginal OR?
+
+::: {.fragment}
+$$\beta^{\text{marg}} = \frac{1.1}{\sqrt{1 + 0.346 \times 2.0}} = \frac{1.1}{\sqrt{1.692}} = \frac{1.1}{1.30} = 0.85,\quad \text{OR} = e^{0.85} = 2.34$$
+
+The within-person OR (3.0) attenuates to a population-average OR (2.34) because of baseline-propensity heterogeneity.
+:::
+
+::: {.notes}
+Walk the arithmetic live. Emphasize 0.346 is the multiplier (not $c_2$). Tie the attenuation magnitude to $\sigma_b^2 = 2.0$ being large. This closes Part I.
+:::
+
+# Part II (Day 2): Worked Machinery {background-color="#13294B"}
+
+::: {.notes}
+Part II budget: roughly one 75-minute class. Open with the recap slide. Day 2 is hands-on: the predictions taxonomy (the most exam-relevant operational content), then the real FLW seizure Case Study end to end, then count/overdispersion/testing/diagnostics, then the convergence recipe and reporting. Budget about 15-20 minutes for the predictions block and about 20 for the Case Study.
+:::
+
+---
+
+## Recap of Part I
+
+- GLMM: $g(E[Y_{ij}\mid\mathbf{b}_i]) = X_{ij}\beta + Z_{ij}\mathbf{b}_i$, $\mathbf{b}_i\sim N(0,G)$
+- $\exp(\beta)$ is a **conditional** (within-subject) odds/rate ratio
+- Marginal effect is **attenuated** by Jensen / non-collapsibility (Zeger approx., Ch. 16)
+- Fit by **ML** (Laplace / adaptive quadrature); PQL/MQL are Ch. 15
+- GLMM valid under **MAR**; standard GEE needs **MCAR**
+
+::: {.notes}
+Sixty-second recap to reload working memory for the second class. The single sentence to repeat: "GLMM coefficients are conditional; the marginal effect is closer to 1." Then pivot straight into predictions, which is where the conditional/marginal distinction becomes an operational R question.
+:::
+
+---
+
+## How to Report GLMM Results
+
+**Correct:**
+
+- "Within a given child, steroid increased odds of control by OR = `r round(exp(beta_cond), 2)` (95% CI ...)"
+- "At the population level (marginal), the OR is approximately `r round(exp(beta_marg), 2)`"
+
+**Incorrect:**
+
+- "Steroid increased the odds of control" (conditional or marginal?)
+
+**Always state the frame of reference.**
+
+::: {.notes}
+Inline-R the two ORs from the fitted object. This is the practical payoff of Part I: a defensible results sentence names the estimand. Tell students that journals increasingly require this; an unframed OR from a GLMM is incomplete.
+:::
+
+---
+
+## Three Types of Predictions
+
+| Type | R code | Interpretation |
+|------|--------|----------------|
+| **Subject-specific** | `predict(fit, type="response")` | Uses predicted $\hat{\mathbf{b}}_i$ (BLUPs) |
+| **At $\mathbf{b}=0$** | `predict(fit, re.form=NA)` | Sets $\mathbf{b}_i=0$; **still conditional** |
+| **True marginal** | Monte Carlo integration | $E(Y) = \int E(Y\mid \mathbf{b})\,f_G(\mathbf{b})\,d\mathbf{b}$ |
+
+**For nonlinear links, "at $\mathbf{b}=0$" $\neq$ "marginal mean."**
+
+::: {.notes}
+This taxonomy is the operational heart of Day 2 and the most common source of analysis errors in practice. Hammer the middle row: `re.form=NA` is conditional at the median latent subject, NOT a population average. The next two slides make the misconception concrete and then fix it with Monte Carlo.
+:::
+
+---
+
+## Common Misconception: re.form = NA
+
+```{r}
+#| label: reform-na
+#| echo: true
+#| output-location: slide
+# WRONG to call this a marginal prediction.
+# It is E(Y | b = 0): conditional at the median latent subject.
+pred_at_b0 <- predict(glmm_fit,
+  newdata = data.frame(treat = "Steroid", weeks = 48, severity = "Mild"),
+  re.form = NA, type = "response")
+cat("Prediction at b=0:", round(pred_at_b0, 4), "  (this is E(Y|b=0), NOT E(Y))\n")
+```
+
+::: {.notes}
+Make the student predict, before running, whether the marginal will be higher or lower than this number (lower, since the curve is concave above $\eta=0$). FLW p. 477 makes exactly this point. The fix is on the next slide.
+:::
+
+---
+
+## True Marginal Predictions via Monte Carlo
+
+```{r}
+#| label: marginal-mc
+#| echo: true
+#| output-location: slide
+sigma_b   <- as.numeric(attr(VarCorr(glmm_fit)$id, "stddev"))
+nd        <- data.frame(treat = "Steroid", weeks = 48, severity = "Mild")
+eta_fixed <- predict(glmm_fit, newdata = nd, re.form = NA, type = "link")
+
+set.seed(667)
+b_sim       <- rnorm(5000, mean = 0, sd = sigma_b)   # draw from N(0, G)
+marginal_pred <- mean(plogis(eta_fixed + b_sim))      # average expit over b
+
+cat("At b=0 (NOT marginal):           ", round(pred_at_b0, 4), "\n")
+cat("True marginal (Monte Carlo):     ", round(marginal_pred, 4), "\n")
+cat("Difference:                      ", round(marginal_pred - pred_at_b0, 4), "\n")
+```
+
+::: {.notes}
+The integration is conceptually trivial: draw $\mathbf{b}$ from $N(0,G)$, push through the inverse link, average. The difference is the Jensen gap from Part I, now numeric on the fitted model. set.seed(667) per project convention. This is the code students should copy when a reviewer asks for a population-average prediction.
+:::
+
+---
+
+## Why the Difference Matters
+
+```{r}
+#| label: marginal-curve
+#| echo: false
+#| fig-height: 5
+#| fig-width: 9
+eta_values <- seq(-3, 3, length.out = 100)
+b_draws    <- rnorm(10000, 0, sigma_b)
+comparison_df <- tibble(
+  eta = eta_values,
+  `re.form=NA (at b=0)`        = plogis(eta_values),
+  `True marginal (MC)`         = sapply(eta_values, function(e) mean(plogis(e + b_draws)))
+) %>%
+  pivot_longer(-eta, names_to = "Method", values_to = "Probability")
+
+ggplot(comparison_df, aes(eta, Probability, color = Method)) +
+  geom_line(linewidth = 1.2) +
+  labs(x = expression(paste("Fixed-effect linear predictor ", eta)),
+       y = "Predicted probability",
+       title = "Plug-in at b=0 vs true marginal predictions",
+       subtitle = paste0("Random-intercept SD = ", round(sigma_b, 2),
+                         "; curves diverge by Jensen's inequality")) +
+  theme(legend.position = "bottom")
+```
+
+::: {.callout-note}
+**Reading it:** the marginal curve (averaged over $\mathbf{b}$) is **flatter / pulled toward 0.5** than the plug-in curve. The gap is largest where the logistic curve is most nonlinear and shrinks at the extremes. Flatter marginal = attenuated population-average effect.
+:::
+
+::: {.notes}
+Dedicated plot slide with the reading rule on the same slide. The visual is the attenuation: the marginal S-curve is shallower than the conditional one. Cut the old separate "marginal predictions for new data grid" slide that just repeated the single-point Monte Carlo over a grid; it added density without a new idea.
+:::
+
+---
+
+## A Real FLW Case Study: Seizure Counts
+
+::: {.callout-note}
+FLW Ch. 14 canonical example (Leppik et al. 1987; Thall & Vail 1990). Placebo-controlled trial of **progabide** in 59 epileptics. Baseline 8-week seizure count, then four 2-week post-randomization counts. Model and target match **FLW Table 14.5 / 14.6**.
+:::
+
+- Outcome: seizure **count** per period, Poisson with **offset** $\log(T_{ij})$ ($T = 8$ wk baseline, $2$ wk follow-up)
+- Random **intercept and slope** on Time (baseline vs follow-up): $q = 2$
+- Question: does progabide reduce the subject-specific seizure rate?
+
+::: {.notes}
+This is the required real Case Study (the old deck had only simulated examples). The model is FLW's exactly: log-linear Poisson, offset for unequal exposure windows, Trt and Time both binary (Time = 0 baseline, 1 for the four follow-up periods), random intercept + random Time slope, ML by adaptive quadrature in the book. We will reproduce Table 14.6 with Laplace and it matches to two decimals. Mention the outlier (patient 49); FLW reports with and without, we keep all 59 to match Table 14.6.
+:::
+
+---
+
+## Load and Reshape the Seizure Data
+
+```{r}
+#| label: seizure-load
+#| echo: true
+#| output-location: slide
+sz_url  <- "https://content.sph.harvard.edu/fitzmaur/ala2e/epilepsy.txt"
+sz_file <- "../../data/epilepsy-data.txt"     # local copy (header stripped)
+if (!file.exists(sz_file)) {
+  raw <- readLines(url(sz_url))               # FLW file has a comment header
+  dat <- raw[grepl("^\\s*[0-9]", raw)]        # keep numeric rows only
+  writeLines(dat, sz_file)
+}
+sz_wide <- read.table(sz_file, header = FALSE,
+  col.names = c("id", "trt", "age", "baseline", "y1", "y2", "y3", "y4"))
+
+sz_long <- sz_wide %>%
+  pivot_longer(c(baseline, y1, y2, y3, y4),
+               names_to = "period_lab", values_to = "count") %>%
+  mutate(
+    period = recode(period_lab, baseline = 0L, y1 = 1L, y2 = 2L, y3 = 3L, y4 = 4L),
+    Time   = if_else(period == 0L, 0L, 1L),         # 0 = baseline, 1 = follow-up
+    Tij    = if_else(period == 0L, 8, 2),           # exposure weeks
+    logT   = log(Tij),
+    Trt    = trt                                    # 0 = placebo, 1 = progabide
+  ) %>% arrange(id, period)
+cat("Rows:", nrow(sz_long), " Subjects:", dplyr::n_distinct(sz_long$id), "\n")
+```
+
+::: {.notes}
+Inspect the header before loading: the FLW .txt ships with a multi-line comment block and is WIDE (one row per patient: id, trt, age, baseline, y1-y4). We strip the comment header on download and read the numeric block. Reshape to long with period 0 = baseline (8-week window) and periods 1-4 = follow-up (2-week windows); the offset log(T) handles the unequal exposure. Time is the binary baseline-vs-follow-up indicator FLW uses, not a continuous visit number.
+:::
+
+---
+
+## Fit the Seizure GLMM (FLW Table 14.6)
+
+```{r}
+#| label: seizure-fit
+#| echo: true
+#| output-location: slide
+sz_fit <- glmer(
+  count ~ Trt * Time + (1 + Time | id),
+  offset = logT, data = sz_long,
+  family = poisson(link = "log"),
+  control = glmerControl(optimizer = "bobyqa")
+)
+broom.mixed::tidy(sz_fit, effects = "fixed", conf.int = TRUE) %>%
+  dplyr::select(term, estimate, std.error, conf.low, conf.high)
+```
+
+```{r}
+#| label: seizure-grab
+#| echo: false
+.b <- fixef(sz_fit)
+.vc <- as.data.frame(VarCorr(sz_fit))
+.g11 <- .vc$vcov[.vc$grp=="id" & .vc$var1=="(Intercept)" & is.na(.vc$var2)]
+.b_tt <- unname(.b["Trt:Time"])
+.rr_prog <- exp(unname(.b["Time"]) + .b_tt)
+```
+
+::: {.callout-note}
+Reproduces FLW Table 14.6: Intercept $\approx$ 1.07, Time $\approx$ 0.00, Trt $\approx$ 0.05, **Trt$\times$Time $\approx$ `r round(.b_tt, 3)`** (FLW -0.3065), $\widehat{g}_{11}\approx$ `r round(.g11, 2)` (FLW 0.50). Laplace matches the book's 50-point quadrature here.
+:::
+
+::: {.notes}
+This is the verification slide: our Laplace fit equals FLW Table 14.6 to two decimals (Trt x Time about -0.31, intercept variance about 0.50). All numbers in the callout are inline-R from the fitted object. Walk the interpretation on the next slide. If a student asks why Laplace suffices when the book used 50 points: with n_i around 5 and a 2-D random effect the integral is well behaved here; we confirm with quadrature later if time allows.
+:::
+
+---
+
+## Interpreting the Seizure Fit (subject-specific)
+
+- All covariates are dichotomous, so $\exp(\beta)$ are **subject-specific (log) rate ratios** (FLW Table 14.5)
+- $\exp(\beta_4)$ (Trt$\times$Time) is a **ratio of rate ratios**: progabide vs placebo change from baseline
+- $\widehat{\beta}_4 = `r round(.b_tt, 3)` < 0$: progabide reduces the seizure rate from baseline
+- For a "typical" progabide patient ($b_{2i}=0$): rate ratio $e^{\widehat\beta_2 + \widehat\beta_4} \approx `r round(.rr_prog, 2)`$ (about a `r round(100*(1-.rr_prog))`% drop)
+
+::: {.notes}
+This mirrors FLW's interpretation paragraph exactly: e^{beta2+beta4} is the follow-up-vs-baseline rate ratio for a typical progabide patient (random slope b_2i = 0), about 0.74 in the book, a roughly 26% reduction. "Typical" = median latent subject (b_2i = 0), NOT population average; this is the same conditional caveat as the binary example, restated on the rate scale. Note rate ratios are collapsible on the log scale, so the conditional/marginal gap is much milder here than for the binary OR.
+:::
+
+---
+
+## Seizure Variance Components
+
+```{r}
+#| label: seizure-vc
+#| echo: true
+#| output-location: slide
+print(VarCorr(sz_fit), comp = c("Variance", "Std.Dev."))
+```
+
+::: {.callout-note}
+$\widehat{g}_{11} \approx$ `r round(.g11, 2)` (baseline-rate heterogeneity) and a positive random-slope variance: patients differ in baseline rate **and** in how their rate changes over time, the FLW motivation for both random effects.
+:::
+
+::: {.notes}
+FLW Table 14.6 reports g11 = 0.501, g22 = 0.233, g12 = 0.054. Our estimates match. The substantive point (FLW): repeated counts carry enough information to identify BOTH a random intercept and a random slope, unlike the four-binary amenorrhea data which supported only a random intercept. This motivates the variance-component test on the next slides.
+:::
+
+---
+
+## The Same GLMM in SAS (reference)
+
+Static reference (not run here): the seizure log-linear GLMM in `PROC GLIMMIX`, mirroring **FLW Table 14.11** (ML via adaptive quadrature).
+
+```sas
+proc glimmix data=seizure method=quad(qpoints=50);
+   class id trt;
+   model count = trt time trt*time / dist=poisson link=log solution
+                 offset=logT;
+   random intercept time / subject=id type=un;
+run;
+```
+
+::: {.callout-note}
+`method=quad(qpoints=50)` is adaptive Gaussian quadrature (FLW's choice); `random intercept time / subject=id type=un` is lme4's `(1 + time | id)` with an unstructured $G$; `offset=logT` matches the R `offset`.
+:::
+
+::: {.notes}
+Required standalone SAS slide, taken from FLW Table 14.11 (the seizure example's own GLIMMIX program). Map it line by line to the R fit: class declares grouping factors, model is mean+link+offset, random intercept time / subject=id type=un is the (1+time|id) unstructured random effects, method=quad(qpoints=50) is the book's 50-point adaptive quadrature. type=un = unstructured G (correlated intercept and slope). For overdispersion FLW switches dist=negbin (Table 14.12); mention it verbally.
+:::
+
+---
+
+## Overdispersion Check
+
+```{r}
+#| label: overdisp
+#| echo: true
+#| output-location: slide
+pr  <- residuals(sz_fit, type = "pearson")
+od  <- sum(pr^2) / df.residual(sz_fit)
+cat("Overdispersion ratio (Pearson X^2 / df):", round(od, 2), "\n")
+```
+
+| Ratio | Reading |
+|-------|---------|
+| $\approx 1$ | Poisson variance adequate |
+| $> 1.5$ | Overdispersion likely |
+| $> 3$ | Serious overdispersion |
+
+::: {.notes}
+Ratio computed inline from the fitted object. If it exceeds about 1.5, the conditional Poisson variance assumption (Var = mean given b) is too tight. FLW's remedy for these very data is the negative-binomial mixed model (Table 14.8), which inflates the estimated SEs and slightly attenuates the variance components. Two lme4-side remedies on the next slide.
+:::
+
+---
+
+## Overdispersion Remedies
+
+**Option 1 - observation-level random effect (OLRE):**
+
+```{r}
+#| label: olre
+#| echo: true
+#| eval: false
+sz_long$obs <- factor(seq_len(nrow(sz_long)))
+glmer(count ~ Trt * Time + (1 + Time | id) + (1 | obs),
+      offset = logT, data = sz_long, family = poisson)
+```
+
+**Option 2 - negative binomial (FLW Table 14.8):**
+
+```{r}
+#| label: nb
+#| echo: true
+#| eval: false
+glmmTMB::glmmTMB(count ~ Trt * Time + (1 + Time | id),
+                 offset = logT, data = sz_long, family = nbinom2)
+```
+
+::: {.notes}
+Both shown as reference (eval:false; glmmTMB may not be installed in the render env). FLW's own choice for the seizure data is the negative binomial (Table 14.8). OLRE is the lme4-native trick: a per-row random effect absorbs extra-Poisson variance. State that NB changes the estimand subtly (conditional-on-b is now NB, not Poisson) but the fixed-effect conclusions are qualitatively the same per FLW.
+:::
+
+---
+
+## Hypothesis Testing: Fixed Effects
+
+- Wald tests (from `summary()`) are asymptotic; small clusters $\rightarrow$ prefer **profile likelihood**
+
+```{r}
+#| label: profile-ci
+#| echo: true
+#| eval: false
+confint(sz_fit, parm = "beta_", method = "profile")  # profile CIs for fixed effects
+```
+
+::: {.notes}
+Wald is fine with N = 59 and four periods, but flag profile CIs as the more accurate route when clusters are small or estimates are near a boundary. eval:false only because profiling is slow in class; the result is qualitatively the same as the Wald CIs already shown in the tidy() table.
+:::
+
+---
+
+## Hypothesis Testing: Variance Components
+
+Testing $H_0$: random **slope** dropped ((1+Time|id) $\to$ (1|id)) removes **two** parameters (slope variance **and** intercept-slope covariance).
+
+::: {.callout-warning}
+**Two boundary cases (Stram-Lee):**
+
+- Drop a single random-**intercept** variance ($\sigma^2 = 0$): null is $\tfrac12\chi^2_0 + \tfrac12\chi^2_1$
+- Drop a random **slope** from a RI+RS model (this Case Study): null is $\tfrac12\chi^2_1 + \tfrac12\chi^2_2$
+
+`lme4`/`anova()` report the **naive** $\chi^2_2$ p-value; the mixture correction must be applied by hand.
+:::
+
+::: {.callout-warning}
+`RLRsim::exactRLRT()` is for **linear (Gaussian)** mixed models only and is **not valid for GLMMs**. Use a **parametric-bootstrap LRT** instead.
+:::
+
+::: {.notes}
+This is the HIGH-severity fix. The OLD slide stated 1/2 chi2_0 + 1/2 chi2_1 (correct only for a single random-intercept variance) while the code dropped a random SLOPE (two params -> Stram-Lee 1/2 chi2_1 + 1/2 chi2_2). Now both cases are stated and matched to what is tested. Second HIGH fix: exactRLRT/exactLRT (RLRsim) are derived for Gaussian LMMs and are invalid for a Poisson glmer; we replace it with a parametric bootstrap on the next slide. Tell students: when in doubt for a GLMM variance component, bootstrap.
+:::
+
+---
+
+## Parametric-Bootstrap LRT for the Random Slope
+
+```{r}
+#| label: pboot
+#| echo: true
+#| output-location: slide
+null_fit <- glmer(count ~ Trt * Time + (1 | id), offset = logT,
+                  data = sz_long, family = poisson,
+                  control = glmerControl(optimizer = "bobyqa"))
+lr_obs <- as.numeric(2 * (logLik(sz_fit) - logLik(null_fit)))
+
+set.seed(667)
+B <- 100
+sim_y   <- simulate(null_fit, nsim = B)          # simulate under the null
+lr_boot <- vapply(seq_len(B), function(b) {
+  f0 <- refit(null_fit, newresp = sim_y[[b]])
+  f1 <- refit(sz_fit,  newresp = sim_y[[b]])
+  as.numeric(2 * (logLik(f1) - logLik(f0)))
+}, numeric(1))
+
+p_boot <- (1 + sum(lr_boot >= lr_obs)) / (1 + B)
+p_mix  <- 0.5 * pchisq(lr_obs, 1, lower.tail = FALSE) +
+          0.5 * pchisq(lr_obs, 2, lower.tail = FALSE)
+cat("LR statistic:        ", round(lr_obs, 2), "\n")
+cat("Naive chi^2_2 p:     ", round(pchisq(lr_obs, 2, lower.tail = FALSE), 4), "\n")
+cat("Stram-Lee mixture p: ", round(p_mix, 4), "\n")
+cat("Parametric bootstrap p (B=", B, "): ", round(p_boot, 4), "\n", sep = "")
+```
+
+::: {.notes}
+Runnable on the real Case Study (replaces the eval:false exactRLRT chunk). Simulate under the null, refit both models on each simulated response (refit() is fast), collect the LR statistic, and compare. The bootstrap p and the Stram-Lee mixture p agree and both reject: the random slope is warranted, matching FLW's conclusion that there is real patient-to-patient heterogeneity in the rate change. B=100 keeps the render fast; in practice use B=1000+. The benign "singular fit" warnings on some null simulations are expected and suppressed.
+:::
+
+---
+
+## Post-Hoc Contrasts with emmeans
+
+```{r}
+#| label: emmeans-contrast
+#| echo: true
+#| output-location: slide
+emm_contrasts <- emmeans(glmm_fit, specs = pairwise ~ treat | weeks,
+                         at = list(weeks = c(0, 48)), type = "response")
+summary(emm_contrasts$contrasts)
+```
+
+::: {.notes}
+Back on the binary asthma fit for the contrast machinery. The output odds ratios are CONDITIONAL contrasts. Set up the interpretation carefully on the next slide; this is where the deck previously drifted into calling b=0 the "average subject."
+:::
+
+---
+
+## Interpreting emmeans Contrasts
+
+These are **subject-specific** odds ratios evaluated at $\mathbf{b}_i = 0$ (the **median** subject on the logit scale), **NOT** the population-average OR.
+
+- At $\mathbf{b}_i = 0$ = conditional on the median latent subject
+- The population-average OR is **attenuated** (Jensen); see the **Three Types of Predictions** table
+- Do **not** read these as "the average subject in the population"
+
+::: {.notes}
+HIGH-severity wording fix. The old slide called this "the typical or average subject in the population" and "a randomly selected subject at their expected random effect," which re-opens the exact at-mean-RE = marginal misreading the deck spends Part I dismantling. Correct framing: subject-specific OR at b_i = 0, the median latent subject, explicitly NOT population-average. Point back to the three-types table: emmeans here is the middle row ("at b=0"), still conditional.
+:::
+
+---
+
+## Random-Effects Heterogeneity (seizure slopes)
+
+```{r}
+#| label: ranef-plot
+#| echo: false
+#| fig-height: 5
+#| fig-width: 8
+re <- ranef(sz_fit)$id %>%
+  tibble::rownames_to_column("id") %>%
+  rename(int = `(Intercept)`, slope = Time)
+ggplot(re, aes(slope, int)) +
+  geom_point(alpha = 0.7, size = 2) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "red") +
+  labs(x = "Predicted random slope (Time)", y = "Predicted random intercept",
+       title = "Patient-specific deviations: baseline rate vs rate change",
+       subtitle = "Each point = one patient's empirical-Bayes (BLUP) deviation")
+```
+
+::: {.callout-note}
+**Reading it:** spread along the vertical axis = baseline-rate heterogeneity ($g_{11}$); spread along the horizontal = heterogeneity in the rate change ($g_{22}$). The mild positive tilt is the small positive $g_{12}$ (FLW 0.054).
+:::
+
+::: {.notes}
+Predicted random effects are empirical-Bayes (BLUP) deviations. The cloud visualizes why FLW fits both random effects. Caveat (carried onto the Q-Q slide): BLUPs are shrunk, so this plot understates the true spread. Use it to motivate, not to "confirm" normality.
+:::
+
+---
+
+## Diagnostics: Residuals vs Fitted
+
+```{r}
+#| label: resid-fitted
+#| echo: false
+#| fig-height: 4.5
+#| fig-width: 9
+tibble(fitted = fitted(sz_fit),
+       resid  = residuals(sz_fit, type = "pearson")) %>%
+  ggplot(aes(fitted, resid)) +
+  geom_point(alpha = 0.5) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+  geom_smooth(se = FALSE) +
+  labs(x = "Fitted value", y = "Pearson residual",
+       title = "Seizure GLMM: Pearson residuals vs fitted")
+```
+
+::: {.callout-note}
+**Reading it:** good = a flat, structureless band around the red zero line. **Bad** = a funnel (variance grows with the mean $\to$ overdispersion) or curvature in the blue smoother (mean misspecified). A few large positive residuals here trace to the high-count patients (e.g. patient 49).
+:::
+
+::: {.notes}
+Plot + reading rule on ONE slide (the convention). For counts, a funnel opening to the right is the classic overdispersion signature, consistent with the overdispersion ratio we computed. The big outliers are the known high-seizure patients; FLW addresses them with the with/without-patient-49 sensitivity and the negative binomial.
+:::
+
+---
+
+## Diagnostics: Random-Effects Q-Q
+
+```{r}
+#| label: ranef-qq
+#| echo: false
+#| fig-height: 4.5
+#| fig-width: 10
+p_qq_int <- ggplot(re, aes(sample = int)) +
+  stat_qq() + stat_qq_line(color = "red") +
+  labs(title = "Q-Q: random intercepts", x = "Theoretical", y = "Sample")
+p_qq_slp <- ggplot(re, aes(sample = slope)) +
+  stat_qq() + stat_qq_line(color = "red") +
+  labs(title = "Q-Q: random slopes", x = "Theoretical", y = "Sample")
+p_qq_int + p_qq_slp
+```
+
+::: {.callout-warning}
+**Reading it (with a caveat):** points near the line support $\mathbf{b}_i \sim N(0,G)$; heavy tails or curvature suggest non-normal random effects. **But** these are empirical-Bayes (BLUP) predictions, which are **shrunk toward 0 and toward normality**, so a clean Q-Q plot **understates** non-normality. Treat it as a weak check (FLW Ch. 14.2).
+:::
+
+::: {.notes}
+The shrinkage caveat is required (FLW Ch. 14.2): BLUPs are pulled toward the population mean and toward normal, so they are a loose, optimistic check of the true N(0,G) assumption. A clean Q-Q does NOT certify normality; a clearly bad one is informative. If normality is genuinely in doubt, the honest routes are a Bayesian model with a flexible RE distribution or a semiparametric mixture, not reading more into the BLUP Q-Q.
+:::
+
+---
+
+## Convergence Troubleshooting Recipe
+
+| Warning | First fix |
+|---------|-----------|
+| "failed to converge" | **Rescale** continuous predictors (`scale()`) |
+| "nearly unidentifiable" | **Simplify** $G$: drop a near-zero random slope |
+| "singular fit" (variance $\approx 0$) | Use **uncorrelated** REs: `(1|id) + (0 + x|id)` |
+| slow / stuck | **Switch optimizer**: `glmerControl(optimizer = "bobyqa")` |
+| separation (binary) | Bayesian priors (`brms`) or penalized likelihood (`brglm`) |
+
+**Rule of thumb:** if a random-slope variance is $< 0.01$ and convergence struggles, drop it.
+
+::: {.notes}
+Compressed the old five-slide convergence wall into one recipe card (a student review flagged the wall). The single worked example is on the next slide. The most common real fix is the first row: rescaling time/continuous predictors so the optimizer sees a well-conditioned surface. Appendix-style rules of thumb live here; do not belabor them in class.
+:::
+
+---
+
+## Convergence: A Worked Fix
+
+```{r}
+#| label: converge-fix
+#| echo: true
+#| output-location: slide
+# Rescaling the continuous predictor often resolves convergence trouble.
+asthma_dat$weeks_z <- as.numeric(scale(asthma_dat$weeks))
+fit_scaled <- glmer(control ~ treat * weeks_z + severity + (weeks_z | id),
+                    data = asthma_dat, family = binomial,
+                    control = glmerControl(optimizer = "bobyqa"))
+cat("Converged:", is.null(fit_scaled@optinfo$conv$lme4$messages), "\n")
+cat("Random-slope SD:",
+    round(as.data.frame(VarCorr(fit_scaled))$sdcor[2], 3), "\n")
+```
+
+::: {.notes}
+Now RUN (was eval:false) so students see one working convergence fix end to end: scale the predictor, refit with a random slope, confirm convergence and a sensible slope SD. Contrast with the unscaled raw-weeks version, which is far more likely to warn. This replaces the unexecuted allFit()/dfoptim block.
+:::
+
+---
+
+## Common Pitfalls and Remedies
+
+| Pitfall | Remedy |
+|---------|--------|
+| Treating $\beta$ as a marginal effect | It is **conditional**; use Zeger (Ch. 16) for the marginal effect |
+| `re.form=NA` read as marginal mean | It is $E(Y\mid\mathbf{b}=0)$; integrate over $\mathbf{b}$ (Monte Carlo) |
+| Comparing GLMM and GEE ORs as if equal | Different estimands; both valid for their question |
+| `exactRLRT` for a GLMM variance test | Gaussian-LMM only; use a **parametric bootstrap** |
+| Wrong boundary mixture | Match params dropped: 1 var $\to \tfrac12\chi^2_0+\tfrac12\chi^2_1$; slope $\to \tfrac12\chi^2_1+\tfrac12\chi^2_2$ |
+| Near-singular $G$ | Reduce random slopes; center/scale covariates |
+| Ignoring convergence warnings | Rescale, simplify $G$, switch optimizer |
+
+::: {.notes}
+Consolidated the three near-duplicate end-of-deck slides (old "Common Pitfalls," "Common Mistakes," "Reporting Checklist") into this one pitfalls table plus the reporting checklist on the next slide. The conditional-vs-marginal and convergence warnings now appear once. Note the two rows that encode the HIGH-severity fixes (exactRLRT and the boundary mixture) so they are reinforced at the end.
+:::
+
+---
+
+## Reporting Checklist
+
+- State **"conditional on the random effects"** (or "within-subject") when interpreting $\beta$
+- Report the **estimand**: conditional OR/RR, and the marginal version if relevant
+- Report **variance components** with CIs
+- State the **estimation method** (Laplace, nAGQ = X, or MCMC)
+- For variance-component tests, state the **mixture / bootstrap** used
+
+::: {.callout-note collapse="true"}
+## Quick Check
+A colleague reports "treatment increased the odds 2.5-fold (OR = 2.5)" from a logistic GLMM. What is missing?
+
+**Answer:** the frame of reference. It is a **conditional** (within-subject) OR. Complete: "Within a given subject, treatment increased the odds 2.5-fold (conditional OR = 2.5, 95% CI ...); the population-average OR is approximately [Zeger]."
+:::
+
+::: {.notes}
+The single reporting checklist (merged from the old duplicate slides) plus the embedded Quick Check that was a standalone slide. The missing piece students always omit is the estimand label. This is the operational close of the lecture.
+:::
+
+---
+
+## Extensions and Software
+
+| Extension (Ch. 14) | Software note |
+|-----------|---------------|
+| Negative-binomial / zero-inflated counts | `glmmTMB` (FLW Table 14.8) |
+| Crossed random effects | `lme4` `(1|a) + (1|b)` |
+| Bayesian GLMMs (full posterior) | `brms`, `MCMCglmm` |
+| Selection of fixed + random effects | `glmmPen` (penalized MCEM) |
+
+::: {.notes}
+Merged the old "Extensions" and "Software beyond lme4" slides. Keep brief; these are pointers, not content. The one that matters for the seizure data is the negative binomial (glmmTMB), which is FLW's own overdispersion remedy.
+:::
+
+---
+
+## Wrap-Up
+
+- GLMM = GLM plus latent subject effects; inference is **subject-specific (conditional)**
+- The marginal effect is **attenuated** (Jensen / non-collapsibility); Zeger approximates it (Ch. 16)
+- Fit by **ML** (Laplace / adaptive quadrature); valid under **MAR**
+- `re.form=NA` is conditional at $\mathbf{b}=0$, **not** marginal; integrate for true marginal
+- Test variance components with the **right mixture** or a **parametric bootstrap** (never `exactRLRT` for a GLMM)
+- **Next chapter (Ch. 15):** approximate likelihood methods (PQL/MQL) and their tradeoffs
+
+::: {.notes}
+Close on the one sentence that must survive the lecture: GLMM coefficients are conditional, and the population-average effect is closer to 1. Preview Ch. 15: PQL/MQL, the approximate methods we deliberately deferred. Remind them the seizure Case Study is the template for a homework-style end-to-end GLMM analysis on real data.
+:::
+
+---
+
+## Reading
+
+**Required:** Fitzmaurice et al. Ch. 14, sections 14.1-14.6, plus the Appendix on adaptive Gaussian quadrature.
+
+**Optional:**
+
+- Zeger, Liang & Albert (1988), marginal vs subject-specific approximation (the 0.346 factor; see FLW Ch. 16)
+- Bolker et al. (2009), GLMMs: a practical guide
+
+::: {.notes}
+Point the Zeger reference at Ch. 16 where FLW actually develops the attenuation factor, consistent with how we flagged it in the deck.
+:::
+
+---
+
+## Session Info
+
+```{r}
+#| label: session
+#| echo: true
+#| output-location: slide
+sessionInfo()
+```
+
+::: {.notes}
+lme4 version affects numerical stability and default optimizers; record it for reproducibility.
+:::

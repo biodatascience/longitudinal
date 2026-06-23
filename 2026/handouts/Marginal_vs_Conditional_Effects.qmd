@@ -1,0 +1,587 @@
+---
+title: "Marginal vs Conditional Effects in Longitudinal Models"
+subtitle: "Understanding GEE, GLMM, and the Attenuation Formula"
+format:
+  html:
+    theme: cosmo
+    toc: true
+    embed-resources: true
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+```{r}
+#| label: setup
+#| include: false
+
+library(tidyverse)
+library(lme4)
+library(geepack)
+library(knitr)
+library(kableExtra)
+
+set.seed(667)
+```
+
+## 1. The Core Distinction
+
+This is one of the most important conceptual distinctions in longitudinal data analysis. Understanding when coefficients estimate **population-averaged (marginal)** effects versus **subject-specific (conditional)** effects is critical for proper interpretation.
+
+### Summary Table
+
+| Aspect | Marginal (GEE) | Conditional (GLMM) |
+|--------|----------------|---------------------|
+| **What it estimates** | Population-averaged effect | Subject-specific effect |
+| **Interpretation** | Average change in E[Y] across all subjects | Change in E[Y\|b] for a given subject |
+| **Conditions on** | Nothing (marginal over random effects) | Random effects (subject-specific intercepts/slopes) |
+| **Example interpretation** | "On average in the population, treatment increases the log-odds by 0.8" | "For a given subject, treatment increases their log-odds by 1.2" |
+
+### A Concrete Example
+
+Suppose we're studying the effect of a new medication on the probability of symptom relief.
+
+**Marginal (GEE) interpretation**:
+> "Patients receiving the medication have 2.2 times the odds of symptom relief compared to placebo, on average across the population."
+
+**Conditional (GLMM) interpretation**:
+> "For any given patient, receiving the medication increases their odds of symptom relief by a factor of 3.5 compared to if that same patient had received placebo."
+
+**Why are these different?** The conditional effect is larger because it compares the **same individual** under two conditions (removing between-subject variability), while the marginal effect averages over a heterogeneous population.
+
+## 2. Why They Differ: Jensen's Inequality
+
+### The Mathematical Root
+
+For **linear models** with identity link, marginal and conditional effects are identical:
+$$E[Y] = E[E[Y|b]] = E[X\beta + Zb] = X\beta$$
+
+For **non-linear models** (logistic, Poisson), they differ due to Jensen's inequality:
+$$E[g^{-1}(X\beta + Zb)] \neq g^{-1}(X\beta)$$
+
+where $g(\cdot)$ is the link function.
+
+### Visual Intuition
+
+```{r}
+#| label: jensens-diagram
+#| fig-width: 10
+#| fig-height: 5
+
+# Demonstrate Jensen's inequality for logistic function
+par(mfrow = c(1, 2))
+
+# Panel 1: The logistic curve is concave
+x <- seq(-4, 4, length.out = 200)
+plot(x, plogis(x), type = "l", lwd = 2, col = "blue",
+     xlab = "Linear predictor (log-odds)",
+     ylab = "Probability",
+     main = "The Logistic Function is Concave")
+abline(h = 0.5, lty = 2, col = "gray")
+abline(v = 0, lty = 2, col = "gray")
+
+# Panel 2: Jensen's inequality demonstration
+set.seed(667)
+random_effects <- rnorm(1000, mean = 0, sd = 1)
+fixed_effect <- 0.5
+
+# Subject-specific probabilities
+subject_probs <- plogis(fixed_effect + random_effects)
+# Average of subject-specific probabilities (marginal)
+marginal_prob <- mean(subject_probs)
+# Probability at average random effect (conditional at b=0)
+conditional_prob <- plogis(fixed_effect)
+
+hist(subject_probs, breaks = 30, col = "lightblue",
+     main = "Distribution of Subject-Specific Probabilities",
+     xlab = "P(Y=1 | b_i)",
+     xlim = c(0, 1))
+abline(v = marginal_prob, col = "red", lwd = 3, lty = 1)
+abline(v = conditional_prob, col = "darkgreen", lwd = 3, lty = 2)
+legend("topright",
+       legend = c(
+         paste0("Marginal (avg of probs) = ", round(marginal_prob, 3)),
+         paste0("Conditional (prob at b=0) = ", round(conditional_prob, 3))
+       ),
+       col = c("red", "darkgreen"), lwd = 3, lty = c(1, 2), cex = 0.8)
+```
+
+**Key insight**: Because the logistic function is concave (curves downward), the average of transformed values is less than the transformation of the average. This is Jensen's inequality in action.
+
+### Linear vs Non-Linear Models
+
+| Model Type | Link Function | Marginal = Conditional? |
+|------------|---------------|-------------------------|
+| Linear mixed model | Identity | **Yes** |
+| Logistic GLMM | Logit | No (marginal < conditional in magnitude) |
+| Poisson GLMM | Log | No |
+| Probit GLMM | Probit | No |
+
+::: {.callout-important}
+## Critical Point
+For linear models (continuous outcomes with identity link), GEE and LMM give the same coefficient estimates (though standard errors may differ). The marginal vs conditional distinction only creates different coefficient values for non-linear models.
+:::
+
+## 3. The Zeger Attenuation Formula
+
+### The Formula
+
+Zeger, Liang, and Albert (1988) derived an approximate relationship between marginal and conditional coefficients for logistic models with random intercepts:
+
+$$\beta_{\text{marginal}} \approx \frac{\beta_{\text{conditional}}}{\sqrt{1 + c \cdot \sigma_b^2}}$$
+
+where:
+
+- $\beta_{\text{conditional}}$ = coefficient from GLMM
+- $\sigma_b^2$ = variance of the random intercept
+- $c = \frac{16\sqrt{3}}{15\pi} \approx 0.346$
+
+### Derivation Intuition
+
+The constant $c \approx 0.346$ comes from approximating the logistic distribution with a normal distribution. The logistic distribution has variance $\pi^2/3$, and the approximation involves matching moments.
+
+### Why $|\beta_{\text{marginal}}| < |\beta_{\text{conditional}}|$
+
+The denominator $\sqrt{1 + c \cdot \sigma_b^2}$ is always greater than 1 (when $\sigma_b^2 > 0$), so:
+
+- Marginal coefficients are **attenuated** (shrunk toward zero)
+- The larger the between-subject variance ($\sigma_b^2$), the greater the attenuation
+- This reflects that population-averaged effects are "diluted" by heterogeneity
+
+### Worked Example
+
+Suppose a GLMM gives:
+- $\hat{\beta}_{\text{conditional}} = 1.5$ (log-odds ratio)
+- $\hat{\sigma}_b = 1.2$ (random intercept SD)
+
+Then:
+$$\hat{\beta}_{\text{marginal}} \approx \frac{1.5}{\sqrt{1 + 0.346 \times 1.2^2}} = \frac{1.5}{\sqrt{1 + 0.498}} = \frac{1.5}{\sqrt{1.498}} = \frac{1.5}{1.224} \approx 1.23$$
+
+```{r}
+#| label: zeger-calculation
+
+# Worked example
+beta_cond <- 1.5
+sigma_b <- 1.2
+c_const <- 16 * sqrt(3) / (15 * pi)
+
+cat("Constant c =", round(c_const, 4), "\n")
+
+beta_marg <- beta_cond / sqrt(1 + c_const * sigma_b^2)
+cat("Predicted marginal beta =", round(beta_marg, 4), "\n")
+
+# On odds ratio scale
+cat("\nConditional OR =", round(exp(beta_cond), 3), "\n")
+cat("Marginal OR =", round(exp(beta_marg), 3), "\n")
+```
+
+## 4. When to Use Which
+
+### Decision Table
+
+| Research Question | Recommended Approach | Why |
+|-------------------|---------------------|-----|
+| **Population policy effect** | GEE (marginal) | "What happens on average if we treat everyone?" |
+| **Individual patient prediction** | GLMM (conditional) | Need subject-specific predictions |
+| **Treatment effect for a specific individual** | GLMM (conditional) | "How much does treatment help this patient?" |
+| **Public health intervention** | GEE (marginal) | Population-level impact matters |
+| **Clinical trial primary analysis** | Often GEE (marginal) | Intent-to-treat, population-averaged |
+| **Personalized medicine** | GLMM (conditional) | Individual-level effects needed |
+| **Understanding biological mechanisms** | GLMM (conditional) | Want to know what happens within subjects |
+
+### Detailed Guidance
+
+**Use GEE (Marginal) when:**
+
+1. Your scientific question is about population averages
+2. You're interested in policy or public health implications
+3. You want to estimate what would happen "on average" if an intervention were applied
+4. The correlation structure is a nuisance, not of scientific interest
+5. You have a large number of clusters (subjects)
+
+**Use GLMM (Conditional) when:**
+
+1. Your scientific question is about individual subjects
+2. You need to make predictions for new or existing subjects
+3. The random effects have substantive meaning
+4. You want to understand within-subject changes
+5. You need to estimate the variance components
+
+::: {.callout-tip}
+## Practical Tip
+Ask yourself: "Am I comparing individuals to themselves (within-subject) or comparing groups of individuals (between-subject)?"
+
+- Within-subject comparisons $\rightarrow$ GLMM interpretation is natural
+- Between-subject comparisons $\rightarrow$ GEE interpretation is natural
+:::
+
+## 5. Non-Collapsibility Explained
+
+### What Is Non-Collapsibility?
+
+**Collapsibility**: A measure of association is collapsible if adjusting for a non-confounding variable does not change the association.
+
+**Non-collapsibility**: The odds ratio (OR) is non-collapsible. Even when adjusting for a variable that is NOT a confounder, the OR changes.
+
+### Why This Matters for Marginal vs Conditional
+
+The random effects in a GLMM are, by definition, independent of the covariates. Yet the conditional OR (from GLMM) differs from the marginal OR (from GEE). This is NOT because of confounding---it's because of non-collapsibility.
+
+```{r}
+#| label: non-collapsibility-demo
+#| fig-width: 8
+#| fig-height: 4
+
+# Demonstrate non-collapsibility
+# Even when random effects are independent of treatment, ORs differ
+
+set.seed(667)
+n_subj <- 500
+n_obs <- 5
+
+# Random intercepts (independent of treatment!)
+b_i <- rnorm(n_subj, 0, 1.5)
+
+# Create data
+dat_nc <- data.frame(
+  id = rep(1:n_subj, each = n_obs),
+  time = rep(1:n_obs, n_subj),
+  treatment = rep(rbinom(n_subj, 1, 0.5), each = n_obs),
+  b_i = rep(b_i, each = n_obs)
+)
+
+# True conditional log-OR = 1.0
+beta_true <- 1.0
+dat_nc$eta <- -1 + beta_true * dat_nc$treatment + dat_nc$b_i
+dat_nc$prob <- plogis(dat_nc$eta)
+dat_nc$y <- rbinom(nrow(dat_nc), 1, dat_nc$prob)
+
+# Fit marginal model (ignore clustering - simple logistic)
+fit_marginal_simple <- glm(y ~ treatment, data = dat_nc, family = binomial)
+
+# Fit conditional model
+fit_conditional <- glmer(y ~ treatment + (1|id), data = dat_nc, family = binomial)
+
+# Compare
+cat("True conditional log-OR: 1.0\n\n")
+cat("Estimated conditional log-OR (GLMM):",
+    round(fixef(fit_conditional)["treatment"], 3), "\n")
+cat("Estimated marginal log-OR (simple GLM):",
+    round(coef(fit_marginal_simple)["treatment"], 3), "\n")
+cat("Estimated random intercept SD:",
+    round(as.numeric(VarCorr(fit_conditional)$id), 3), "\n")
+
+# Apply Zeger formula
+sigma_b_est <- as.numeric(VarCorr(fit_conditional)$id)
+beta_cond_est <- fixef(fit_conditional)["treatment"]
+c_const <- 16 * sqrt(3) / (15 * pi)
+beta_marg_pred <- beta_cond_est / sqrt(1 + c_const * sigma_b_est^2)
+cat("\nZeger-predicted marginal log-OR:", round(beta_marg_pred, 3), "\n")
+```
+
+### Common Misconception
+
+::: {.callout-warning}
+## "The GLMM is Biased" - NO!
+
+Students sometimes think: "The marginal effect is smaller, so the conditional effect must be biased upward."
+
+**This is wrong!** Both estimates are unbiased for what they're estimating:
+
+- GEE/marginal estimates the population-averaged effect
+- GLMM estimates the subject-specific effect
+
+They answer **different questions**. Neither is "wrong" or "biased"---they're estimating different quantities.
+:::
+
+### Why OR is Non-Collapsible but RR is Collapsible
+
+| Measure | Formula | Collapsible? |
+|---------|---------|--------------|
+| **Odds Ratio (OR)** | $\frac{p_1/(1-p_1)}{p_0/(1-p_0)}$ | No |
+| **Risk Ratio (RR)** | $\frac{p_1}{p_0}$ | Yes |
+| **Risk Difference (RD)** | $p_1 - p_0$ | Yes |
+
+This is why the marginal vs conditional distinction primarily affects logistic regression (which models log-OR) rather than log-binomial regression (which models log-RR).
+
+## 6. Complete R Example
+
+### Simulate Binary Outcome with Random Intercepts
+
+```{r}
+#| label: full-simulation
+
+set.seed(667)
+
+# Simulation parameters
+n_subjects <- 200
+n_timepoints <- 6
+sigma_b <- 1.5  # Random intercept SD
+
+# True conditional effects
+beta_0 <- -1.5     # Intercept
+beta_trt <- 1.2    # Treatment effect (conditional)
+beta_time <- 0.3   # Time effect
+
+# Generate data
+sim_data <- data.frame(
+  id = rep(1:n_subjects, each = n_timepoints),
+  time = rep(0:(n_timepoints-1), n_subjects),
+  treatment = rep(rbinom(n_subjects, 1, 0.5), each = n_timepoints)
+)
+
+# Add random intercepts
+random_intercepts <- rnorm(n_subjects, 0, sigma_b)
+sim_data$b_i <- rep(random_intercepts, each = n_timepoints)
+
+# Generate outcome
+sim_data$eta <- beta_0 + beta_trt * sim_data$treatment +
+               beta_time * sim_data$time + sim_data$b_i
+sim_data$prob <- plogis(sim_data$eta)
+sim_data$y <- rbinom(nrow(sim_data), 1, sim_data$prob)
+
+# Convert to factors
+sim_data$id <- factor(sim_data$id)
+sim_data$treatment <- factor(sim_data$treatment, labels = c("Control", "Treatment"))
+
+# View data structure
+head(sim_data, 12)
+```
+
+### Fit GEE (Marginal) Model
+
+```{r}
+#| label: fit-gee
+
+# Fit GEE with exchangeable correlation
+fit_gee <- geeglm(y ~ treatment + time,
+                  data = sim_data,
+                  id = id,
+                  family = binomial,
+                  corstr = "exchangeable")
+
+summary(fit_gee)
+```
+
+### Fit GLMM (Conditional) Model
+
+```{r}
+#| label: fit-glmm
+
+# Fit GLMM with random intercept
+fit_glmm <- glmer(y ~ treatment + time + (1|id),
+                  data = sim_data,
+                  family = binomial)
+
+summary(fit_glmm)
+```
+
+### Compare Coefficients
+
+```{r}
+#| label: compare-coefficients
+
+# Extract coefficients
+coef_gee <- coef(fit_gee)
+coef_glmm <- fixef(fit_glmm)
+sigma_b_est <- sqrt(as.numeric(VarCorr(fit_glmm)$id))
+
+# Create comparison table
+comparison <- data.frame(
+  Parameter = c("Intercept", "Treatment", "Time"),
+  True_Conditional = c(beta_0, beta_trt, beta_time),
+  GEE_Marginal = coef_gee,
+  GLMM_Conditional = coef_glmm
+)
+
+comparison |>
+  kable(digits = 3,
+        caption = "Comparison of GEE (Marginal) vs GLMM (Conditional) Estimates") |>
+  kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+### Apply Zeger Formula: Verify Transformation
+
+```{r}
+#| label: zeger-verification
+
+# Zeger attenuation formula
+c_const <- 16 * sqrt(3) / (15 * pi)
+attenuation_factor <- sqrt(1 + c_const * sigma_b_est^2)
+
+# Transform GLMM coefficients to predicted marginal
+glmm_to_marginal <- coef_glmm / attenuation_factor
+
+# Compare
+verification <- data.frame(
+  Parameter = c("Intercept", "Treatment", "Time"),
+  GEE_Estimate = coef_gee,
+  GLMM_Estimate = coef_glmm,
+  GLMM_Transformed = glmm_to_marginal,
+  Difference = coef_gee - glmm_to_marginal
+)
+
+cat("Estimated random intercept SD:", round(sigma_b_est, 3), "\n")
+cat("Attenuation factor:", round(attenuation_factor, 3), "\n\n")
+
+verification |>
+  kable(digits = 3,
+        caption = "Verification: GLMM Transformed via Zeger Formula vs GEE") |>
+  kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+### Odds Ratio Comparison
+
+```{r}
+#| label: odds-ratio-comparison
+
+# Compare on odds ratio scale
+or_comparison <- data.frame(
+  Model = c("True Conditional", "GLMM (Conditional)",
+            "GEE (Marginal)", "GLMM via Zeger (Predicted Marginal)"),
+  Treatment_LogOR = c(beta_trt,
+                      coef_glmm["treatmentTreatment"],
+                      coef_gee["treatmentTreatment"],
+                      glmm_to_marginal["treatmentTreatment"]),
+  Treatment_OR = c(exp(beta_trt),
+                   exp(coef_glmm["treatmentTreatment"]),
+                   exp(coef_gee["treatmentTreatment"]),
+                   exp(glmm_to_marginal["treatmentTreatment"]))
+)
+
+or_comparison |>
+  kable(digits = 3,
+        caption = "Treatment Effect: Log-Odds and Odds Ratio Scales") |>
+  kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+### Visualize the Relationship
+
+```{r}
+#| label: visualization
+#| fig-width: 10
+#| fig-height: 5
+
+par(mfrow = c(1, 2))
+
+# Plot 1: Coefficient comparison
+coef_names <- c("Intercept", "Treatment", "Time")
+x_pos <- 1:3
+
+plot(x_pos - 0.1, coef_gee, pch = 19, col = "blue", cex = 1.5,
+     xlim = c(0.5, 3.5), ylim = range(c(coef_gee, coef_glmm)) * 1.2,
+     xlab = "", ylab = "Coefficient Estimate",
+     main = "GEE vs GLMM Coefficients", xaxt = "n")
+points(x_pos + 0.1, coef_glmm, pch = 17, col = "red", cex = 1.5)
+points(x_pos, glmm_to_marginal, pch = 4, col = "darkgreen", cex = 1.5, lwd = 2)
+axis(1, at = x_pos, labels = coef_names)
+legend("topright",
+       legend = c("GEE (Marginal)", "GLMM (Conditional)", "GLMM via Zeger"),
+       pch = c(19, 17, 4), col = c("blue", "red", "darkgreen"),
+       cex = 0.8)
+abline(h = 0, lty = 2, col = "gray")
+
+# Plot 2: Treatment effect specifically
+effect_data <- data.frame(
+  Method = c("True\nConditional", "GLMM", "GEE", "GLMM\nvia Zeger"),
+  OR = c(exp(beta_trt),
+         exp(coef_glmm["treatmentTreatment"]),
+         exp(coef_gee["treatmentTreatment"]),
+         exp(glmm_to_marginal["treatmentTreatment"])),
+  Type = c("Conditional", "Conditional", "Marginal", "Marginal (predicted)")
+)
+
+barplot(effect_data$OR, names.arg = effect_data$Method,
+        col = c("lightcoral", "coral", "lightblue", "steelblue"),
+        main = "Treatment Odds Ratio Comparison",
+        ylab = "Odds Ratio")
+abline(h = 1, lty = 2)
+```
+
+## 7. Quick Decision Guide
+
+Use this flowchart-style guide to choose between GEE and GLMM:
+
+### Primary Question
+
+**"What am I interested in?"**
+
+```
+                    What is your research question?
+                              |
+          +-------------------+-------------------+
+          |                                       |
+    Population average                    Individual subjects
+    (policy, public health)               (clinical, mechanistic)
+          |                                       |
+          v                                       v
+        GEE                                     GLMM
+    (Marginal)                              (Conditional)
+```
+
+### Secondary Considerations
+
+**"Do I need predictions?"**
+
+- Need predictions for new subjects? $\rightarrow$ **GLMM** (can use random effects)
+- Only need population-level estimates? $\rightarrow$ **GEE** is sufficient
+
+**"Are variance components of interest?"**
+
+- Yes, want to quantify between-subject variability? $\rightarrow$ **GLMM**
+- No, correlation is a nuisance? $\rightarrow$ **GEE**
+
+**"How many clusters do I have?"**
+
+- Small number of clusters ($<$ 30-50)? $\rightarrow$ Consider **GLMM** (GEE may have poor SE estimates)
+- Large number of clusters? $\rightarrow$ Either approach works
+
+**"Is my outcome linear or non-linear?"**
+
+- Continuous outcome (identity link)? $\rightarrow$ Coefficients are same; choose based on other criteria
+- Binary/count outcome (logit/log link)? $\rightarrow$ Coefficients differ; choice affects interpretation
+
+### Summary Checklist
+
+| Question | If Yes | If No |
+|----------|--------|-------|
+| Am I interested in population average effects? | GEE | GLMM |
+| Do I need subject-specific predictions? | GLMM | Either |
+| Is between-subject variance scientifically interesting? | GLMM | Either |
+| Do I have many clusters (> 50)? | Either | Consider GLMM |
+| Is my outcome continuous (identity link)? | Either (same $\beta$) | Choice matters |
+
+## Summary
+
+::: {.callout-tip}
+## Key Takeaways
+
+1. **Marginal (GEE)** estimates population-averaged effects; **Conditional (GLMM)** estimates subject-specific effects
+
+2. For **linear models**, marginal = conditional coefficients
+
+3. For **non-linear models** (logistic, Poisson), marginal coefficients are **attenuated** relative to conditional
+
+4. The **Zeger formula** relates them: $\beta_{\text{marg}} \approx \beta_{\text{cond}} / \sqrt{1 + 0.346 \cdot \sigma_b^2}$
+
+5. **Neither is "wrong"**---they answer different scientific questions
+
+6. Choose based on your **research question**, not statistical convenience
+:::
+
+## References
+
+- Zeger SL, Liang KY, Albert PS. Models for longitudinal data: a generalized estimating equation approach. *Biometrics*. 1988;44(4):1049-1060.
+
+- Neuhaus JM, Kalbfleisch JD, Hauck WW. A comparison of cluster-specific and population-averaged approaches for analyzing correlated binary data. *International Statistical Review*. 1991;59(1):25-35.
+
+- Fitzmaurice GM, Laird NM, Ware JH. *Applied Longitudinal Analysis*. 2nd ed. Wiley; 2011. Chapter 13.
+
+## Session Information
+
+```{r}
+#| label: session-info
+
+sessionInfo()
+```

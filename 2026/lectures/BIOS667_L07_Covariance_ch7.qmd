@@ -1,0 +1,1510 @@
+---
+title: "BIOS 667 - Lecture 7: Modeling the Covariance (Ch. 7)"
+subtitle: "Fitzmaurice, Laird & Ware (2011) - Applied Longitudinal Data Analysis"
+author: "Naim Rashid"
+format:
+  revealjs:
+    theme: [default]
+    footer: BIOS 667 · UNC Gillings - Lecture 7 (Ch.7)
+    slide-number: true
+    hash: true
+    toc: false
+    code-overflow: wrap
+    code-line-numbers: false
+    math: mathjax
+    incremental: true
+    embed-resources: true
+    chalkboard: false
+    css: "../../unc-gillings.css"
+    scrollable: true
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+## Lecture Objectives
+
+By the end of this lecture, you should be able to:
+
+- Explain why correctly modeling the covariance structure $\Sigma$ is essential for valid inference in longitudinal data
+- Describe how within-person correlation affects standard errors for change contrasts
+- Compare unstructured (UN) and covariance-pattern models (CS, AR(1), Exponential) and their trade-offs
+- Use the FLW Ch. 7 diagnostic of comparing the estimated UN correlation matrix to a pattern-implied matrix, with a REML likelihood-ratio test
+- Apply a principled workflow for selecting $\Sigma$ using REML-based criteria (REML-LRT for nested models, AIC for non-nested)
+
+(Residual ACF and the semivariogram are introduced later as instructor extensions beyond FLW Ch. 7.)
+
+---
+
+## Roadmap
+
+| Section | Topic |
+|---------|-------|
+| 7.1-7.2 | Why model $\Sigma$? Implications for SEs and power |
+| 7.3 | Unstructured covariance (UN) |
+| 7.4 | Covariance-pattern models (CS, AR(1), Exponential) |
+| 7.5 | Strategy for choosing $\Sigma$ |
+| 7.8 | Computing: SAS to R mapping |
+
+---
+
+{{< include _notation_box_intro.qmd >}}
+
+---
+
+## Notation for This Lecture
+
+We write $\Sigma_i = \operatorname{Cov}(\mathbf{Y}_i)$ for the marginal (within-subject) covariance (FLW's letter, Ch. 7), and often drop the subscript and write $\Sigma$.
+
+# Part I (Day 1): Why Model $\Sigma$ and the Unstructured Baseline
+
+## 7.1-7.2 Introduction & Implications
+
+| Key Point | Description |
+|-----------|-------------|
+| Within-person correlation | Longitudinal data have correlation structure $\Sigma$ that must be modeled |
+| Correct $\Sigma$ | Yields valid SEs and more power |
+| Misspecified $\Sigma$ | Leads to misleading inferences |
+| Interdependence | Mean model and covariance model are linked (residuals depend on the mean) |
+| MAR missingness | Valid likelihood inference requires sensible mean + $\Sigma$ |
+
+---
+
+## Core Math: Variance of Within-Person Change
+
+Paired "before-after" change (two time points):
+
+$$
+\operatorname{Var}(Y_{i2}-Y_{i1}) = \sigma_1^2+\sigma_2^2-2\rho_{12}\sigma_1\sigma_2
+$$
+
+If $\sigma_1^2=\sigma_2^2=\sigma^2$:
+
+$$
+\operatorname{Var}(Y_{i2}-Y_{i1}) = 2\sigma^2(1-\rho)
+$$
+
+---
+
+## Within vs. Between-Person Variance
+
+| Comparison Type | Variance |
+|-----------------|----------|
+| Within-person change | $2\sigma^2(1-\rho)$ |
+| Cross-sectional (independent) | $2\sigma^2$ |
+| **Ratio** (within / between) | $1-\rho$ |
+
+Higher $\rho$ yields smaller variance for within-person change and more power.
+
+---
+
+## Why $\Sigma$ Changes SEs
+
+For within-person change $\Delta=Y_{i2}-Y_{i1}$ with $\sigma^2=1$:
+
+$$\mathrm{Var}(\Delta)=2\sigma^2(1-\rho)=2(1-\rho)$$
+
+Higher $\rho$ yields smaller $\mathrm{SE}(\Delta)$ and more power for detecting change.
+
+```{r}
+#| echo: true
+#| output-location: slide
+
+data.frame(rho = c(0, 0.3, 0.7)) |>
+  dplyr::mutate(Var_Delta = 2*(1-rho),
+                SE_Delta  = sqrt(Var_Delta))
+```
+
+---
+
+## GLS Demo: Comparing Covariance Structures
+
+| Model | Captures |
+|-------|----------|
+| Independence | Neither serial correlation nor heteroscedasticity |
+| AR(1) only | Serial correlation (off-diagonals), constant variance |
+| varIdent only | Changing variance by time (diagonal), independent residuals |
+| ARH(1) | Both serial correlation and time-varying variance |
+
+---
+
+## GLS Demo: Simulated Data Setup
+
+```{r}
+#| echo: true
+#| output-location: slide
+
+set.seed(667)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(nlme)
+
+# Simulate balanced longitudinal data with AR(1) correlation + heteroscedasticity
+N   <- 120           # subjects
+m   <- 5             # visits
+times <- 0:4
+rho_true <- 0.6      # true serial correlation
+sigma_true <- 1.2    # marginal SD scale for the AR(1) part
+omega <- c(1.0, 1.1, 1.5, 1.2, 0.9)  # time-specific SD multipliers
+
+# AR(1) generator with stationary Var = 1
+sim_ar1_std <- function(m, rho){
+  z <- numeric(m)
+  z[1] <- rnorm(1, sd = 1)
+  if (m > 1) {
+    eps <- rnorm(m - 1, sd = sqrt(1 - rho^2))
+    for (t in 2:m) z[t] <- rho * z[t - 1] + eps[t - 1]
+  }
+  z
+}
+
+ids <- factor(seq_len(N))
+design <- expand.grid(id = ids, time_idx = seq_len(m)) |>
+  arrange(id, time_idx) |>
+  mutate(time_f   = factor(time_idx, levels = seq_len(m),
+                           labels = paste0("t", times)),
+         time_num = times[time_idx])
+
+# Mean structure: linear time trend + small group effect
+beta0 <- 10
+beta_time <- 0.8
+group <- factor(rep(c("A","B"), each = N/2))
+design <- design |>
+  group_by(id) |>
+  mutate(group = group[as.integer(id)]) |>
+  ungroup()
+
+# Subject random intercept
+sigma_b <- 1.0
+b_i <- rnorm(N, 0, sigma_b)
+b <- b_i[as.integer(design$id)]
+
+# AR(1) errors with time-specific SD multipliers
+z <- do.call(c, lapply(seq_len(N), function(i) sim_ar1_std(m, rho_true)))
+err <- sigma_true * (omega[design$time_idx]) * z
+
+sim <- design |>
+  mutate(mu = beta0 + beta_time * time_num + ifelse(group=="B", 0.5, 0),
+         y  = mu + b + err)
+```
+
+---
+
+## GLS Demo: Fitting Models
+
+```{r}
+#| echo: true
+#| output-location: slide
+
+# Fit GLS under different covariance structures
+fit_ind <- gls(y ~ time_num, data = sim, method = "REML")
+
+fit_ar1 <- gls(y ~ time_num, data = sim,
+               correlation = corAR1(form = ~ time_idx | id),
+               method = "REML")
+
+# Initialize varIdent with numeric starting values
+w_time <- varIdent(form = ~ 1 | time_f)
+nlme::coef(w_time) <- setNames(rep(1, nlevels(sim$time_f) - 1),
+                               levels(sim$time_f)[-1])
+
+fit_vhet <- gls(y ~ time_num, data = sim,
+                weights = w_time,
+                method  = "REML")
+
+fit_arh1 <- gls(y ~ time_num, data = sim,
+                correlation = corAR1(form = ~ time_idx | id),
+                weights     = w_time,
+                method      = "REML")
+```
+
+---
+
+## GLS Demo: Model Comparison
+
+```{r}
+#| echo: true
+#| output-location: slide
+
+# Compare fits.
+# REML-LRT (nested) and AIC (non-nested) are the primary criteria;
+# BIC is shown for reference only (FLW p. 179 advises against it for Sigma).
+tab_ic <- data.frame(
+  model  = c("Independence","AR(1) only","varIdent only","ARH(1) = AR(1)+varIdent"),
+  AIC    = c(AIC(fit_ind), AIC(fit_ar1), AIC(fit_vhet), AIC(fit_arh1)),
+  BIC    = c(BIC(fit_ind), BIC(fit_ar1), BIC(fit_vhet), BIC(fit_arh1)),
+  logLik = c(logLik(fit_ind), logLik(fit_ar1), logLik(fit_vhet), logLik(fit_arh1))
+) |>
+  arrange(AIC)
+
+tab_ic
+```
+
+::: {.callout-warning}
+## BIC is not recommended for covariance selection (FLW p. 179)
+
+FLW recommend AIC (not BIC) for choosing among covariance structures. BIC's
+heavier penalty carries a "high risk of selecting a model that is too simple or
+parsimonious" for $\Sigma$. We display the BIC column for reference only; base
+the decision on the REML-LRT (for nested models) and AIC (for non-nested models).
+:::
+
+---
+
+## GLS Demo: Estimated Parameters
+
+```{r}
+#| echo: true
+#| output-location: slide
+
+# Estimated AR(1) correlation
+rho_hat_ar1  <- as.numeric(coef(fit_ar1$modelStruct$corStruct))
+rho_hat_arh1 <- as.numeric(coef(fit_arh1$modelStruct$corStruct))
+
+data.frame(
+  param = c("rho_hat (AR1 only)","rho_hat (ARH1)"),
+  estimate = c(rho_hat_ar1, rho_hat_arh1)
+)
+
+# Estimated varIdent SD multipliers
+vi_coef <- coef(fit_arh1$modelStruct$varStruct, unconstrained = FALSE)
+levs <- levels(sim$time_f)
+vi_all <- setNames(rep(1, length(levs)), levs)
+vi_all[names(vi_coef)] <- vi_coef
+
+sigma_eps <- sigma(fit_arh1)
+sd_time <- sigma_eps * vi_all
+sd_table <- data.frame(time = names(sd_time), sd_est = as.numeric(sd_time))
+sd_table
+```
+
+---
+
+## GLS Demo: Residual SD by Time
+
+```{r}
+#| echo: true
+#| output-location: slide
+
+ggplot(sd_table, aes(x = time, y = sd_est, group = 1)) +
+  geom_line() + geom_point(size = 2) +
+  labs(title = "Estimated residual SD by time (GLS with AR(1) + varIdent)",
+       x = "Time (factor levels)", y = "Residual SD") +
+  theme_minimal()
+```
+
+---
+
+## TLC Trial: Data Preparation
+
+::: {.callout-note}
+## Dataset note
+
+We use the TLC trial and a simulated AR(1) example as our course-standard data so
+the running example carries across lectures. FLW Ch. 7's own case study (Section 7.6)
+is the **exercise-therapy (muscle-strength) trial** (Tables 7.1-7.5), where UN, AR,
+and EXP structures are compared by REML-logLik/AIC and the AR-vs-UN fit is tested
+with a 13-df REML-LRT.
+:::
+
+```{r}
+#| echo: true
+#| output-location: slide
+
+library(dplyr)
+library(tidyr)
+library(nlme)
+library(emmeans)
+library(ggplot2)
+
+# Read TLC data
+path <- "../../data/tlc.csv"
+tlc_wide <- read.csv(path, check.names = FALSE, stringsAsFactors = FALSE)
+names(tlc_wide) <- trimws(names(tlc_wide))
+
+tlc_wide <- tlc_wide %>%
+  rename(
+    id  = ID,
+    trt = `Treatment Group`,
+    w0  = `Lead Level Week 0`,
+    w1  = `Lead Level Week 1`,
+    w4  = `Lead Level Week 4`,
+    w6  = `Lead Level Week 6`
+  ) %>%
+  mutate(trt = factor(trt, levels = c("P","A"), labels = c("Placebo","Succimer")))
+
+# Wide -> long format
+long <- tlc_wide %>%
+  pivot_longer(c(w0,w1,w4,w6), names_to = "wk", values_to = "y") %>%
+  mutate(
+    time       = recode(wk, w0="0", w1="1", w4="4", w6="6"),
+    time_f     = factor(time, levels = c("0","1","4","6")),
+    time_num   = as.numeric(as.character(time)),
+    time_idx   = as.integer(time_f),
+    group      = trt,
+    id         = factor(id),
+    y          = as.numeric(y)
+  ) %>%
+  select(id, group, time_f, time_num, time_idx, y) %>%
+  arrange(id, time_idx)
+
+head(long)
+```
+
+---
+
+## TLC Trial: Helper Functions
+
+```{r}
+#| echo: true
+#| output-location: slide
+
+# Helpers for stable varIdent initialization
+make_varIdent <- function(data, fac) {
+  f <- nlme::varIdent(form = as.formula(paste0("~ 1 | ", fac)))
+  levs <- levels(data[[fac]])
+  if (length(levs) > 1) nlme::coef(f) <- stats::setNames(rep(1, length(levs) - 1), levs[-1])
+  f
+}
+w_time <- make_varIdent(long, "time_f")
+
+m_visits <- nlevels(long$time_f)
+p_lower  <- m_visits * (m_visits - 1) / 2
+start_vec_un <- rep(0.2, p_lower)
+```
+
+---
+
+## Equal-Spacing Check & Time Scaling
+
+```{r}
+#| echo: true
+#| output-location: slide
+
+# Check planned time spacing
+planned <- levels(long$time_f)
+gaps <- diff(sort(unique(long$time_num)))
+data.frame(planned_times = planned, unique_gaps = paste(unique(gaps), collapse = ", "))
+
+# Tip: continuous-time models depend on time units; consider scaling
+# Example: weeks -> months (optional)
+# long <- long |> dplyr::mutate(time_scaled = time_num / 4)
+```
+
+---
+
+## Empirical Check: Correlation & the $1-\rho$ Index
+
+```{r}
+#| echo: true
+#| output-location: slide
+
+# Compute rho at baseline vs week 1
+bl_w1 <- tlc_wide %>% select(id, trt, w0, w1) %>% filter(!is.na(w0) & !is.na(w1))
+rho_hat <- with(bl_w1, cor(w0, w1))
+
+var_within_hat   <- var(bl_w1$w1 - bl_w1$w0)
+var_between_hat  <- var(bl_w1$w1) + var(bl_w1$w0)
+ratio_hat <- var_within_hat / var_between_hat
+
+data.frame(
+  rho_hat = round(rho_hat, 3),
+  ratio_within_to_between = round(ratio_hat, 3),
+  approx_1_minus_rho = round(1 - rho_hat, 3)
+)
+```
+
+# Part II (Day 2): Specifying and Diagnosing $\Sigma$
+
+## Diagnostic: Residual ACF
+
+::: {.callout-note}
+## Beyond FLW (instructor extension)
+
+The residual ACF and semivariogram on the next slides are not part of FLW Ch. 7.
+They are standard serial-correlation diagnostics from the Diggle-style literature
+(cf. Diggle, Heagerty, Liang and Zeger, *Analysis of Longitudinal Data*). The
+FLW-native diagnostic appears a few slides later: compare the estimated UN
+correlation matrix to a pattern-implied matrix and run a REML-LRT.
+:::
+
+Purpose: Compare residual autocorrelation under different $\Sigma$ assumptions.
+
+| Design | Purpose |
+|--------|---------|
+| N = 400, m = 8 | Better estimation of $\Sigma$ |
+| $\rho = 0.8$ (strong) | Independence leaves larger residual ACF |
+
+Expected result: AR(1) fit shows flat residual ACF; Independence shows positive lag-1 ACF.
+
+---
+
+## Residual ACF: Simulation Setup
+
+```{r}
+#| echo: true
+#| output-location: slide
+
+set.seed(667)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(nlme)
+
+# Simulate longitudinal data with AR(1) errors
+N   <- 400      # more subjects
+m   <- 8        # more visits
+rho <- 0.80     # stronger serial correlation
+sigma <- 2      # marginal SD
+
+# AR(1) generator with stationary Var = sigma^2
+sim_ar1 <- function(m, rho, sigma){
+  e <- numeric(m)
+  e[1] <- rnorm(1, sd = sigma)
+  if (m > 1) {
+    w <- rnorm(m - 1, sd = sigma * sqrt(1 - rho^2))
+    for (t in 2:m) e[t] <- rho * e[t - 1] + w[t - 1]
+  }
+  e
+}
+
+ids   <- factor(seq_len(N))
+times <- seq_len(m)
+
+design <- expand.grid(id = ids, time_idx = times) |>
+  arrange(id, time_idx) |>
+  mutate(
+    group    = ifelse(as.integer(id) <= N/2, "A", "B"),
+    group    = factor(group, levels = c("A","B")),
+    time_f   = factor(time_idx, levels = times),
+    time_num = as.numeric(time_idx)
+  )
+
+# Fixed mean structure
+beta0 <- 10
+beta_time <- 0.7
+beta_groupB <- 1.0
+beta_int_B <- 0.3
+
+errs <- do.call(c, lapply(seq_len(N), function(i) sim_ar1(m, rho, sigma)))
+
+sim_long <- design |>
+  mutate(
+    mu = beta0 +
+         beta_time   * (time_num - 1) +
+         beta_groupB * as.numeric(group == "B") +
+         beta_int_B  * as.numeric(group == "B") * (time_num - 1),
+    y  = mu + errs
+  )
+```
+
+---
+
+## Residual ACF: Model Fitting
+
+```{r}
+#| echo: true
+#| output-location: slide
+
+# Fit GLS under Independence and AR(1)
+gls_ind <- gls(y ~ group * time_f, data = sim_long, method = "REML")
+
+gls_ar1 <- gls(y ~ group * time_f, data = sim_long,
+               correlation = corAR1(form = ~ time_idx | id),
+               method = "REML")
+
+# Attach normalized residuals
+res_ind <- sim_long |> mutate(res = residuals(gls_ind, type = "normalized"))
+res_ar1 <- sim_long |> mutate(res = residuals(gls_ar1, type = "normalized"))
+```
+
+---
+
+## Residual ACF: Calculation
+
+```{r}
+#| echo: true
+#| output-location: slide
+
+# Pooled residual ACF by subject (lags 1-3)
+lag_cor <- function(x, k){
+  n <- length(x); if (n <= k) return(NA_real_)
+  stats::cor(x[(k+1):n], x[1:(n-k)], use = "pairwise.complete.obs")
+}
+
+acf_by_id <- function(dat){
+  dat |>
+    arrange(id, time_idx) |>
+    group_by(id) |>
+    summarise(acf1 = lag_cor(res, 1),
+              acf2 = lag_cor(res, 2),
+              acf3 = lag_cor(res, 3),
+              .groups = "drop")
+}
+
+pool_acf <- function(dat, model_lab){
+  by_id <- acf_by_id(dat)
+  by_id |>
+    tidyr::pivot_longer(cols = dplyr::starts_with("acf"),
+                        names_to = "lag", values_to = "rho") |>
+    mutate(lag = as.integer(sub("acf", "", lag))) |>
+    group_by(lag) |>
+    summarise(
+      mean_rho = mean(rho, na.rm = TRUE),
+      med_rho  = median(rho, na.rm = TRUE),
+      se_rho   = sd(rho, na.rm = TRUE)/sqrt(dplyr::n()),
+      .groups  = "drop"
+    ) |>
+    mutate(model = model_lab)
+}
+
+acf_ind <- pool_acf(res_ind, "Independence")
+acf_ar1 <- pool_acf(res_ar1, "AR(1)")
+acf_all <- bind_rows(acf_ind, acf_ar1)
+```
+
+---
+
+## Residual ACF: Visualization
+
+```{r}
+#| echo: true
+#| output-location: slide
+
+ggplot(acf_all, aes(x = factor(lag), y = mean_rho, fill = model)) +
+  geom_col(position = position_dodge(width = 0.7), width = 0.6) +
+  geom_errorbar(aes(ymin = mean_rho - 2*se_rho, ymax = mean_rho + 2*se_rho),
+                position = position_dodge(width = 0.7), width = 0.15) +
+  geom_hline(yintercept = 0, linewidth = 0.3) +
+  labs(title = "Pooled residual ACF by model (simulated AR(1) truth, rho = 0.80)",
+       subtitle = "Correct Sigma (AR(1)) shows flat residual ACF; Independence shows positive lag-1 correlation",
+       x = "Lag", y = "Residual correlation") +
+  theme_minimal()
+
+# Check fitted AR(1) parameter (should be close to 0.8)
+coef(gls_ar1$modelStruct$corStruct)
+```
+
+---
+
+## Diagnostic: Empirical Semivariogram
+
+::: {.callout-note}
+## Beyond FLW (instructor extension)
+
+The semivariogram is a Diggle-style tool (cf. Diggle, Heagerty, Liang and Zeger,
+*Analysis of Longitudinal Data*), not part of FLW Ch. 7. Shown here as a useful
+visual check on how residual correlation decays with time separation.
+:::
+
+A **variogram** plots residual variance versus time separation.
+
+| Pattern | Interpretation |
+|---------|----------------|
+| Flat variogram | Compound Symmetry may be reasonable |
+| Increasing variogram | Correlation decays with time (AR(1), Exponential) |
+
+---
+
+## Semivariogram: Visualization
+
+```{r}
+#| echo: true
+#| output-location: slide
+
+library(nlme)
+
+# Calculate empirical variogram from independence model residuals
+vario_gls <- Variogram(gls_ind, form = ~ time_num)
+
+plot(vario_gls, main = "Empirical Semivariogram of Residuals",
+     xlab = "Time Lag (Weeks)", ylab = "Semivariance")
+```
+
+---
+
+## FLW Ch. 7 Diagnostic: UN vs Pattern-Implied $\Sigma$
+
+The diagnostic FLW Ch. 7 actually uses: fit the **unstructured** correlation
+matrix, then compare it to the correlation matrix **implied** by a pattern
+(e.g. AR(1) or CS). A REML likelihood-ratio test of the pattern against UN
+formalizes the comparison.
+
+In FLW's exercise-therapy example, the AR-vs-UN REML-LRT gives $G^2 = 23.8$ on
+13 df, $p < 0.05$ (FLW p. 182), so the AR pattern does **not** provide an adequate fit relative to UN (AR is rejected). The exponential model (also 2 parameters) is the one FLW prefers: it has the lowest AIC and, unlike AR, is not rejected against UN at 0.05 ($G^2 = 21.2$ on 13 df, $p \approx 0.07$).
+
+---
+
+## UN vs Pattern-Implied: Estimated Matrices
+
+```{r}
+#| echo: true
+#| output-location: slide
+
+# Fit the unstructured correlation model on the simulated AR(1) data
+gls_un_sim <- gls(y ~ group * time_f, data = sim_long,
+                  correlation = corSymm(form = ~ time_idx | id),
+                  weights = varIdent(form = ~ 1 | time_f),
+                  method = "REML")
+
+# Estimated UN correlation matrix (the "data-driven" target)
+cor_un <- corMatrix(gls_un_sim$modelStruct$corStruct)[[1]]
+
+# AR(1)-implied correlation matrix: rho^|j-k|
+rho_hat <- as.numeric(coef(gls_ar1$modelStruct$corStruct, unconstrained = FALSE))
+lags    <- abs(outer(seq_len(m), seq_len(m), "-"))
+cor_ar1 <- rho_hat ^ lags
+
+round(cor_un, 2)    # unstructured estimate
+round(cor_ar1, 2)   # AR(1) pattern-implied
+```
+
+---
+
+## UN vs Pattern-Implied: REML-LRT
+
+```{r}
+#| echo: true
+#| output-location: slide
+
+# REML-LRT: AR(1) (reduced) nested in UN (full).
+# Both share the same maximal mean model, so REML logLik is comparable.
+G2 <- 2 * (as.numeric(logLik(gls_un_sim)) - as.numeric(logLik(gls_ar1)))
+df <- attr(logLik(gls_un_sim), "df") - attr(logLik(gls_ar1), "df")
+p  <- pchisq(G2, df = df, lower.tail = FALSE)
+
+data.frame(G2 = round(G2, 2), df = df, p_value = signif(p, 3))
+# Large p: the AR(1) pattern is adequate relative to UN
+# (mirrors FLW's exercise-therapy AR-vs-UN test, G^2 = 23.8 on 13 df, p. 182).
+```
+
+---
+
+## $\Sigma$ Changes SEs for Within-Group Change
+
+Same **mean model** ($Y_{ij} \sim \text{group} \times \text{time}_f$).
+
+Compare $\Sigma$ via `gls`: Independence, AR(1), UN (hetero).
+
+Extract within-group change (week 1 - baseline) for each group with SEs using `emmeans`.
+
+---
+
+## Within-Group Change: Model Fitting
+
+```{r}
+#| echo: true
+#| output-location: slide
+
+# Fit three covariance choices with the same mean
+gls_ind <- gls(y ~ group * time_f, data = long, method = "REML")
+
+gls_ar1 <- gls(y ~ group * time_f, data = long,
+               correlation = corAR1(form = ~ time_idx | id), method = "REML")
+
+gls_un  <- gls(y ~ group * time_f, data = long,
+               correlation = corSymm(value = start_vec_un, form = ~ time_idx | id),
+               weights     = w_time,
+               method = "REML")
+```
+
+---
+
+## Within-Group Change: Comparison
+
+```{r}
+#| echo: true
+#| output-location: slide
+
+# Helper: within-group change (week1 - baseline) via emmeans
+get_change_tbl <- function(fit){
+  emm_t_by_g <- emmeans(fit, ~ time_f | group)
+  contr <- contrast(emm_t_by_g,
+                    method = list("week1 - baseline" = c(-1, 1, 0, 0)))
+  as.data.frame(summary(contr))[, c("group","estimate","SE","df","t.ratio","p.value")]
+}
+
+tab_ind <- get_change_tbl(gls_ind); tab_ind$model <- "Independence"
+tab_ar1 <- get_change_tbl(gls_ar1); tab_ar1$model <- "AR(1)"
+tab_un  <- get_change_tbl(gls_un ); tab_un$model  <- "UN (hetero)"
+
+tab_all <- bind_rows(tab_ind, tab_ar1, tab_un) %>%
+  select(model, group, estimate, SE, df, t.ratio, p.value)
+
+tab_all
+```
+
+---
+
+## Common Errors Quick Reference
+
+| Error | Cause |
+|-------|-------|
+| `Initialize.corSymm`: wrong dimension | Start vector length must equal $m(m-1)/2$ |
+| "unique values must be consecutive integers" | Ensure `time_idx = as.integer(time_f)` |
+| `abs(value) non-numeric` | `varIdent` coefficients must be numeric |
+
+---
+
+## Reading the Table
+
+| Observation | Interpretation |
+|-------------|----------------|
+| Estimates similar across $\Sigma$ | Mean model is sensible |
+| SEs shrink under AR(1) or UN | Realistic $\Sigma$ recovers precision |
+| Independence: larger SEs | Power left on the table |
+
+**Takeaway:** Modeling $\Sigma$ recovers precision for change contrasts.
+
+---
+
+## MAR Missingness: Why $\Sigma$ Matters
+
+- With **MAR** (not MCAR), likelihood-based inference is valid if joint distribution (mean + $\Sigma$) is correctly specified
+- Badly misspecified $\Sigma$ leads to misleading SEs and tests
+- Practice: start with a rich mean (time as factor + key interactions), then choose $\Sigma$; report sensitivity when feasible
+
+---
+
+## Strategy Recap
+
+| Principle | Reason |
+|-----------|--------|
+| Model $\Sigma$ | Alters SEs and power; necessary under MAR |
+| Use contrast tables | Show efficiency gains clearly |
+| Next: Specify $\Sigma$ | Unstructured (7.3) and covariance-pattern (7.4) models |
+
+---
+
+::: {.callout-note collapse="true"}
+## Check Your Understanding: Why Model the Covariance?
+
+1. If the within-person correlation $\rho = 0.7$ and marginal variance $\sigma^2 = 1$, what is $\text{Var}(Y_{i2} - Y_{i1})$ for a within-person change?
+
+2. Why does modeling $\Sigma$ correctly matter for standard errors, even if we only care about the mean model?
+
+3. What happens to power for detecting within-person change as $\rho$ increases?
+
+**Answers:**
+
+1. $\text{Var}(Y_{i2} - Y_{i1}) = 2\sigma^2(1-\rho) = 2(1)(1-0.7) = 0.6$. Compare this to $2\sigma^2 = 2$ for independent observations.
+
+2. Even though the point estimates $\hat{\beta}$ may be similar, the standard errors depend on the estimated covariance structure. Misspecified $\Sigma$ leads to incorrect SEs, invalid confidence intervals, and misleading hypothesis tests.
+
+3. As $\rho$ increases, the variance of within-person change decreases (since $1-\rho$ gets smaller), so standard errors shrink and power increases. This is why longitudinal designs are often more powerful than cross-sectional designs.
+:::
+
+---
+
+## 7.3 Unstructured Covariance ($\Sigma$ = UN)
+
+Let $\Sigma$ be arbitrary (symmetric, positive-definite).
+
+| Visits ($n$) | Parameters |
+|--------------|------------|
+| 3 | 6 |
+| 5 | 15 |
+| 10 | 55 |
+
+Formula: $n(n+1)/2$ parameters.
+
+---
+
+## UN: Pros and Cons
+
+| Pros | Cons |
+|------|------|
+| Flexible | Many parameters |
+| Captures unequal variances by time | Needs large $N$ |
+| | Awkward for mistimed visits |
+
+---
+
+## Fit $\Sigma$ Candidates
+
+```{r}
+#| echo: true
+#| output-location: slide
+
+# UN with heterogeneous variances
+gls_un <- gls(y ~ group * time_f, data = long,
+              correlation = corSymm(value = start_vec_un, form = ~ time_idx | id),
+              weights     = w_time,
+              method      = "REML")
+
+# Compound Symmetry (homoscedastic)
+gls_cs <- gls(y ~ group * time_f, data = long,
+              correlation = corCompSymm(form = ~ 1 | id),
+              method      = "REML")
+
+# AR(1) with equal spacing
+gls_ar1 <- gls(y ~ group * time_f, data = long,
+               correlation = corAR1(form = ~ time_idx | id),
+               method      = "REML")
+
+# Exponential (continuous-time)
+gls_exp <- gls(y ~ group * time_f, data = long,
+               correlation = corExp(form = ~ time_num | id),
+               method      = "REML")
+
+# Exponential with heterogeneous variances
+gls_exp_het <- gls(y ~ group * time_f, data = long,
+                   correlation = corExp(form = ~ time_num | id),
+                   weights     = w_time,
+                   method      = "REML")
+
+# Exponential + nugget
+gls_exp_nug <- gls(y ~ group * time_f, data = long,
+                   correlation = corExp(form = ~ time_num | id, nugget = TRUE),
+                   method      = "REML")
+```
+
+---
+
+## Parameter Explosion with UN
+
+```{r}
+#| echo: true
+#| output-location: slide
+
+n <- 2:10
+params_UN <- n*(n+1)/2
+params_AR1 <- rep(2, length(n))
+params_CS  <- rep(2, length(n))
+df <- data.frame(n, UN=params_UN, AR1=params_AR1, CS=params_CS) |>
+  tidyr::pivot_longer(-n, names_to="model", values_to="p")
+
+ggplot(df, aes(n, p, color=model)) +
+  geom_line() + geom_point() +
+  labs(title="Number of covariance parameters vs visits",
+       x="Number of visits (n)", y="Number of parameters") +
+  theme_minimal()
+```
+
+---
+
+## Parameter Growth vs. Usable $N$
+
+Rule-of-thumb: Be wary if $N$ / #cov-params $\lesssim 5$.
+
+```{r}
+#| echo: true
+#| output-location: slide
+
+N <- dplyr::n_distinct(long$id)
+df2 <- df |>
+  tidyr::pivot_wider(names_from = model, values_from = p) |>
+  dplyr::mutate(N = N,
+         N_per_param_UN = N/UN,
+         N_per_param_AR1 = N/AR1,
+         N_per_param_CS  = N/CS)
+df2
+```
+
+---
+
+## UN: Implied Correlation Heatmap
+
+```{r}
+#| echo: true
+#| output-location: slide
+
+library(reshape2)
+
+# Correlation matrix from UN (first subject)
+C_un_list <- corMatrix(gls_un$modelStruct$corStruct)
+C_un <- if (is.list(C_un_list)) C_un_list[[1]] else C_un_list
+
+dfC <- melt(C_un)
+ggplot(dfC, aes(Var1, Var2, fill = value)) +
+  geom_tile() + coord_equal() +
+  scale_fill_gradient2(limits = c(-1,1)) +
+  labs(title = "Implied correlation (UN)", x = "Visit index (1..4)", y = "Visit index (1..4)", fill = "rho") +
+  theme_minimal()
+```
+
+---
+
+## UN: Residual SD by Time
+
+```{r}
+#| echo: true
+#| output-location: slide
+
+# varIdent returns relative SD multipliers by factor level (base level=1)
+w_coef <- coef(gls_un$modelStruct$varStruct, unconstrained = FALSE)
+levs <- levels(long$time_f)
+w_all <- setNames(rep(1, length(levs)), levs)
+w_all[names(w_coef)] <- w_coef
+
+sigma_eps <- sigma(gls_un)
+sd_time <- sigma_eps * w_all
+
+data.frame(time = names(sd_time), sd = as.numeric(sd_time)) %>%
+  ggplot(aes(x = time, y = sd, group = 1)) +
+  geom_line() + geom_point(size = 2) +
+  labs(title = "Estimated residual SD by time (UN + varIdent)",
+       x = "Time (weeks)", y = "SD") +
+  theme_minimal()
+```
+
+---
+
+## UN Takeaways
+
+| Strength | Limitation |
+|----------|------------|
+| Flexible | Parameter count grows quickly |
+| Captures non-constant variances | Requires ample $N$ relative to $n(n+1)/2$ |
+| Captures irregular pairwise correlations | Not ideal for mistimed visits |
+
+---
+
+::: {.callout-note collapse="true"}
+## Check Your Understanding: Unstructured Covariance
+
+1. How many covariance parameters does the UN model require for a study with 6 planned visits?
+
+2. A colleague fits UN to a dataset with $N = 50$ subjects and 8 visits. Should they be concerned? Why?
+
+3. What does the "varIdent" component add on top of the correlation structure in `gls`?
+
+**Answers:**
+
+1. $n(n+1)/2 = 6(7)/2 = 21$ parameters.
+
+2. Yes, definitely. With 8 visits, UN requires $8(9)/2 = 36$ covariance parameters. The rule of thumb is $N$/params $\gtrsim 5$, so they would need at least $36 \times 5 = 180$ subjects. With only 50 subjects, the ratio is about 1.4, which risks unstable estimates.
+
+3. The `corSymm` structure models the correlation matrix (values between -1 and 1), while `varIdent` allows heterogeneous variances across time points. Together, they model the full covariance matrix with time-varying SDs.
+:::
+
+---
+
+## UN Failure Modes & Remedies
+
+| Failure Mode | Remedy |
+|--------------|--------|
+| Non-positive-definite estimates | Use structured $\Sigma$ (AR(1), Toeplitz, Exponential) |
+| Non-convergence | Increase optimizer iterations/tolerance |
+| Inflated SEs when $N$ is small | Simplify mean model |
+| Overfit | Consider mixed-effects (RI/RS; Chapter 8) |
+
+---
+
+## Convergence Guardrails
+
+| Issue | Solution |
+|-------|----------|
+| `time_idx` not consecutive | Ensure consecutive integers |
+| UN start vector wrong length | `corSymm(value = rep(0.2, p_lower))` where $p = m(m-1)/2$ |
+| `varIdent` coefficients invalid | Initialize with numeric values, not factors/chars |
+| Non-convergence | Use `glsControl(msMaxIter = 200, tolerance = 1e-8)` |
+| UN unstable | Fit ARH(1)/EXP first, then UN |
+
+---
+
+## 7.4 Covariance-Pattern Models
+
+| Goal | Approach |
+|------|----------|
+| Balance parsimony vs. flexibility | Time-series inspired patterns |
+| Model correlation decay | CS, AR(1), Exponential |
+| Handle heterogeneous variances | Add `varIdent(~ 1 | time_f)` |
+
+---
+
+## CS (Exchangeable): Simple but Rigid
+
+$$\Sigma = \sigma^2\{(1-\rho)I + \rho J\}$$
+
+Constant variance, constant correlation.
+
+Often unrealistic (no decay with lag); useful baseline comparator.
+
+```{r}
+#| echo: true
+#| output-location: slide
+
+summary(gls_cs)$tTable[1:6, , drop = FALSE]
+coef(gls_cs$modelStruct$corStruct)  # estimated rho
+```
+
+---
+
+## AR(1): Equal Spacing, Geometric Decay
+
+$$\text{Corr}(k) = \rho^k$$
+
+where $k$ = lag in visits.
+
+| Pros | Cons |
+|------|------|
+| Parsimonious (2 params) | Can decay too fast |
+| | Requires equal spacing |
+
+```{r}
+#| echo: true
+#| output-location: slide
+
+summary(gls_ar1)$tTable[1:6, , drop = FALSE]
+coef(gls_ar1$modelStruct$corStruct)  # estimated rho
+```
+
+---
+
+## Exponential: Unequal Spacing (Continuous Time)
+
+$$\text{Corr}(t_j, t_k) = \exp\{-\theta|t_j - t_k|\}$$
+
+Respects actual time gaps.
+
+| Caveat | Issue |
+|--------|-------|
+| Replicates at same time | $\text{Corr} \to 1$ (unless nugget) |
+| Long lags | $\text{Corr} \to 0$ |
+
+```{r}
+#| echo: true
+#| output-location: slide
+
+summary(gls_exp)$tTable[1:6, , drop = FALSE]
+coef(gls_exp$modelStruct$corStruct)  # theta (and nugget if set)
+```
+
+---
+
+## Aside: The Nugget Effect
+
+**Problem:** Models like `corExp` assume $\text{Corr}(Y_{ij}, Y_{ik}) \to 1$ as $|t_j - t_k| \to 0$.
+
+This implies perfect measurement, which is rarely true.
+
+---
+
+## The Nugget: Definition
+
+Extra variance component $\tau^2$ added to the diagonal:
+
+$$\text{Var}(Y_{ij}) = \sigma^2 + \tau^2$$
+
+**Interpretation:**
+
+- Measurement error: inherent variability in assaying or recording
+- Micro-scale variability: biological fluctuations faster than measurement interval
+
+---
+
+## The Nugget: Effect on Correlation
+
+Correlation for measurements at the exact same time:
+
+$$\text{Corr}(Y_{ij}, Y_{ik})|_{t_j=t_k} = \frac{\sigma^2}{\sigma^2 + \tau^2} < 1$$
+
+In `nlme`: Use `correlation = corExp(form = ~ time_num | id, nugget = TRUE)`.
+
+---
+
+## Heterogeneous Variants
+
+Allow $\operatorname{Var}(Y_{ij})$ to differ by time:
+
+$$\operatorname{Var}(Y_{ij}) = \sigma^2 \times \omega_{t(j)}^2, \quad \omega_t = 1 \text{ at base level}$$
+
+---
+
+## ARH(1): AR(1) + Heterogeneous Variances
+
+```{r}
+#| echo: true
+#| output-location: slide
+
+start_rho <- 0.4
+
+gls_ar1_het <- gls(y ~ group * time_f, data = long,
+      correlation = corAR1(value = start_rho, form = ~ time_idx | id),
+      weights     = w_time,
+      method      = "REML")
+
+coef(gls_ar1_het$modelStruct$corStruct)
+
+AIC(gls_ar1, gls_ar1_het)
+```
+
+---
+
+## Implied Correlation Heatmaps
+
+```{r}
+#| echo: true
+#| output-location: slide
+
+library(reshape2); library(dplyr); library(ggplot2)
+
+get_cor_mat <- function(fit){
+  M <- nlme::corMatrix(fit$modelStruct$corStruct)
+  if (is.list(M)) M[[1]] else M
+}
+
+mats <- list(CS=gls_cs, AR1=gls_ar1, EXP=gls_exp, UN=gls_un) |>
+  purrr::imap(~melt(get_cor_mat(.x)) |> mutate(model=.y))
+
+bind_rows(mats) |>
+  ggplot(aes(Var1, Var2, fill=value)) +
+  geom_tile() + coord_equal() +
+  scale_fill_gradient2(limits=c(-1,1)) +
+  facet_wrap(~model, nrow=1) +
+  labs(title="Implied correlation by Sigma", x="Visit index", y="Visit index", fill="rho") +
+  theme_minimal()
+```
+
+---
+
+## Model Comparison (REML-logLik / AIC; BIC for reference)
+
+```{r}
+#| echo: true
+#| output-location: slide
+
+mods <- list(
+  UN_het   = gls_un,
+  CS       = gls_cs,
+  AR1      = gls_ar1,
+  AR1het   = gls_ar1_het,
+  EXP      = gls_exp,
+  EXP_het  = gls_exp_het,
+  EXP_nug  = gls_exp_nug
+)
+
+# Rank by AIC (FLW's recommended non-nested criterion); BIC for reference only.
+data.frame(
+  model  = names(mods),
+  AIC    = sapply(mods, AIC),
+  BIC    = sapply(mods, BIC),   # reference only; FLW p. 179 advises against for Sigma
+  logLik = sapply(mods, logLik)
+) |>
+  dplyr::arrange(AIC)
+```
+
+---
+
+## Candidate $\Sigma$ (REML; Same Fixed Effects)
+
+```{r}
+#| echo: true
+#| output-location: slide
+
+# Independence (for boundary LRT demo)
+gls_ind <- gls(y ~ group * time_f, data = long, method = "REML")
+
+# CS, AR(1), Exponential, UN (hetero)
+gls_cs  <- gls(y ~ group * time_f, data = long,
+               correlation = corCompSymm(value = 0.2, form = ~ 1 | id), method = "REML")
+
+gls_ar1 <- gls(y ~ group * time_f, data = long,
+               correlation = corAR1(value = 0.2, form = ~ time_idx | id), method = "REML")
+
+gls_exp <- gls(y ~ group * time_f, data = long,
+               correlation = corExp(value = 0.2, form = ~ time_num | id), method = "REML")
+
+gls_un  <- gls(y ~ group * time_f, data = long,
+               correlation = corSymm(value = start_vec_un, form = ~ time_idx | id),
+               weights     = w_time, method = "REML")
+```
+
+---
+
+## Adding ARH(1) for Robustness
+
+```{r}
+#| echo: true
+#| output-location: slide
+
+start_rho <- 0.4
+gls_ar1_het <- gls(y ~ group * time_f, data = long,
+                   correlation = corAR1(value = start_rho, form = ~ time_idx | id),
+                   weights     = w_time, method = "REML")
+```
+
+---
+
+## Compare $\Sigma$ by REML-AIC (BIC for reference)
+
+```{r}
+#| echo: true
+#| output-location: slide
+
+mods <- list(
+  IND     = gls_ind,
+  CS      = gls_cs,
+  AR1     = gls_ar1,
+  AR1het  = gls_ar1_het,
+  EXP     = gls_exp,
+  UN_het  = gls_un
+)
+
+# AIC ranks non-nested candidates; for nested pairs use the REML-LRT.
+# BIC shown for reference only (FLW p. 179 advises against it for Sigma).
+data.frame(
+  model  = names(mods),
+  AIC    = sapply(mods, AIC),
+  BIC    = sapply(mods, BIC),
+  logLik = sapply(mods, logLik)
+) |>
+  dplyr::arrange(AIC)
+```
+
+::: {.callout-warning}
+## Decide on REML-LRT + AIC, not BIC (FLW p. 179)
+
+For nested structures (e.g. AR(1) within UN, CS within UN) use the REML-LRT;
+for non-nested structures use AIC. FLW recommend against BIC here: its heavier
+penalty risks "selecting a model that is too simple or parsimonious" for $\Sigma$.
+:::
+
+---
+
+## Practical Guidance for Choosing $\Sigma$
+
+| Scenario | Recommendation |
+|----------|----------------|
+| Few visits, balanced | UN-het if $N$ is sufficient |
+| Equal spacing, moderate decay | AR(1); add `varIdent` if variances differ |
+| Unequal spacing / mistimed | Exponential (consider nugget) or hybrid (RI + Exp) |
+
+Always check: implied correlation heatmaps, residual diagnostics, AIC.
+
+---
+
+## Boundary LRT Caveat (CS vs Independence)
+
+Read CS as a **random-intercept** model: $\rho = \sigma_b^2/(\sigma_b^2 + \sigma^2)$. Dropping the random intercept (CS to Independence) tests the **variance component** $H_0: \sigma_b^2 = 0$ vs $H_A: \sigma_b^2 > 0$, which is on the **boundary** of the parameter space, so this is the genuine boundary test.
+
+(For CS proper, $\rho = 0$ is interior, not on a boundary: CS allows $\rho$ down to $-1/(n-1)$. The boundary issue is the variance component being pinned at 0, equivalent to $\rho = 0$ only under this CS-as-random-intercept reading.)
+
+| Approach | Issue |
+|----------|-------|
+| Naive $\chi^2$ | Over-penalizes, selects overly simple models |
+| Mixture $\frac{1}{2}\chi^2_0 + \frac{1}{2}\chi^2_1$ | Correct for testing one variance at 0 |
+| Conservative $\alpha = 0.10$ | Alternative approach |
+
+L08 develops the variance-component boundary test in full (FLW Section 8.5 / Table C.1). Do not use REML LRTs to compare different mean models.
+
+---
+
+## Boundary LRT: Example
+
+```{r}
+#| echo: true
+#| output-location: slide
+
+# REML LRT: IND (reduced) vs CS read as a random intercept (full).
+# Testing the random-intercept variance H0: sigma_b^2 = 0 (on the boundary).
+LR <- 2 * (as.numeric(logLik(gls_cs)) - as.numeric(logLik(gls_ind)))
+df <- 1  # one extra variance component
+p_standard <- pchisq(LR, df = df, lower.tail = FALSE)           # naive
+p_mixture  <- 0.5 * pchisq(LR, df = df, lower.tail = FALSE)     # correct boundary mixture
+
+data.frame(LR = LR, df = df,
+           p_naive_chisq = p_standard,
+           p_mixture_50_50 = p_mixture)
+```
+
+---
+
+## Bridge to Ch. 8: CS is a Random Intercept Model
+
+A random intercept model induces Compound Symmetry covariance.
+
+We can fit this using `lme()` from `nlme`.
+
+Results for fixed effects ($\beta$ and SEs) will be nearly identical to `gls` with `corCompSymm`.
+
+---
+
+## CS vs. Random Intercept: Comparison
+
+```{r}
+#| echo: true
+#| output-location: slide
+
+# Fit random intercept model using lme()
+lme_ri <- lme(y ~ group * time_f, random = ~ 1 | id, data = long, method = "REML")
+
+# Compare fixed effects tables
+summary(gls_cs)$tTable
+summary(lme_ri)$tTable
+# Small differences in SEs/DF due to different optimizers,
+# but conceptually the same model.
+```
+
+---
+
+## 7.5 Choosing a Covariance Pattern: Strategy
+
+| Principle | Rationale |
+|-----------|-----------|
+| Mean and covariance are interdependent | Choose $\Sigma$ under a maximal mean |
+| Use REML for $\Sigma$ selection | Same fixed effects across candidates |
+| AIC comparable only when | Fixed effects identical + same estimation method (BIC not recommended for $\Sigma$, FLW p. 179) |
+| REML LRTs | For nested $\Sigma$ (UN vs pattern: ordinary $\chi^2$). Use the boundary mixture only when a variance/correlation is tested at 0. |
+
+---
+
+## What is a "Maximal" Mean Model?
+
+**The Problem:** Misspecified mean leaves structured patterns in residuals.
+
+**The Risk:** We might model leftover structure as part of covariance.
+
+---
+
+## Maximal Mean Strategy
+
+| Step | Action |
+|------|--------|
+| 1 | Start with flexible mean (e.g., `group * time_as_factor`) |
+| 2 | Use rich mean to select best $\Sigma$ using REML |
+| 3 | Once $\Sigma$ chosen, simplify mean using ML for nested comparisons |
+
+**Goal:** Separate modeling mean from modeling covariance.
+
+---
+
+## Strengths of Covariance Patterns
+
+| Strength | Description |
+|----------|-------------|
+| Parsimony | Fewer parameters than UN when $n_{\text{time}}$ grows |
+| Interpretability | Patterns map to scientific intuition |
+| Availability | Standard software; easy REML-AIC comparison |
+| Handles missing | Works with balanced design + intermittent missingness |
+
+---
+
+## Weaknesses of Covariance Patterns
+
+| Weakness | Issue |
+|----------|-------|
+| Equal spacing assumption | AR(1), Toeplitz less suitable for irregular times |
+| Constant variance | Often wrong; prefer heterogeneous variances |
+| UN parameter explosion | $n(n+1)/2$ parameters; unstable with modest $n_{\text{time}}$ |
+| EXP assumptions | $\text{Corr}(t,t)=1$; $\text{Corr} \to 0$ quickly unless nugget added |
+
+---
+
+## Practical Recommendations
+
+| Recommendation | Rationale |
+|----------------|-----------|
+| Use maximal mean | Time as factor with key between-subject covariates |
+| Prefer heterogeneous variances | `varIdent(~1|time_f)` |
+| Compare small set | UN-hetero, AR(1), Exponential |
+| Choose by REML-AIC | Check nested vs UN via REML-LRT |
+
+---
+
+::: {.callout-note collapse="true"}
+## Check Your Understanding: Covariance Patterns
+
+1. What is the key difference between AR(1) and Exponential correlation structures?
+
+2. In what situation would you add a "nugget" effect to an Exponential model?
+
+3. Why do we use REML (not ML) when comparing different covariance structures?
+
+**Answers:**
+
+1. AR(1) uses visit index (requires equally-spaced measurements): $\text{Corr}(k) = \rho^k$ where $k$ is the lag in visits. Exponential uses actual time differences: $\text{Corr}(t_j, t_k) = \exp(-\theta|t_j - t_k|)$. Use Exponential when visits are unequally spaced or mistimed.
+
+2. The nugget handles measurement error or micro-scale variability. Without it, $\text{Corr}(Y_{ij}, Y_{ik}) \to 1$ as $|t_j - t_k| \to 0$, implying perfect measurement. If you have replicate measurements at the same time point, or believe there is inherent measurement error, add `nugget = TRUE`.
+
+3. REML (restricted maximum likelihood) provides less biased estimates of variance components by accounting for the loss of degrees of freedom used to estimate fixed effects. When comparing covariance structures, we hold fixed effects constant and use REML to get the best variance estimates. ML would be used when comparing different fixed-effects specifications.
+:::
+
+---
+
+## Decision Flow for $\Sigma$
+
+| Step | Action |
+|------|--------|
+| 1 | Fix mean: saturated `group * time_f` |
+| 2 | Try $\Sigma$ candidates: UN+hetero, AR(1), EXP |
+| 3 | Compare REML-AIC |
+| 4 | For a pattern nested in UN: REML-LRT, ordinary $\chi^2$ (df = difference in covariance parameters) |
+| 5 | Refit final model; proceed to inference on $\beta$ |
+
+---
+
+## Reporting Checklist
+
+| Element | Include |
+|---------|---------|
+| Design & missingness | Planned times, spacing, missingness map |
+| Mean model | Maximal fixed effects used for $\Sigma$ selection |
+| $\Sigma$ candidates & fits | REML logLik and AIC (BIC not recommended for $\Sigma$, FLW p. 179) |
+| Nested tests | REML-LRTs (UN vs pattern: ordinary $\chi^2$, df = parameter difference). The boundary mixture applies only when testing a variance/correlation = 0 (e.g. $\rho = 0$). |
+| Estimated $\Sigma$ | Key parameters ($\rho$, $\theta$), varIdent multipliers, heatmap |
+| Diagnostics | UN vs pattern-implied correlation (FLW); residual ACF/semivariogram (instructor extension); convergence notes |
+| Sensitivity | Alternative $\Sigma$; final choice justification |
+
+---
+
+## Top 5 $\Sigma$ Mistakes
+
+| Mistake | Consequence |
+|---------|-------------|
+| Comparing $\Sigma$ with different fixed effects | AIC not comparable |
+| Using ML for $\Sigma$ selection | Use REML |
+| Ignoring boundary mixtures in LRTs | Incorrect p-values |
+| Assuming equal spacing for AR(1) | Model mismatch |
+| Treating varIdent coefficients as variances | They are SD multipliers |
+
+---
+
+## Common Mistakes to Avoid
+
+::: {.callout-warning}
+## Mistakes That Lead to Wrong Results
+
+| Mistake | Why It Is Wrong | Correct Approach |
+|---------|-----------------|------------------|
+| Using ML for $\Sigma$ selection | ML underestimates variance components | Use REML when comparing covariance structures |
+| Comparing AIC across different fixed effects | AIC not comparable | Keep fixed effects identical; only vary $\Sigma$ |
+| Ignoring boundary mixtures in LRTs | P-values are too conservative | Use $\frac{1}{2}\chi^2_0 + \frac{1}{2}\chi^2_1$ when testing a variance component at 0 (e.g. $\sigma_b^2 = 0$) |
+| Using AR(1) with unequal spacing | Model assumes lag = visit index | Use Exponential for continuous time |
+| Interpreting varIdent as variances | They are SD multipliers relative to reference | Multiply by $\sigma_\varepsilon$ to get actual SDs |
+| Forgetting `time_idx` must be consecutive integers | `corAR1`/`corSymm` require integer indexing | Create `time_idx = as.integer(time_f)` |
+| Fitting UN with too few subjects | Unstable/non-PD estimates | Rule of thumb: $N$/params $\gtrsim 5$ |
+:::
+
+---
+
+## 7.8 Computing: PROC MIXED (SAS)
+
+A complete standalone covariance-pattern fit in SAS (static reference, not run here; R is the course's runnable language):
+
+```sas
+/* Covariance-pattern model on the TLC data; static reference, not run here. */
+PROC MIXED DATA=tlc METHOD=REML;
+    CLASS id group time;
+    MODEL y = group time group*time / SOLUTION CHISQ;
+    REPEATED time / SUBJECT=id TYPE=UN R RCORR;   /* TYPE=CS or TYPE=AR(1) for those patterns */
+RUN;
+```
+
+Swap `TYPE=UN` to `TYPE=CS`, `TYPE=AR(1)`, or `TYPE=SP(EXP)(time)` to fit the other covariance patterns; the `nlme` equivalents are below.
+
+---
+
+## 7.8 Computing: SAS to R Mapping
+
+| SAS | R (`nlme`) |
+|-----|------------|
+| `TYPE=UN` | `corSymm(~ time_idx | id)` + `varIdent(~ 1 | time_f)` |
+| `TYPE=CS` | `corCompSymm(~ 1 | id)` or random intercept |
+| `TYPE=AR(1)` | `corAR1(~ time_idx | id)` |
+| `TYPE=SP(EXP)(ctime)` | `corExp(~ time_num | id)` |
+
+---

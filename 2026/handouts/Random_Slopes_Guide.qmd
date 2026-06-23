@@ -1,0 +1,947 @@
+---
+title: "Random Slopes: When to Add and How to Interpret"
+subtitle: "Beyond Random Intercepts in Mixed Models"
+format: html
+toc: true
+embed-resources: true
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+```{r}
+#| label: setup
+#| include: false
+
+library(nlme)
+library(lme4)
+library(ggplot2)
+library(dplyr)
+library(gridExtra)
+
+set.seed(667)
+```
+
+## 1. Random Intercepts vs Random Slopes
+
+### Conceptual Distinction
+
+**Random Intercepts Only (RI):**
+
+- All subjects share the *same* slope (rate of change over time)
+- Subjects differ only in their starting points (baseline values)
+- The trajectories are parallel lines shifted vertically
+
+**Random Intercepts + Random Slopes (RI + RS):**
+
+- Subjects have *different* slopes AND different starting points
+- Each subject has their own trajectory
+- Lines can cross each other---not parallel
+
+### Visual Comparison
+
+```{r}
+#| label: fig-ri-vs-rs
+#| fig-cap: "Comparison of Random Intercept Only vs Random Intercept + Slope Models"
+#| fig-width: 10
+#| fig-height: 5
+
+# Simulate data for visualization
+n_subj <- 8
+n_time <- 5
+time_points <- 0:4
+
+# Random intercepts only (parallel lines)
+ri_data <- data.frame(
+  id = rep(1:n_subj, each = n_time),
+  time = rep(time_points, n_subj)
+)
+ri_intercepts <- rnorm(n_subj, mean = 10, sd = 3)
+ri_data$y <- ri_intercepts[ri_data$id] + 2 * ri_data$time + rnorm(n_subj * n_time, 0, 0.5)
+
+# Random intercepts + slopes (non-parallel lines)
+rs_data <- data.frame(
+  id = rep(1:n_subj, each = n_time),
+  time = rep(time_points, n_subj)
+)
+rs_intercepts <- rnorm(n_subj, mean = 10, sd = 3)
+rs_slopes <- rnorm(n_subj, mean = 2, sd = 1.5)  # Slopes vary!
+rs_data$y <- rs_intercepts[rs_data$id] + rs_slopes[rs_data$id] * rs_data$time +
+             rnorm(n_subj * n_time, 0, 0.5)
+
+# Create plots
+p1 <- ggplot(ri_data, aes(x = time, y = y, group = factor(id), color = factor(id))) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 2) +
+  labs(title = "Random Intercepts Only",
+       subtitle = "Parallel trajectories (same slope for all)",
+       x = "Time", y = "Outcome") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+p2 <- ggplot(rs_data, aes(x = time, y = y, group = factor(id), color = factor(id))) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 2) +
+  labs(title = "Random Intercepts + Slopes",
+       subtitle = "Non-parallel trajectories (slopes vary)",
+       x = "Time", y = "Outcome") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+grid.arrange(p1, p2, ncol = 2)
+```
+
+**Key Insight:** In the left panel, subjects start at different places but change at the same rate. In the right panel, subjects both start differently AND change at different rates---some increase quickly, others slowly, and some may even decrease.
+
+***
+
+## 2. When to Add Random Slopes
+
+Use the following diagnostic signals to decide whether random slopes are needed:
+
+| Signal | What it Means | Action |
+|--------|---------------|--------|
+| **Fanning pattern** in residuals vs time | Subject-level heterogeneity in slopes | Add random slope for time |
+| **Theoretical expectation** of varying trajectories | Domain knowledge suggests individual variation | Include random slope a priori |
+| **Significant LRT** comparing RI vs RI+RS | Random slope improves model fit | Retain the random slope |
+| **Random slope variance** significantly > 0 | Meaningful between-subject variability in slopes | Keep the random slope |
+| **Spaghetti plot** shows crossing/diverging lines | Visual evidence of slope heterogeneity | Strong candidate for random slope |
+
+### Decision Framework
+
+1. **Plot individual trajectories** (spaghetti plot)
+   - Do lines cross or fan out? Consider random slopes
+
+2. **Fit RI-only model**, examine residuals vs time
+   - Fanning pattern present? Add random slopes
+
+3. **Compare RI vs RI+RS models** via LRT (use ML, not REML)
+   - Significant improvement? Keep random slopes
+
+4. **Check if model converges** with random slopes
+   - Convergence issues? May need simpler structure
+
+***
+
+## 3. The Model
+
+### Mathematical Specification
+
+The linear mixed model with random intercepts and slopes is:
+
+$$
+Y_{ij} = (\beta_0 + b_{0i}) + (\beta_1 + b_{1i}) \cdot \text{time}_{ij} + \varepsilon_{ij}
+$$
+
+Where:
+
+- $Y_{ij}$ = outcome for subject $i$ at time $j$
+- $\beta_0$ = population-average intercept (mean at time = 0)
+- $\beta_1$ = population-average slope (mean rate of change)
+- $b_{0i}$ = subject-specific deviation from population intercept
+- $b_{1i}$ = subject-specific deviation from population slope
+- $\varepsilon_{ij}$ = residual error
+
+### Random Effects Distribution
+
+The random effects follow a multivariate normal distribution:
+
+$$
+\begin{pmatrix} b_{0i} \\ b_{1i} \end{pmatrix} \sim \text{MVN}\left( \begin{pmatrix} 0 \\ 0 \end{pmatrix}, \mathbf{D} \right)
+$$
+
+Where the variance-covariance matrix is:
+
+$$
+\mathbf{D} = \begin{pmatrix} \sigma^2_{b_0} & \sigma_{b_{01}} \\ \sigma_{b_{01}} & \sigma^2_{b_1} \end{pmatrix}
+$$
+
+### Interpreting the Correlation
+
+The correlation between random intercepts and slopes:
+
+$$
+\rho_{01} = \frac{\sigma_{b_{01}}}{\sigma_{b_0} \cdot \sigma_{b_1}}
+$$
+
+| Correlation | Interpretation |
+|-------------|----------------|
+| $\rho_{01} > 0$ (positive) | Subjects who start higher tend to increase faster |
+| $\rho_{01} < 0$ (negative) | Subjects who start higher tend to increase slower (regression to mean) |
+| $\rho_{01} \approx 0$ | Starting point and rate of change are independent |
+
+**Example:** In growth studies, negative correlation often occurs---children who are taller at baseline tend to grow more slowly (they're closer to their adult height).
+
+***
+
+## 4. Variance Components Interpretation
+
+| Parameter | Symbol | Interpretation |
+|-----------|--------|----------------|
+| Random intercept variance | $\sigma^2_{b_0}$ | Between-subject variance **at time = 0**; how much subjects differ at baseline |
+| Random slope variance | $\sigma^2_{b_1}$ | Between-subject variance **in rates of change**; how much slopes vary across subjects |
+| Covariance | $\sigma_{b_{01}}$ | Association between starting point and rate of change |
+| Correlation | $\rho_{01}$ | Standardized covariance (bounded -1 to 1) |
+| Residual variance | $\sigma^2$ | Within-subject variance not explained by random effects |
+
+### Important Note on Centering
+
+**The interpretation of $\sigma^2_{b_0}$ depends on how time is coded:**
+
+- If `time` starts at 0: $\sigma^2_{b_0}$ = variance at baseline
+- If `time` is centered at the mean: $\sigma^2_{b_0}$ = variance at the mean time point
+- This also affects the intercept-slope covariance!
+
+**Recommendation:** Always think carefully about centering time to make variance components interpretable.
+
+***
+
+## 5. R Code Syntax
+
+### Package Comparison
+
+**Random intercept only:**
+
+- nlme: `random = ~1|id`
+- lme4: `(1|id)`
+
+**Random intercept + slope:**
+
+- nlme: `random = ~time|id`
+- lme4: `(1 + time|id)`
+
+**Random slope only** (rare):
+
+- nlme: `random = ~0 + time|id`
+- lme4: `(0 + time|id)`
+
+**Uncorrelated RI + RS:**
+
+- nlme: `random = list(id = pdDiag(~time))`
+- lme4: `(1|id) + (0 + time|id)`
+
+### nlme Examples
+
+```{r}
+#| eval: false
+
+# Random intercept only
+fit_ri <- lme(y ~ time + treatment,
+              random = ~1|id,
+              data = mydata)
+
+# Random intercept + slope (correlated)
+fit_rs <- lme(y ~ time + treatment,
+              random = ~time|id,
+              data = mydata)
+
+# Random intercept + slope (uncorrelated - diagonal D matrix)
+fit_rs_uncor <- lme(y ~ time + treatment,
+                    random = list(id = pdDiag(~time)),
+                    data = mydata)
+```
+
+### lme4 Examples
+
+```{r}
+#| eval: false
+
+# Random intercept only
+fit_ri <- lmer(y ~ time + treatment + (1|id), data = mydata)
+
+# Random intercept + slope (correlated)
+fit_rs <- lmer(y ~ time + treatment + (1 + time|id), data = mydata)
+
+# Random intercept + slope (uncorrelated)
+fit_rs_uncor <- lmer(y ~ time + treatment + (1|id) + (0 + time|id), data = mydata)
+```
+
+### Extracting Variance Components
+
+```{r}
+#| eval: false
+
+# nlme
+VarCorr(fit_rs)  # Shows variances and correlations
+intervals(fit_rs)  # Confidence intervals
+
+# lme4
+VarCorr(fit_rs)  # Shows variances and correlations
+as.data.frame(VarCorr(fit_rs))  # As a data frame
+confint(fit_rs, oldNames = FALSE)  # Profile likelihood CIs
+```
+
+***
+
+## 6. Diagnostic Check: The Fanning Pattern
+
+The "fanning pattern" is a key diagnostic for detecting the need for random slopes.
+
+### What to Look For
+
+```{r}
+#| label: fig-fanning
+#| fig-cap: "Detecting the Fanning Pattern in Residuals"
+#| fig-width: 10
+#| fig-height: 5
+
+# Simulate data with heterogeneous slopes
+n_subj <- 50
+n_time <- 6
+
+sim_data <- data.frame(
+  id = rep(1:n_subj, each = n_time),
+  time = rep(0:(n_time-1), n_subj)
+)
+
+# True model has random slopes
+true_int <- rnorm(n_subj, 50, 5)
+true_slope <- rnorm(n_subj, 3, 2)  # Substantial slope variability
+sim_data$y <- true_int[sim_data$id] + true_slope[sim_data$id] * sim_data$time +
+              rnorm(n_subj * n_time, 0, 2)
+
+# Fit RI-only model (misspecified)
+fit_ri_wrong <- lme(y ~ time, random = ~1|id, data = sim_data)
+
+# Fit correct RI+RS model
+fit_rs_correct <- lme(y ~ time, random = ~time|id, data = sim_data)
+
+# Get residuals
+sim_data$resid_ri <- residuals(fit_ri_wrong)
+sim_data$resid_rs <- residuals(fit_rs_correct)
+
+# Plot residuals
+p1 <- ggplot(sim_data, aes(x = time, y = resid_ri)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "loess", se = FALSE, color = "red") +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  labs(title = "RI Only: Fanning Pattern Present",
+       subtitle = "Residual variance increases with time",
+       x = "Time", y = "Residuals") +
+  theme_minimal()
+
+p2 <- ggplot(sim_data, aes(x = time, y = resid_rs)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "loess", se = FALSE, color = "blue") +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  labs(title = "RI + RS: Fanning Resolved",
+       subtitle = "Residual variance constant across time",
+       x = "Time", y = "Residuals") +
+  theme_minimal()
+
+grid.arrange(p1, p2, ncol = 2)
+```
+
+### Interpreting the Pattern
+
+**Left panel (RI only):** The spread of residuals increases (or decreases) with time. This "fanning" or "funnel" shape indicates that the model is not capturing subject-specific variation in slopes.
+
+**Right panel (RI + RS):** After adding random slopes, the residuals show constant variance across time. The fanning disappears because subject-specific slopes are now modeled.
+
+***
+
+## 7. Boundary Tests for Variance Components
+
+### The Problem
+
+When testing whether a random slope is needed:
+
+$$
+H_0: \sigma^2_{b_1} = 0 \quad \text{vs} \quad H_1: \sigma^2_{b_1} > 0
+$$
+
+The null hypothesis places the parameter on the boundary of the parameter space (variance cannot be negative). This violates standard LRT assumptions.
+
+### The Solution: Mixture Chi-Square Distribution
+
+Under the null, the LRT statistic follows a **mixture of chi-square distributions**, not a standard chi-square.
+
+For testing one variance component:
+
+$$
+\text{LRT} \sim 0.5 \cdot \chi^2_0 + 0.5 \cdot \chi^2_1
+$$
+
+This means the p-value from a standard `anova()` is **conservative** (too large).
+
+### Practical Approaches
+
+**Option 1: Divide the p-value by 2**
+
+```{r}
+#| eval: false
+
+# Compare RI vs RI+RS models (must use ML, not REML!)
+fit_ri_ml <- lme(y ~ time, random = ~1|id, data = mydata, method = "ML")
+fit_rs_ml <- lme(y ~ time, random = ~time|id, data = mydata, method = "ML")
+
+lrt_result <- anova(fit_ri_ml, fit_rs_ml)
+corrected_pvalue <- lrt_result$`p-value`[2] / 2
+```
+
+**Option 2: Use the exact mixture distribution**
+
+For adding both a variance and covariance (2 parameters):
+
+$$
+\text{LRT} \sim 0.5 \cdot \chi^2_1 + 0.5 \cdot \chi^2_2
+$$
+
+```{r}
+#| eval: false
+
+# Critical value for mixture (alpha = 0.05)
+# P(0.5*chi2_1 + 0.5*chi2_2 > cv) = 0.05
+# Approximately cv = 5.14 for 2 df case
+
+lrt_stat <- -2 * (logLik(fit_ri_ml) - logLik(fit_rs_ml))
+pval_mixture <- 0.5 * pchisq(lrt_stat, df = 1, lower.tail = FALSE) +
+                0.5 * pchisq(lrt_stat, df = 2, lower.tail = FALSE)
+```
+
+### Important Reminder
+
+**Always use ML (not REML) when comparing models with different fixed OR random effects structures via LRT.**
+
+```{r}
+#| eval: false
+
+# WRONG: Using REML for model comparison
+fit1 <- lme(y ~ time, random = ~1|id, data = mydata)  # REML is default
+fit2 <- lme(y ~ time, random = ~time|id, data = mydata)
+anova(fit1, fit2)  # Invalid comparison!
+
+# CORRECT: Use ML
+fit1_ml <- lme(y ~ time, random = ~1|id, data = mydata, method = "ML")
+fit2_ml <- lme(y ~ time, random = ~time|id, data = mydata, method = "ML")
+anova(fit1_ml, fit2_ml)  # Valid comparison
+```
+
+***
+
+## 8. BLUPs for Subject-Specific Predictions
+
+### What are BLUPs?
+
+**BLUP** = Best Linear Unbiased Predictor
+
+BLUPs provide estimates of the subject-specific random effects ($b_{0i}$, $b_{1i}$). They are "predictions" rather than "estimates" because random effects are random variables, not fixed parameters.
+
+### Key Properties
+
+1. **Shrinkage:** BLUPs are "shrunk" toward zero (the population mean of random effects)
+2. **Reliability-weighted:** Subjects with more observations or less noise get BLUPs closer to their empirical values
+3. **Borrowing strength:** Information from all subjects informs each individual's BLUP
+
+### Extracting BLUPs in R
+
+```{r}
+#| eval: false
+
+# nlme
+ranef(fit_rs)           # Random effects (deviations from population)
+coef(fit_rs)            # Subject-specific coefficients (β + b)
+
+# lme4
+ranef(fit_rs)           # Random effects
+coef(fit_rs)$id         # Subject-specific coefficients
+```
+
+### Predictions: Population vs Subject-Specific
+
+```{r}
+#| eval: false
+
+# nlme predictions
+predict(fit_rs, level = 0)  # Population-average (fixed effects only)
+predict(fit_rs, level = 1)  # Subject-specific (fixed + random effects)
+
+# lme4 predictions
+predict(fit_rs, re.form = NA)   # Population-average
+predict(fit_rs, re.form = NULL) # Subject-specific (default)
+```
+
+| Level | What it Gives | Use Case |
+|-------|---------------|----------|
+| `level = 0` / `re.form = NA` | $\hat{Y} = \hat{\beta}_0 + \hat{\beta}_1 \cdot \text{time}$ | Population-average trajectory |
+| `level = 1` / `re.form = NULL` | $\hat{Y} = (\hat{\beta}_0 + \hat{b}_{0i}) + (\hat{\beta}_1 + \hat{b}_{1i}) \cdot \text{time}$ | Individual predictions |
+
+### Visualizing Shrinkage
+
+```{r}
+#| label: fig-shrinkage
+#| fig-cap: "BLUP Shrinkage: Subject-Specific Estimates Pulled Toward Population Mean"
+#| fig-width: 8
+#| fig-height: 6
+
+# Using the earlier simulated data
+blups <- ranef(fit_rs_correct)
+
+# Calculate empirical (OLS) slopes for each subject
+empirical_slopes <- sim_data %>%
+  group_by(id) %>%
+  summarize(
+    ols_slope = coef(lm(y ~ time))[2],
+    n_obs = n()
+  )
+
+# Compare to BLUPs
+comparison <- data.frame(
+  id = 1:n_subj,
+  ols_slope = empirical_slopes$ols_slope,
+  blup_slope = fixef(fit_rs_correct)["time"] + blups$time
+)
+
+# Population mean slope
+pop_slope <- fixef(fit_rs_correct)["time"]
+
+ggplot(comparison, aes(x = ols_slope, y = blup_slope)) +
+  geom_point(size = 2, alpha = 0.7) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "gray") +
+  geom_hline(yintercept = pop_slope, color = "red", linetype = "dotted") +
+  geom_vline(xintercept = pop_slope, color = "red", linetype = "dotted") +
+  labs(title = "Shrinkage of Subject-Specific Slopes",
+       subtitle = "BLUPs are pulled toward the population mean (red lines)",
+       x = "Empirical (OLS) Slope",
+       y = "BLUP Slope") +
+  theme_minimal() +
+  annotate("text", x = max(comparison$ols_slope) - 1, y = pop_slope + 0.3,
+           label = "Population mean", color = "red", size = 3)
+```
+
+**Interpretation:** Points lie between the 45-degree line (no shrinkage) and the population mean (complete shrinkage). Extreme OLS estimates are pulled more strongly toward the mean.
+
+***
+## 9. Worked Example
+
+### The Data: Longitudinal Growth Study
+
+We'll simulate a growth study where children are measured at multiple time points. We expect individual variation in both baseline height and growth rates.
+
+```{r}
+#| label: example-data
+
+set.seed(667)
+
+# Simulation parameters
+n_children <- 40
+n_visits <- 5
+ages <- c(6, 7, 8, 9, 10)  # Ages 6-10
+
+# Generate data
+growth_data <- data.frame(
+  child_id = rep(1:n_children, each = n_visits),
+  age = rep(ages, n_children)
+)
+
+# True parameters
+beta0 <- 110     # Mean height at age 6
+beta1 <- 5       # Mean growth rate (cm/year)
+sigma_b0 <- 6    # SD of random intercepts
+sigma_b1 <- 1.2  # SD of random slopes
+rho <- -0.4      # Correlation (taller kids grow slower)
+sigma_e <- 1.5   # Residual SD
+
+# Generate correlated random effects
+library(MASS)
+D <- matrix(c(sigma_b0^2, rho*sigma_b0*sigma_b1,
+              rho*sigma_b0*sigma_b1, sigma_b1^2), nrow = 2)
+random_effects <- mvrnorm(n_children, mu = c(0, 0), Sigma = D)
+
+# Center age at 6 (baseline)
+growth_data$age_c <- growth_data$age - 6
+
+# Generate outcomes
+growth_data$height <- beta0 + random_effects[growth_data$child_id, 1] +
+                      (beta1 + random_effects[growth_data$child_id, 2]) * growth_data$age_c +
+                      rnorm(n_children * n_visits, 0, sigma_e)
+
+head(growth_data, 10)
+```
+
+### Step 1: Visualize the Data
+
+```{r}
+#| label: fig-spaghetti
+#| fig-cap: "Individual Growth Trajectories"
+#| fig-width: 8
+#| fig-height: 6
+
+ggplot(growth_data, aes(x = age, y = height, group = child_id)) +
+  geom_line(alpha = 0.5, color = "steelblue") +
+  geom_point(alpha = 0.5, size = 1) +
+  labs(title = "Spaghetti Plot: Individual Growth Curves",
+       subtitle = "Lines cross, suggesting varying slopes",
+       x = "Age (years)", y = "Height (cm)") +
+  theme_minimal()
+```
+
+**Observation:** The trajectories are not parallel---lines cross each other, suggesting children grow at different rates.
+
+### Step 2: Fit Random Intercept Only Model
+
+```{r}
+#| label: fit-ri
+
+# Random intercept only
+fit_ri <- lme(height ~ age_c,
+              random = ~1|child_id,
+              data = growth_data)
+
+summary(fit_ri)
+```
+
+### Step 3: Check for Fanning Pattern
+
+```{r}
+#| label: fig-ri-diagnostics
+#| fig-cap: "Residual Diagnostics for RI Model"
+#| fig-width: 8
+#| fig-height: 5
+
+growth_data$resid_ri <- residuals(fit_ri)
+
+ggplot(growth_data, aes(x = age_c, y = resid_ri)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "loess", se = TRUE, color = "red") +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  labs(title = "Residuals vs Time: Random Intercept Model",
+       subtitle = "Look for fanning pattern",
+       x = "Age (centered)", y = "Residuals") +
+  theme_minimal()
+```
+
+### Step 4: Fit Random Intercept + Slope Model
+
+```{r}
+#| label: fit-rs
+
+# Random intercept + slope
+fit_rs <- lme(height ~ age_c,
+              random = ~age_c|child_id,
+              data = growth_data)
+
+summary(fit_rs)
+```
+
+### Step 5: Compare Variance Components
+
+```{r}
+#| label: variance-comparison
+
+# Extract variance components
+cat("=== Random Intercept Only ===\n")
+VarCorr(fit_ri)
+
+cat("\n=== Random Intercept + Slope ===\n")
+VarCorr(fit_rs)
+```
+
+**Interpretation of RI+RS variance components:**
+
+- **Random intercept SD:** Variation in height at baseline (age 6)
+- **Random slope SD:** Variation in growth rates across children
+- **Correlation:** Negative correlation suggests taller children at baseline grow more slowly
+
+### Step 6: Model Comparison via LRT
+
+```{r}
+#| label: model-comparison
+
+# Must use ML for valid LRT
+fit_ri_ml <- lme(height ~ age_c, random = ~1|child_id,
+                 data = growth_data, method = "ML")
+fit_rs_ml <- lme(height ~ age_c, random = ~age_c|child_id,
+                 data = growth_data, method = "ML")
+
+# LRT
+lrt <- anova(fit_ri_ml, fit_rs_ml)
+print(lrt)
+
+# Corrected p-value for boundary test (conservative)
+cat("\nCorrected p-value (boundary adjustment):",
+    lrt$`p-value`[2] / 2, "\n")
+```
+
+### Step 7: Check Residuals After Adding Random Slopes
+
+```{r}
+#| label: fig-rs-diagnostics
+#| fig-cap: "Residual Comparison: Before and After Adding Random Slopes"
+#| fig-width: 10
+#| fig-height: 5
+
+growth_data$resid_rs <- residuals(fit_rs)
+
+p1 <- ggplot(growth_data, aes(x = age_c, y = resid_ri)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "loess", se = FALSE, color = "red") +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  ylim(c(-5, 5)) +
+  labs(title = "RI Only", x = "Age (centered)", y = "Residuals") +
+  theme_minimal()
+
+p2 <- ggplot(growth_data, aes(x = age_c, y = resid_rs)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "loess", se = FALSE, color = "blue") +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  ylim(c(-5, 5)) +
+  labs(title = "RI + RS", x = "Age (centered)", y = "Residuals") +
+  theme_minimal()
+
+grid.arrange(p1, p2, ncol = 2)
+```
+
+### Step 8: Extract and Plot BLUPs
+
+```{r}
+#| label: fig-blups
+#| fig-cap: "Subject-Specific Predictions from BLUPs"
+#| fig-width: 10
+#| fig-height: 6
+
+# Get BLUPs
+blups <- ranef(fit_rs)
+head(blups)
+
+# Create prediction data
+pred_data <- expand.grid(
+  child_id = unique(growth_data$child_id),
+  age_c = seq(0, 4, by = 0.5)
+)
+pred_data$age <- pred_data$age_c + 6
+
+# Population average prediction
+pred_data$pop_pred <- predict(fit_rs, newdata = pred_data, level = 0)
+
+# Subject-specific predictions
+pred_data$subj_pred <- predict(fit_rs, newdata = pred_data, level = 1)
+
+# Plot
+ggplot() +
+  # Subject-specific predictions
+  geom_line(data = pred_data,
+            aes(x = age, y = subj_pred, group = child_id),
+            alpha = 0.3, color = "steelblue") +
+  # Population average
+  geom_line(data = pred_data[pred_data$child_id == 1, ],
+            aes(x = age, y = pop_pred),
+            color = "red", linewidth = 2) +
+  # Observed data
+  geom_point(data = growth_data,
+             aes(x = age, y = height),
+             alpha = 0.3, size = 1) +
+  labs(title = "Subject-Specific Predictions vs Population Average",
+       subtitle = "Blue = individual BLUPs, Red = population average",
+       x = "Age (years)", y = "Height (cm)") +
+  theme_minimal()
+```
+
+### Step 9: Examine Intercept-Slope Correlation
+
+```{r}
+#| label: fig-correlation
+#| fig-cap: "Correlation Between Random Intercepts and Slopes"
+#| fig-width: 7
+#| fig-height: 6
+
+# Extract subject-specific coefficients
+subj_coef <- coef(fit_rs)
+
+ggplot(subj_coef, aes(x = `(Intercept)`, y = age_c)) +
+  geom_point(size = 2, alpha = 0.7) +
+  geom_smooth(method = "lm", se = TRUE, color = "darkred") +
+  labs(title = "Intercept-Slope Correlation",
+       subtitle = paste("Correlation =", round(cor(subj_coef$`(Intercept)`, subj_coef$age_c), 3)),
+       x = "Subject-Specific Intercept (Height at Age 6)",
+       y = "Subject-Specific Slope (Growth Rate)") +
+  theme_minimal()
+```
+
+**Interpretation:** The negative correlation indicates that children who are taller at age 6 tend to grow more slowly---consistent with the idea that they are closer to their adult height.
+
+***
+
+## 10. Common Mistakes
+
+### Mistake 1: Adding Too Many Random Effects
+
+**Problem:** Including random slopes for every predictor leads to convergence issues.
+
+```{r}
+#| eval: false
+
+# Problematic: Too complex random effects structure
+fit_overfit <- lmer(y ~ time * treatment + (1 + time + treatment + time:treatment | id),
+                    data = mydata)
+# Often fails to converge or produces singular fits
+```
+
+**Solution:** Start simple, add complexity only when justified by data and theory.
+
+### Mistake 2: Not Centering Time
+
+**Problem:** When time doesn't start at 0, the random intercept variance may not be interpretable.
+
+```{r}
+#| label: centering-example
+
+# Example: time measured as years 2020, 2021, 2022...
+# Random intercept variance would be at "year 0" (meaningless!)
+
+# Better: Center time at baseline
+# growth_data$time_c <- growth_data$year - min(growth_data$year)
+```
+
+**Solution:** Center time at a meaningful reference point (usually baseline).
+
+### Mistake 3: Ignoring the Intercept-Slope Correlation
+
+**Problem:** Forcing uncorrelated random effects when correlation exists.
+
+```{r}
+#| eval: false
+
+# Forces zero correlation (may be inappropriate)
+fit_uncor <- lmer(y ~ time + (1|id) + (0 + time|id), data = mydata)
+
+# Allows correlation (usually preferred unless theory suggests otherwise)
+fit_cor <- lmer(y ~ time + (1 + time|id), data = mydata)
+```
+
+**Solution:** Generally allow correlation unless you have strong theoretical reasons not to.
+
+### Mistake 4: Using LRT with REML
+
+**Problem:** REML likelihoods are not comparable across models with different fixed effects.
+
+```{r}
+#| eval: false
+
+# WRONG
+fit1 <- lme(y ~ time, random = ~1|id, data = mydata)  # REML default
+fit2 <- lme(y ~ time, random = ~time|id, data = mydata)
+anova(fit1, fit2)  # Invalid!
+
+# CORRECT
+fit1_ml <- lme(y ~ time, random = ~1|id, data = mydata, method = "ML")
+fit2_ml <- lme(y ~ time, random = ~time|id, data = mydata, method = "ML")
+anova(fit1_ml, fit2_ml)  # Valid
+```
+
+**Rule:** Use ML for model comparison, REML for final parameter estimation.
+
+***
+
+## The "Keep It Maximal" vs "Parsimonious" Debate
+
+This is an active area of methodological discussion in the mixed models literature.
+
+### The "Maximal" Philosophy (Barr et al., 2013)
+
+**Argument:** Include random slopes for all within-subject predictors to avoid anti-conservative inference (inflated Type I error).
+
+**Rationale:**
+
+- Failing to include a needed random slope underestimates standard errors
+- This leads to false positives for fixed effects
+- Better to be conservative (include random slopes) than anti-conservative
+
+**Quote:** "Keep it maximal: Random slopes generalize better and prevent false positives."
+
+### The "Parsimonious" Philosophy (Bates et al., 2015; Matuschek et al., 2017)
+
+**Argument:** Overly complex random effects structures cause:
+
+- Convergence failures
+- Singular fits (variance estimates at boundary)
+- Unstable estimates
+- Loss of statistical power
+
+**Recommendation:**
+
+- Start with a maximal structure
+- Simplify by removing variance components that are near zero
+- Use model selection criteria (AIC, BIC) or LRT
+- Balance complexity with model stability
+
+### Practical Guidelines
+
+| Situation | Recommendation |
+|-----------|----------------|
+| Large sample size, few random effects | Try maximal structure |
+| Small sample size, many predictors | Start parsimonious, add complexity carefully |
+| Convergence issues | Simplify random effects structure |
+| Singular fit warnings | Remove near-zero variance components |
+| Key hypothesis involves slope variation | Include that random slope regardless |
+
+### A Balanced Approach
+
+1. **Start with theory:** What random effects make substantive sense?
+2. **Visualize:** Do spaghetti plots suggest slope heterogeneity?
+3. **Test:** Use LRT (with boundary corrections) to assess need
+4. **Check convergence:** Ensure model fits properly
+5. **Report sensitivity:** Show results with/without random slopes if uncertain
+
+***
+
+## Quick Reference Summary
+
+### Deciding on Random Slopes
+
+- **Theory suggests varying slopes?**
+  - YES: Include random slope
+  - NO: Check diagnostics
+    - Fanning in residuals? Add random slope
+    - No fanning? RI-only may suffice
+    - Uncertain? Fit both, compare via LRT (ML)
+
+### Key R Commands
+
+```{r}
+#| eval: false
+
+# Fit models
+lme(y ~ time, random = ~time|id, data = mydata)           # nlme
+lmer(y ~ time + (1 + time|id), data = mydata)             # lme4
+
+# Extract variance components
+VarCorr(model)
+
+# BLUPs
+ranef(model)                   # Random effects
+coef(model)                    # Subject-specific coefficients
+
+# Predictions
+predict(model, level = 0)      # Population average (nlme)
+predict(model, level = 1)      # Subject-specific (nlme)
+predict(model, re.form = NA)   # Population average (lme4)
+predict(model, re.form = NULL) # Subject-specific (lme4)
+
+# Model comparison (use ML!)
+anova(fit_ri_ml, fit_rs_ml)
+```
+
+### Variance Component Interpretation
+
+| Parameter | Meaning |
+|-----------|---------|
+| $\sigma^2_{b_0}$ | Between-subject variance at reference time |
+| $\sigma^2_{b_1}$ | Between-subject variance in slopes |
+| $\rho_{01}$ | Correlation between intercepts and slopes |
+| $\sigma^2$ | Within-subject (residual) variance |
+
+***
+
+## References
+
+- Barr, D. J., Levy, R., Scheepers, C., & Tily, H. J. (2013). Random effects structure for confirmatory hypothesis testing: Keep it maximal. *Journal of Memory and Language, 68*(3), 255-278.
+
+- Bates, D., Kliegl, R., Vasishth, S., & Baayen, H. (2015). Parsimonious mixed models. *arXiv preprint arXiv:1506.04967*.
+
+- Matuschek, H., Kliegl, R., Vasishth, S., Baayen, H., & Bates, D. (2017). Balancing Type I error and power in linear mixed models. *Journal of Memory and Language, 94*, 305-315.
+
+- Pinheiro, J. C., & Bates, D. M. (2000). *Mixed-Effects Models in S and S-PLUS*. Springer.
+
+- Singer, J. D., & Willett, J. B. (2003). *Applied Longitudinal Data Analysis*. Oxford University Press.

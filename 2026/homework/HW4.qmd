@@ -1,0 +1,427 @@
+---
+title: "BIOS 667 - Homework 4"
+subtitle: "Chapters 10-13: Residual Diagnostics, Influence Measures, GLMs, Marginal Models & GEE"
+author: "Your Name Here"
+date: today
+format:
+  html:
+    embed-resources: true
+    toc: true
+execute:
+  warning: false
+  message: false
+---
+
+## Instructions
+
+**Collaboration Policy:** You may discuss problems with classmates, but all submitted work must be your own.
+
+**AI Use Policy:** AI tools may be used for code assistance. Disclose any AI use in your submission.
+
+**Submission:** Submit a rendered HTML file to Gradescope by the due date.
+
+**Due Date:** See Canvas for due date
+
+## Grading Rubric
+
+| Category | Weight | Description |
+|----------|--------|-------------|
+| Interpretation & Reasoning | 40% | Conceptual understanding, correct interpretations |
+| Analysis & Setup | 40% | Code correctness, model specification |
+| Clarity & Presentation | 20% | Writing quality, formatting, organization |
+
+## Setup
+
+```{r}
+#| label: setup
+#| include: false
+library(nlme)
+library(lme4)
+library(geepack)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(MASS)
+set.seed(667)
+```
+
+---
+
+## Data Description: Epilepsy Clinical Trial
+
+Throughout this homework, we will use data from a placebo-controlled clinical trial of 59 epileptics (Thall and Vail, 1990). Patients with partial seizures were randomized to receive either progabide or placebo as an adjuvant to standard anti-epileptic chemotherapy. Seizure counts were recorded during the 8-week baseline period and during four subsequent 2-week intervals.
+
+```{r}
+#| label: load-data
+# Load and prepare the epilepsy data with download fallback
+data_url <- "https://content.sph.harvard.edu/fitzmaur/ala2e/epilepsy.txt"
+data_file <- if (file.exists("../../data/epilepsy.txt")) "../../data/epilepsy.txt" else "data/epilepsy.txt"
+if (!file.exists(data_file)) {
+  dir.create("data", showWarnings = FALSE)
+  download.file(data_url, data_file)
+}
+
+epilepsy_raw <- read.table(
+  data_file,
+  skip = 36,  # Skip the header text
+  col.names = c("id", "trt", "age", "baseline", "y1", "y2", "y3", "y4")
+)
+
+# Convert to long format for longitudinal analysis
+epilepsy <- epilepsy_raw %>%
+  pivot_longer(cols = y1:y4, names_to = "visit", values_to = "seizures") %>%
+  mutate(
+    visit_num = as.numeric(gsub("y", "", visit)),
+    trt = factor(trt, labels = c("Placebo", "Progabide")),
+    log_baseline = log(baseline / 4 + 0.5),  # log rate per 2 weeks
+    log_age = log(age)
+  ) %>%
+  arrange(id, visit_num)
+
+# Quick look at the data structure
+head(epilepsy, 12)
+```
+
+---
+
+## Question 1: Residual Diagnostics for Linear Mixed Models (20 points)
+
+For this question, we will first fit a linear mixed-effects model to the log-transformed seizure counts to explore residual diagnostics concepts.
+
+```{r}
+#| label: q1-data-prep
+# Create log-transformed outcome (add 0.5 to handle zeros)
+epilepsy$log_seizures <- log(epilepsy$seizures + 0.5)
+```
+
+### Part (a) - **WRITE:** Marginal vs. Conditional Residuals (5 pts)
+
+Explain the difference between **marginal residuals** and **conditional residuals** in the context of linear mixed-effects models. When would you use each type of residual for diagnostic purposes?
+
+*Your answer here*
+
+### Part (b) - **CODE:** Fit LMM and Extract Residuals (5 pts)
+
+Fit a random intercept model predicting `log_seizures` from `visit_num`, `trt`, their interaction, and `log_baseline`. Extract both marginal and conditional residuals.
+
+```{r}
+#| label: q1b-solution
+# Your code here
+```
+
+### Part (c) - **WRITE:** Interpret Residual Plots (5 pts)
+
+Examine the residual plots below and describe what each plot reveals about model adequacy. Are there any concerns?
+
+```{r}
+#| label: q1c-plots
+#| fig-height: 8
+#| fig-width: 10
+# Your code here to create residual diagnostic plots
+# Include: residuals vs fitted, residuals vs time, QQ plot, histogram
+```
+
+*Your answer here*
+
+### Part (d) - **CODE:** Check Random Effects Normality (5 pts)
+
+Extract the random effects (BLUPs) and create a QQ plot to assess normality. Interpret the results.
+
+```{r}
+#| label: q1d-solution
+#| fig-height: 5
+#| fig-width: 6
+# Your code here
+```
+
+*Your answer here*
+
+---
+
+## Question 2: Influence Diagnostics for Mixed Models (20 points)
+
+### Part (a) - **WRITE:** Level-1 vs. Level-2 Outliers (5 pts)
+
+In mixed models, we distinguish between **Level-1 outliers** (unusual observations) and **Level-2 outliers** (unusual clusters/subjects). Explain this distinction and why cluster-level influence diagnostics are particularly important in longitudinal data analysis.
+
+*Your answer here*
+
+### Part (b) - **CODE:** Cook's Distance-Like Measure (5 pts)
+
+Implement a cluster deletion diagnostic by refitting the model without each subject and computing the change in fixed effect estimates. Identify the most influential subjects.
+
+::: {.callout-tip collapse="true"}
+## Hint: Cluster Deletion Diagnostic Algorithm
+
+This involves iteratively removing each subject and measuring the impact on parameter estimates. Here is the general approach:
+
+**Pseudocode:**
+```
+1. Fit the full model to all data and extract fixed effects (beta_full)
+2. Get list of unique subject IDs
+3. Create empty storage for results (e.g., a matrix)
+4. For each subject i in the data:
+   a. Create dataset excluding subject i
+   b. Refit the model on this reduced dataset
+   c. Extract fixed effects (beta_minus_i)
+   d. Calculate change: delta_i = beta_full - beta_minus_i
+   e. Store the change (or a summary like Cook's D-like statistic)
+5. Identify subjects with largest influence
+```
+
+**R code structure:**
+```r
+# Get unique subject IDs
+subjects <- unique(epilepsy$id)
+
+# Storage for influence measures
+influence_results <- data.frame(
+  id = subjects,
+  delta_intercept = NA,
+  delta_trt = NA,
+  cooks_d = NA
+)
+
+# Loop over subjects
+for (i in seq_along(subjects)) {
+  # Exclude subject i
+  data_minus_i <- epilepsy[epilepsy$id != subjects[i], ]
+
+  # Refit model (use try() to handle any fitting issues)
+  fit_minus_i <- try(lme(...), silent = TRUE)
+
+  if (!inherits(fit_minus_i, "try-error")) {
+    # Calculate influence measures
+    # Store results...
+  }
+}
+```
+
+**Note**: This can take some time to run since you are refitting the model ~59 times.
+:::
+
+```{r}
+#| label: q2b-solution
+# Your code here
+```
+
+### Part (c) - **WRITE:** Interpret Influential Subjects (5 pts)
+
+Examine the data for the 2-3 most influential subjects identified above. What characteristics make them influential?
+
+```{r}
+#| label: q2c-examination
+# Your code here to examine the most influential subjects
+```
+
+*Your answer here*
+
+### Part (d) - **CODE:** Sensitivity Analysis (5 pts)
+
+Refit the model excluding the most influential subject and compare the fixed effect estimates to the full model. Discuss whether conclusions change.
+
+```{r}
+#| label: q2d-solution
+# Your code here
+```
+
+*Your answer here*
+
+---
+
+## Question 3: Generalized Linear Models Review and Marginal Models (20 points)
+
+### Part (a) - **WRITE:** Link Functions and Variance Functions (5 pts)
+
+For count data like seizure counts, explain why a **Poisson regression** model might be appropriate. Specify the:
+
+1. Canonical link function
+2. Variance function
+3. Mean-variance relationship
+
+Also discuss what **overdispersion** means and why it is a concern for the epilepsy data.
+
+*Your answer here*
+
+### Part (b) - **CODE:** Fit Marginal Model with GEE (5 pts)
+
+Fit a marginal model using GEE for the seizure count data with a Poisson family, log link, and **exchangeable** working correlation structure. Include `visit_num`, `trt`, their interaction, and `log_baseline` as predictors.
+
+```{r}
+#| label: q3b-solution
+# Your code here
+```
+
+### Part (c) - **WRITE:** Interpret GEE Coefficients (5 pts)
+
+Interpret the following coefficients from your GEE model in terms of seizure rates:
+
+1. The treatment main effect (`trtProgabide`)
+2. The treatment-by-time interaction (`visit_num:trtProgabide`)
+3. The baseline effect (`log_baseline`)
+
+```{r}
+#| label: q3c-coefficients
+# Your code here to extract and display coefficients
+```
+
+*Your answer here*
+
+### Part (d) - **CODE:** Compare Working Correlation Structures (5 pts)
+
+Fit GEE models with **independence**, **AR(1)**, and **unstructured** working correlation structures. Compare the estimated coefficients and robust standard errors across models.
+
+```{r}
+#| label: q3d-solution
+# Your code here
+```
+
+*Your answer here*
+
+---
+
+## Question 4: Robust Standard Errors and GEE Inference (20 points)
+
+### Part (a) - **WRITE:** Sandwich Estimator Derivation (5 pts)
+
+The robust (sandwich) variance estimator for GEE is:
+$$\widehat{\text{Var}}(\hat{\beta}) = B_0^{-1} B_1 B_0^{-1}$$
+
+Explain what each component represents:
+
+1. $B_0$ (the "bread")
+2. $B_1$ (the "meat")
+
+Why is this estimator called "robust" and what is it robust to?
+
+*Your answer here*
+
+### Part (b) - **CODE:** Model-Based vs. Robust Standard Errors (5 pts)
+
+For the exchangeable GEE model from Question 3, extract and compare the model-based (naive) and robust standard errors. Discuss the implications of any differences.
+
+::: {.callout-tip collapse="true"}
+## Hint: Extracting Standard Errors from geepack
+
+The `geepack::geeglm()` function stores both naive and robust variance estimates. After fitting a model called `gee_fit`, you can access them via:
+
+```r
+# Summary gives robust SEs by default
+summary(gee_fit)
+
+# For naive (model-based) SEs, access the geese object:
+# Naive variance-covariance matrix
+naive_vcov <- gee_fit$geese$vbeta.naiv
+
+# Robust variance-covariance matrix
+robust_vcov <- gee_fit$geese$vbeta
+
+# Convert to standard errors
+naive_se <- sqrt(diag(naive_vcov))
+robust_se <- sqrt(diag(robust_vcov))
+```
+:::
+
+```{r}
+#| label: q4b-solution
+# Your code here
+```
+
+*Your answer here*
+
+### Part (c) - **WRITE:** Small Sample Corrections (5 pts)
+
+With only 59 subjects in the epilepsy study, small sample bias in the sandwich estimator may be a concern. Describe two approaches to address this issue and explain when they might be preferred.
+
+*Your answer here*
+
+### Part (d) - **CODE:** Apply Small Sample Correction (5 pts)
+
+Apply a small sample correction to the GEE analysis using an appropriate R package or manual implementation. Compare the corrected and uncorrected results.
+
+```{r}
+#| label: q4d-solution
+# Your code here
+```
+
+*Your answer here*
+
+---
+
+## Question 5: Model Selection and Comprehensive Analysis (20 points)
+
+### Part (a) - **WRITE:** GEE vs. GLMM (5 pts)
+
+Compare and contrast **GEE (marginal models)** and **GLMMs (conditional models)** for analyzing the epilepsy data. Address:
+
+1. Interpretation of coefficients
+2. Assumptions required
+3. When each approach is preferred
+
+*Your answer here*
+
+### Part (b) - **CODE:** Fit GLMM for Comparison (5 pts)
+
+Fit a Poisson GLMM with random intercepts using `lme4::glmer()`. Compare the fixed effect estimates to the GEE results and explain any differences.
+
+```{r}
+#| label: q5b-solution
+# Your code here
+```
+
+*Your answer here*
+
+### Part (c) - **CODE:** Model Diagnostics for GLMM (5 pts)
+
+Assess the GLMM by examining:
+
+1. Deviance residuals
+2. Overdispersion
+3. Random effects distribution
+
+```{r}
+#| label: q5c-solution
+#| fig-height: 10
+#| fig-width: 10
+# Your code here
+```
+
+*Your answer here*
+
+### Part (d) - **CODE & WRITE:** Comprehensive Analysis Summary (5 pts)
+
+Write a brief results paragraph (as you would for a journal article) summarizing the treatment effect from either the GEE or GLMM analysis. Include:
+
+1. Effect estimate with confidence interval
+2. Statistical significance
+3. Clinical interpretation
+4. Any caveats or limitations
+
+```{r}
+#| label: q5d-summary
+# Your code here to generate summary statistics
+```
+
+*Your answer here*
+
+---
+
+## Peer Review Section
+
+After submission, you will be assigned peer reviews. Use this rubric:
+
+| Criterion | Excellent (5) | Good (3-4) | Needs Work (1-2) |
+|-----------|---------------|------------|------------------|
+| Code correctness | All code runs, correct output | Minor errors | Major errors |
+| Interpretations | Clear, accurate, in context | Mostly correct | Missing key points |
+| Presentation | Well-organized, readable | Adequate | Difficult to follow |
+
+---
+
+## Reminders
+
+- [ ] Knit document before submission
+- [ ] Check that all code executes without errors
+- [ ] Ensure figures are visible and properly labeled
+- [ ] Format tables appropriately
+- [ ] Include AI disclosure if applicable

@@ -1,0 +1,334 @@
+---
+title: "BIOS 667 - Lecture 1: Introduction to Longitudinal Data (Ch. 1)"
+subtitle: "Fitzmaurice, Laird & Ware (2011) - Applied Longitudinal Data Analysis"
+author: "Naim Rashid"
+format:
+  revealjs:
+    theme: [default]
+    footer: BIOS 667 · UNC Gillings - Lecture 1 (Ch. 1)
+    slide-number: true
+    hash: true
+    toc: false
+    code-overflow: wrap
+    code-line-numbers: false
+    math: mathjax
+    incremental: true
+    embed-resources: true
+    chalkboard: false
+    css: "../../unc-gillings.css"
+    scrollable: true
+execute:
+  warning: false
+  message: false
+---
+
+```{r}
+#| label: setup
+#| include: false
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+
+# Download datasets if not present
+ala_base <- "https://content.sph.harvard.edu/fitzmaur/ala2e"
+datasets <- c("fev1.txt", "dental.txt")
+dir.create("../../data", showWarnings = FALSE)
+for (f in datasets) {
+
+  dest <- file.path("../../data", f)
+  if (!file.exists(dest)) {
+    try(download.file(paste0(ala_base, "/", f), dest, mode = "wb", quiet = TRUE), silent = TRUE)
+  }
+}
+```
+
+## Lecture Objectives
+
+By the end of this lecture, you will be able to:
+
+1. Recognize the **structure** of longitudinal data
+2. Distinguish **longitudinal vs. cross-sectional** designs
+3. Explain **why correlation matters** for valid inference
+4. Describe the **advantages and tradeoffs** of longitudinal designs
+5. Identify the **scientific questions** longitudinal studies answer
+
+---
+
+## Roadmap
+
+1. What is longitudinal data analysis?
+2. Why use longitudinal designs?
+3. Summary and next steps
+
+---
+
+## Prerequisites / recall
+
+This lecture assumes you are comfortable with:
+
+- **Intro regression**: fitting a linear model, reading coefficients and standard errors
+- **Correlation and covariance**: what they measure and that they are not the same thing
+
+We build on these to motivate why repeated, correlated measurements need special handling.
+
+::: {.notes}
+Take a quick read of the room here. Ask who has had a regression course and who is comfortable with the idea of correlation, since the motivation for the whole course rests on it. This lecture is conceptual and light on algebra. The transition: "with those tools in hand, let us see what longitudinal data actually looks like."
+:::
+
+# Part I: What is Longitudinal Data?
+
+## Definition
+
+> **Longitudinal data**: Repeated measurements collected from the same subjects over time.
+
+**Key goal**: Understand both:
+
+- **Within-person changes** (trajectories)
+- **Between-person differences** in those changes
+
+::: {.notes}
+Anchor the definition with one concrete study before the abstract phrasing (the FEV1 children two slides on works well). Emphasize the word "same": it is the same subjects measured again, not a fresh sample each time, and that is what creates correlation. Common confusion: students conflate longitudinal with any time-stamped data; stress that repeated measurement of the same units is the defining feature. Transition: "this within-subject repetition is exactly what standard regression ignores."
+:::
+
+---
+
+## Example: Six Cities Study (FEV1 Data)
+
+- Tracked annual lung function in children
+- This is the **Topeka, Kansas subset (girls)** of the Six Cities Study
+- 300 girls, 1-12 repeated measurements per child
+- FEV1 = forced expiratory volume; modeled on the **log scale** (`logfev1`)
+- Available: `data/fev1.txt`
+- FEV1/Six Cities is an instructor-chosen course-wide running example (formally introduced in FLW Ch. 9, Table 9.1), not one of FLW Chapter 1's four motivating studies (TLC lead trial, Muscatine obesity, anti-epileptic drug trial, Connecticut Child Surveys; FLW Section 1.3)
+
+::: {.notes}
+This is our course-wide running example, but flag for yourself that it is an instructor-chosen running example (formally introduced in FLW Ch. 9, Table 9.1), not one of FLW Chapter 1's four motivating studies (the TLC lead trial, Muscatine obesity, anti-epileptic drug trial, and Connecticut Child Surveys of FLW Section 1.3). Say it concretely: each child contributes a line of yearly lung-function measurements as she grows, so we have repeated measures within child. Flag two things students miss: it is only the Topeka girls (not all six cities, not boys), and the outcome is log FEV1, not raw FEV1, which is why the y-axis values look small. Transition: "let us plot a handful of these children and see the trajectories."
+:::
+
+---
+
+## Visualizing Repeated Measures
+
+```{r}
+#| label: fev1-plot
+#| echo: true
+#| output-location: slide
+fev <- read.table("../../data/fev1.txt", header = TRUE)
+
+# Sample 15 children for clarity
+set.seed(667)
+ids <- sample(unique(fev$id), 15)
+fev_sub <- fev[fev$id %in% ids, ]
+
+ggplot(fev_sub, aes(x = age, y = logfev1, group = id, color = factor(id))) +
+  geom_line(linewidth = 0.8) +
+  geom_point(size = 2) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  labs(title = "Lung Function Trajectories (15 Children)",
+       x = "Age (years)", y = "log(FEV1)")
+```
+
+::: {.notes}
+Reminder for yourself: FEV1/Six Cities is an instructor-chosen course-wide running example (formally introduced in FLW Ch. 9, Table 9.1), not one of FLW Chapter 1's four motivating studies. Use it here only to make the repeated-measures picture concrete.
+:::
+
+---
+
+## Key Observation
+
+Each child's trajectory is **correlated**: measurements don't bounce randomly.
+
+- Cross-sectional: one dot per child
+- Longitudinal: connected trajectory per child
+
+---
+
+## Cross-Sectional vs. Longitudinal
+
+| Feature | Cross-Sectional | Longitudinal |
+|---------|-----------------|--------------|
+| Design | One measurement/subject | Repeated measurements |
+| Focus | Population snapshot | Trajectories, change |
+| Correlation | Independent | Within-subject correlation |
+| Efficiency | Less for dynamic questions | Each subject = own control |
+
+---
+
+::: {.callout-note collapse="true"}
+## Check Your Understanding: design type
+
+1. A study measures blood pressure in 500 patients once. Is this longitudinal or cross-sectional data?
+
+**Answer:** Cross-sectional: each patient is measured only once.
+:::
+
+::: {.callout-note collapse="true"}
+## Check Your Understanding: correlation and plots
+
+2. In the FEV1 study, why are the measurements from the same child correlated?
+3. What is the key difference between a spaghetti plot and a scatterplot of all observations?
+
+**Answers:**
+
+2. Measurements from the same child share common characteristics (genetics, environment, baseline lung capacity) that make them more similar to each other than to measurements from other children.
+3. A spaghetti plot connects observations within each individual, revealing trajectories; a scatterplot treats all points as independent, hiding the within-person structure.
+:::
+
+
+# Part II: Why Longitudinal Designs?
+
+## Advantages
+
+- **Efficiency**: Each subject serves as their own control
+- **Separates aging from cohort effects**: longitudinal designs isolate the within-person change over time from cohort effects that confound cross-sectional comparisons (FLW Section 1.2, body-fat/menarche example)
+- **Temporal ordering**: exposure/measurement precedes outcome (a structural feature, not proof of causation)
+- **Change rates**: Directly estimate slopes and trajectories
+- **Precision**: Baseline adjustment improves power (we return to this in Ch. 5)
+
+---
+
+## Tradeoffs
+
+- **Dropout**: Missing data patterns (MAR/MNAR)
+- **Irregular timing**: Unequal visit schedules
+- **Complex dependence**: Requires covariance modeling (Ch. 7-8)
+
+---
+
+## Why Correlation Matters
+
+Ignoring within-subject correlation leads to:
+
+- **Incorrect standard errors** (the point estimates stay consistent; only the SEs are wrong)
+- **Invalid hypothesis tests**
+- **Overstated significance**
+
+Proper models must distinguish **within- vs. between-subject effects**.
+
+::: {.notes}
+This is the central motivation for the whole course, so slow down. The key point students must leave with: ignoring correlation does NOT bias the point estimates if the mean model is right, it corrupts the standard errors. Say it twice. The common error is to claim the coefficients themselves are wrong; correct that out loud. Direction matters too: with positive within-subject correlation the naive SEs are usually too small, so tests look more significant than they are. Transition into the callout for the precise FLW wording.
+:::
+
+::: {.callout-note}
+## Clarification on Standard Errors (FLW pp. 43-44)
+
+Point estimates ($\hat{\beta}$) remain **consistent** under correct mean specification, even when correlation is ignored. The issue is that standard errors are **inconsistent**: they do not converge to true values. When positive within-subject correlation exists, ignoring it typically **underestimates** standard errors, leading to inflated test statistics and spuriously significant results.
+:::
+
+---
+
+## See It: Naive vs. Cluster SE
+
+The cluster bootstrap here is a pedagogical illustration of the concept. The methods FLW and this course actually use to fix correlation-induced SE problems are correctly specified covariance/mixed models (Ch. 7-8) and the robust sandwich/empirical estimator (GEE, Ch. 13), not the bootstrap.
+
+```{r}
+#| label: naive-vs-cluster-se
+#| echo: true
+#| output-location: slide
+set.seed(667)
+
+# Simulate clustered data: 50 subjects, 8 visits each,
+# strong positive within-subject correlation (shared random intercept).
+# The covariate of interest is a BETWEEN-subject (time-invariant) exposure:
+# one value per subject, so it is confounded with the cluster structure and
+# ignoring within-subject correlation understates its SE.
+n_sub <- 50; n_vis <- 8; var_b <- 3   # subject-level variance
+sim <- do.call(rbind, lapply(1:n_sub, function(i) {
+  b_i <- rnorm(1, 0, sqrt(var_b))      # subject random intercept
+  x_i <- rnorm(1)                      # subject-level exposure (one value per subject)
+  y   <- 1 + 0.5 * x_i + b_i + rnorm(n_vis)
+  data.frame(id = i, x = x_i, y = y)
+}))
+
+fit <- lm(y ~ x, data = sim)
+naive_se <- summary(fit)$coefficients["x", "Std. Error"]
+
+# Cluster bootstrap: resample whole subjects (keeps within-subject correlation)
+boot_b <- replicate(500, {
+  ids <- sample(unique(sim$id), replace = TRUE)
+  d   <- do.call(rbind, lapply(ids, function(j) sim[sim$id == j, ]))
+  coef(lm(y ~ x, data = d))["x"]
+})
+cluster_se <- sd(boot_b)
+
+se_tab <- data.frame(SE = c("Naive (independence)", "Cluster bootstrap"),
+                     value = c(naive_se, cluster_se))
+
+ggplot(se_tab, aes(x = SE, y = value, fill = SE)) +
+  geom_col(width = 0.6) +
+  geom_text(aes(label = round(value, 3)), vjust = -0.4) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  labs(title = "Naive SE understates true uncertainty",
+       subtitle = "Independence SE is the smaller bar; the cluster bootstrap respects within-subject correlation and is the honest one",
+       x = NULL, y = "Standard error of slope")
+```
+
+---
+
+## See It: The Takeaway
+
+For the subject-level exposure `x`, at `set.seed(667)`:
+
+- **Naive (independence) SE:** `r round(naive_se, 3)`
+- **Cluster bootstrap SE:** `r round(cluster_se, 3)`
+
+The honest cluster SE (`r round(cluster_se, 3)`) is about `r round(cluster_se / naive_se, 1)` times **larger** than the naive SE (`r round(naive_se, 3)`).
+
+::: {.callout-warning}
+Ignoring the positive within-subject correlation makes the naive SE too small, so test statistics are inflated and results look more significant than they are. Because the exposure is fixed within a subject, the 8 visits give far less independent information than 400 rows suggest.
+:::
+
+::: {.notes}
+Walk through the numbers live, but read them off the rendered slide (they are inline R from the chunk objects, so they cannot drift from the code). The mechanism: with a time-invariant exposure, all 8 observations on a subject share both the exposure value and the random intercept, so the effective sample size is closer to the 50 subjects than the 400 rows. The naive lm treats all 400 rows as independent and divides by too large an n, producing an SE that is roughly half the honest one here. This is the concrete, correct version of "ignoring correlation understates the SE" that the earlier slide stated. Contrast with a within-subject covariate that varies occasion to occasion and is orthogonal to the random intercept, where clustering need not inflate the slope SE at all. That distinction (between- vs within-subject effects) is exactly the within-vs-between theme of the prior slide.
+:::
+
+---
+
+## Scientific Questions
+
+Longitudinal analysis addresses:
+
+- **Describe**: Mean trajectories, individual variation
+- **Explain**: How covariates shift trajectories
+- **Predict**: Future outcomes for individuals/populations
+- **Compare**: Treatment effects over time
+- **Account for dependence**: Valid inference with correlation
+
+---
+
+## Longitudinal vs. Clustered Data
+
+| Type | Definition | Example |
+|------|------------|---------|
+| Longitudinal | Repeated measures over **time** | FEV1 across visits |
+| Clustered | Units within higher-level groups | Students in classrooms |
+
+Techniques overlap, but **time structure** adds constraints and opportunities.
+
+
+# Summary
+
+## Summary
+
+- **What**: repeated measures on the same subjects over time.
+- **Why**: efficient (own control), temporal ordering, direct change rates.
+- **Catch**: within-subject correlation corrupts SEs (estimates stay consistent).
+- **Use**: describe, explain, predict, and compare trajectories.
+
+---
+
+## Canonical Resources
+
+- **Author slides**: content.sph.harvard.edu/fitzmaur/ala2e/
+- **Datasets**: content.sph.harvard.edu/fitzmaur/ala2e/datasets.html
+- **Sample R code**: content.sph.harvard.edu/fitzmaur/ala2e/SampleR.html
+
+---
+
+## For Next Time
+
+Read **Chapter 2** of Fitzmaurice, Laird & Ware (2011)
+
+- Lecture 2 (Ch. 2): longitudinal data structures, notation, and the sources of within-subject correlation

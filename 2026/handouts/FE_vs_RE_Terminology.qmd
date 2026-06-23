@@ -1,0 +1,690 @@
+---
+title: "Fixed Effects vs Random Effects: A Terminology Guide"
+subtitle: "Reconciling Econometrics and Biostatistics Language"
+format:
+  html:
+    theme: cosmo
+    toc: true
+    embed-resources: true
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+```{r}
+#| label: setup
+#| include: false
+
+library(tidyverse)
+library(nlme)
+library(lme4)
+library(knitr)
+library(kableExtra)
+
+# plm is optional - install if needed for econometrics examples
+if (!requireNamespace("plm", quietly = TRUE)) {
+  message("Note: plm package not installed. Some econometrics examples will be skipped.")
+  has_plm <- FALSE
+} else {
+  library(plm)
+  has_plm <- TRUE
+}
+
+set.seed(667)
+```
+
+## 1. The Terminology Problem
+
+::: {.callout-warning}
+## Terminology Alert
+
+**"Random effects" and "fixed effects" mean completely different things in biostatistics vs econometrics!** This is one of the most confusing terminology conflicts in statistics. When reading papers or textbooks, always check which framework the authors are using.
+:::
+
+If you are coming from a biostatistics background and encounter econometrics literature (or vice versa), you may find yourself completely confused. The same terms refer to different concepts, different estimators, and different assumptions.
+
+This handout provides a translation guide between the two frameworks and explains when each approach is appropriate.
+
+### The Core Confusion
+
+| When someone says... | A biostatistician thinks... | An econometrician thinks... |
+|---------------------|---------------------------|----------------------------|
+| "Random effects model" | Mixed model with random intercepts/slopes | Swamy-Arora GLS estimator assuming no endogeneity |
+| "Fixed effects model" | Model with only fixed (population-level) parameters | Within-transformation estimator that removes time-invariant confounding |
+| "Fixed effects" | The $\beta$ coefficients in a mixed model | Individual-specific intercepts (nuisance parameters) |
+| "Random effects" | The $b_i$ deviations from the population mean | An estimation approach, not model components |
+
+## 2. Translation Table
+
+This is the critical reference table for translating between frameworks.
+
+```{r}
+#| label: translation-table
+#| echo: false
+
+translation <- tibble(
+  Term = c(
+    "Random effects",
+    "Fixed effects",
+    "Mixed model",
+    "RE model",
+    "FE model",
+    "Random intercept",
+    "Between estimator",
+    "Within estimator"
+  ),
+  `Biostatistics (nlme/lme4)` = c(
+    "Subject-specific deviations $b_i$ from population mean",
+    "Population-level parameters $\\beta$ (the coefficients of interest)",
+    "Model with both fixed $\\beta$ and random $b_i$ components",
+    "Model with random intercepts and/or slopes",
+    "(Not commonly used this way)",
+    "Subject-specific baseline: $\\beta_0 + b_{0i}$",
+    "(Not commonly used)",
+    "(Not commonly used)"
+  ),
+  `Econometrics (plm)` = c(
+    "Swamy-Arora GLS estimator assuming $\\text{Cor}(X_{it}, \\alpha_i) = 0$",
+    "Within-transformation (demeaning) estimator",
+    "(Not used in this way)",
+    "Estimation assuming no endogeneity",
+    "Within estimator that removes time-invariant confounding",
+    "Individual effect $\\alpha_i$ (may be correlated with covariates)",
+    "OLS on subject means $\\bar{Y}_i$ on $\\bar{X}_i$",
+    "OLS on demeaned data: $(Y_{it} - \\bar{Y}_i)$ on $(X_{it} - \\bar{X}_i)$"
+  )
+)
+
+translation |>
+  kable(escape = FALSE, caption = "Translation Between Frameworks") |>
+  kable_styling(bootstrap_options = c("striped", "hover", "bordered")) |>
+  column_spec(1, bold = TRUE, width = "15%") |>
+  column_spec(2, width = "42%") |>
+  column_spec(3, width = "42%")
+```
+
+### Mathematical Notation Comparison
+
+**Biostatistics (Mixed Model) Notation:**
+$$Y_{it} = \mathbf{X}_{it}^\top \boldsymbol{\beta} + \mathbf{Z}_{it}^\top \mathbf{b}_i + \epsilon_{it}$$
+
+where:
+
+- $\boldsymbol{\beta}$ = fixed effects (population parameters)
+- $\mathbf{b}_i \sim N(\mathbf{0}, \mathbf{D})$ = random effects (subject deviations)
+- $\epsilon_{it} \sim N(0, \sigma^2)$ = residual error
+
+**Econometrics (Panel Data) Notation:**
+$$Y_{it} = \mathbf{X}_{it}^\top \boldsymbol{\beta} + \alpha_i + \epsilon_{it}$$
+
+where:
+
+- $\boldsymbol{\beta}$ = coefficients of interest
+- $\alpha_i$ = individual effect (may or may not be random)
+- $\epsilon_{it}$ = idiosyncratic error
+
+The key difference: econometrics focuses on whether $\alpha_i$ is correlated with $\mathbf{X}_{it}$.
+
+## 3. When Each Framework Applies
+
+```{r}
+#| label: situation-table
+#| echo: false
+
+situations <- tibble(
+  Situation = c(
+    "Randomized experiment",
+    "Observational data with potential confounding",
+    "Interest in time-invariant predictors (e.g., sex, race)",
+    "Interest in within-subject change",
+    "Small number of subjects, many timepoints",
+    "Many subjects, few timepoints",
+    "Missing data (MAR assumption reasonable)",
+    "Unbalanced panel data"
+  ),
+  `Biostatistics Approach` = c(
+    "Mixed model works well",
+    "Mixed model + careful covariate adjustment",
+    "Mixed model (can estimate these coefficients)",
+    "Mixed model or GEE",
+    "Mixed model with careful variance specification",
+    "Mixed model or GEE",
+    "Mixed model (likelihood-based)",
+    "Mixed model handles naturally"
+  ),
+  `Econometrics Approach` = c(
+    "Either FE or RE works",
+    "FE estimator preferred (removes confounding)",
+    "RE estimator only (FE eliminates these)",
+    "FE estimator (focuses on within variation)",
+    "FE may have many parameters",
+    "Either approach works",
+    "Complete cases or specific methods needed",
+    "Both handle unbalanced data"
+  )
+)
+
+situations |>
+  kable(caption = "When Each Framework Applies") |>
+  kable_styling(bootstrap_options = c("striped", "hover", "bordered")) |>
+  column_spec(1, bold = TRUE, width = "30%") |>
+  column_spec(2, width = "35%") |>
+  column_spec(3, width = "35%")
+```
+
+## 4. The Endogeneity Issue
+
+The fundamental question in econometrics is: **Is there endogeneity?**
+
+### What Is Endogeneity?
+
+Endogeneity occurs when covariates are correlated with the individual-specific effect:
+
+$$\text{Cor}(X_{it}, \alpha_i) \neq 0$$
+
+This can happen due to:
+
+1. **Omitted variable bias**: An unobserved time-invariant factor affects both $X$ and $Y$
+2. **Selection**: Subjects self-select into treatment based on unobserved characteristics
+3. **Reverse causality**: Past outcomes affect current covariates
+
+### Why It Matters
+
+::: {.callout-important}
+## Key Insight
+
+If endogeneity exists, the RE estimator (econometrics sense) is **biased and inconsistent**. The biostatistics mixed model is also biased under these conditions, though this is less emphasized in that literature.
+:::
+
+**Example**: Studying the effect of job training on wages
+
+- $Y_{it}$ = wages for person $i$ at time $t$
+- $X_{it}$ = 1 if person received job training
+- $\alpha_i$ = unobserved ability
+
+If more able workers are more likely to seek training, then $\text{Cor}(X_{it}, \alpha_i) > 0$, and a naive analysis will overestimate the training effect.
+
+### How FE Solves the Problem
+
+The FE (within) estimator uses demeaning to remove $\alpha_i$:
+
+$$Y_{it} - \bar{Y}_i = (X_{it} - \bar{X}_i)^\top \beta + (\epsilon_{it} - \bar{\epsilon}_i)$$
+
+Since $\alpha_i$ is constant over time, it cancels out! This removes all time-invariant confounding.
+
+**The cost**: We cannot estimate the effect of time-invariant predictors (they also get differenced out).
+
+### The Hausman Test
+
+The Hausman test compares FE and RE estimates:
+
+- $H_0$: RE is consistent (no endogeneity)
+- $H_1$: RE is inconsistent (endogeneity present)
+
+If the test rejects, use FE. If it fails to reject, RE is more efficient.
+
+```{r}
+#| label: hausman-example
+#| eval: true
+
+# We'll demonstrate with a simulated example in Section 8
+# The test statistic compares:
+# - FE estimate (consistent under both H0 and H1)
+# - RE estimate (efficient under H0, inconsistent under H1)
+```
+
+## 5. The Mundlak Approach
+
+The Mundlak approach bridges the two frameworks by including subject-level means as covariates.
+
+### The Basic Idea
+
+Instead of choosing between FE and RE, include the cluster means $\bar{X}_i$ as additional predictors:
+
+$$Y_{it} = \beta_w (X_{it} - \bar{X}_i) + \beta_b \bar{X}_i + \alpha_i + \epsilon_{it}$$
+
+Or equivalently:
+$$Y_{it} = \beta_w X_{it} + (\beta_b - \beta_w) \bar{X}_i + \alpha_i + \epsilon_{it}$$
+
+where:
+
+- $\beta_w$ = **within effect**: how changes in $X$ within a subject relate to changes in $Y$
+- $\beta_b$ = **between effect**: how differences in average $X$ across subjects relate to differences in average $Y$
+
+### Why This Works
+
+1. **Separates within and between variation**: Can estimate both effects
+2. **Allows testing for endogeneity**: If $\beta_w = \beta_b$, no endogeneity
+3. **Equivalent to FE for within effects**: $\hat{\beta}_w$ matches the FE estimate
+4. **Can include time-invariant predictors**: Unlike pure FE
+
+### The Mundlak Test
+
+Test whether $\beta_w = \beta_b$:
+
+- If equal: RE is valid, effects are the same within and between subjects
+- If different: Suggests endogeneity; within and between effects differ
+
+## 6. R Package Comparison
+
+```{r}
+#| label: package-table
+#| echo: false
+
+packages <- tibble(
+  Package = c("nlme", "lme4", "plm", "fixest", "lmerTest"),
+  Framework = c(
+    "Biostatistics mixed models",
+    "Biostatistics mixed models",
+    "Econometrics panel data",
+    "Econometrics panel data",
+    "Biostatistics (extends lme4)"
+  ),
+  `Key Functions` = c(
+    "lme() for mixed models with flexible correlation structures",
+    "lmer() for linear mixed models, glmer() for GLMMs",
+    "plm() for panel models, phtest() for Hausman test",
+    "feols() for fast FE estimation with clustering",
+    "lmer() with p-values via Satterthwaite or Kenward-Roger"
+  ),
+  `Strengths` = c(
+    "Flexible correlation/variance structures",
+    "Fast computation, large datasets",
+    "Full panel econometrics toolkit",
+    "Very fast, handles many FE",
+    "Proper degrees of freedom for mixed models"
+  )
+)
+
+packages |>
+  kable(caption = "R Packages for Longitudinal/Panel Data") |>
+  kable_styling(bootstrap_options = c("striped", "hover", "bordered")) |>
+  column_spec(1, bold = TRUE, monospace = TRUE)
+```
+
+### Code Comparison: Same Model, Different Packages
+
+```{r}
+#| label: code-comparison
+#| eval: false
+
+# Generate example panel data
+data("Grunfeld", package = "plm")  # Classic econometrics dataset
+
+# -------------------------------------------
+# BIOSTATISTICS: Random intercept model (nlme)
+# -------------------------------------------
+library(nlme)
+fit_nlme <- lme(inv ~ value + capital,
+                random = ~ 1 | firm,
+                data = Grunfeld)
+
+# -------------------------------------------
+# BIOSTATISTICS: Random intercept model (lme4)
+# -------------------------------------------
+library(lme4)
+fit_lme4 <- lmer(inv ~ value + capital + (1 | firm),
+                 data = Grunfeld)
+
+# -------------------------------------------
+# ECONOMETRICS: RE estimator (plm)
+# -------------------------------------------
+library(plm)
+pdata <- pdata.frame(Grunfeld, index = c("firm", "year"))
+fit_re <- plm(inv ~ value + capital,
+              data = pdata,
+              model = "random")
+
+# -------------------------------------------
+# ECONOMETRICS: FE estimator (plm)
+# -------------------------------------------
+fit_fe <- plm(inv ~ value + capital,
+              data = pdata,
+              model = "within")
+
+# -------------------------------------------
+# HAUSMAN TEST: Compare FE and RE
+# -------------------------------------------
+phtest(fit_fe, fit_re)
+```
+
+### Coefficient Comparison
+
+When there is **no endogeneity**, the biostatistics RE (from nlme/lme4) and the econometrics RE (from plm) give similar estimates (though not identical due to different variance estimation).
+
+When there **is endogeneity**, all three (nlme, lme4, plm RE) are biased, but plm FE is consistent.
+
+## 7. Decision Guide
+
+```{r}
+#| label: decision-flowchart
+#| echo: false
+#| fig-width: 8
+#| fig-height: 6
+
+library(DiagrammeR)
+
+grViz("
+digraph decision_tree {
+  graph [rankdir=TB, fontname=Helvetica]
+  node [fontname=Helvetica, shape=box, style=filled]
+
+  start [label='Is endogeneity\\na concern?', fillcolor='#E8F4F8']
+
+  experimental [label='Experimental data\\n(randomized)?', fillcolor='#FFF3E0']
+  observational [label='Observational\\ndata', fillcolor='#FFF3E0']
+
+  use_mixed [label='Use nlme/lme4\\nfreely', fillcolor='#E8F5E9', shape=ellipse]
+  hausman [label='Run Hausman\\ntest', fillcolor='#FCE4EC']
+
+  hausman_result [label='Hausman test\\nrejects?', fillcolor='#E8F4F8']
+
+  use_fe [label='Use FE estimator\\nor Mundlak', fillcolor='#FFEBEE', shape=ellipse]
+  use_re [label='RE is valid\\n(more efficient)', fillcolor='#E8F5E9', shape=ellipse]
+
+  time_invariant [label='Need effects of\\ntime-invariant\\npredictors?', fillcolor='#E8F4F8']
+
+  mundlak [label='Use Mundlak\\napproach', fillcolor='#FFF9C4', shape=ellipse]
+  fe_only [label='Use FE\\n(cannot estimate\\ntime-invariant)', fillcolor='#FFEBEE', shape=ellipse]
+
+  start -> experimental [label='No']
+  start -> observational [label='Yes']
+
+  experimental -> use_mixed
+  observational -> hausman
+
+  hausman -> hausman_result
+
+  hausman_result -> use_fe [label='Yes']
+  hausman_result -> use_re [label='No']
+
+  use_fe -> time_invariant
+
+  time_invariant -> mundlak [label='Yes']
+  time_invariant -> fe_only [label='No']
+}
+")
+```
+
+### Decision Summary
+
+| Question | Answer | Action |
+|----------|--------|--------|
+| Is this an experiment? | Yes | Use nlme/lme4 mixed models freely |
+| Is this observational? | Yes | Consider endogeneity |
+| Hausman test significant? | Yes | Use FE or Mundlak approach |
+| Hausman test non-significant? | Yes | RE is valid and more efficient |
+| Need time-invariant predictor effects? | Yes | Use Mundlak (FE eliminates these) |
+
+## 8. Worked Example
+
+Let us analyze the same simulated dataset using both frameworks to see when they agree and when they diverge.
+
+### Simulate Panel Data
+
+```{r}
+#| label: simulate-data
+
+set.seed(667)
+
+n_subjects <- 100
+n_time <- 5
+
+# Create panel data with potential endogeneity
+panel_data <- expand_grid(
+  id = 1:n_subjects,
+  time = 1:n_time
+) |>
+  mutate(
+    # Unobserved individual effect (ability)
+    alpha_i = rep(rnorm(n_subjects, mean = 0, sd = 2), each = n_time),
+
+    # Time-invariant predictor (education years)
+    education = rep(sample(12:20, n_subjects, replace = TRUE), each = n_time),
+
+    # Time-varying predictor (job training)
+    # KEY: Training is correlated with alpha_i (endogeneity!)
+    training = rbinom(n_subjects * n_time, 1,
+                      prob = plogis(-1 + 0.3 * rep(rnorm(n_subjects), each = n_time) +
+                                    0.2 * alpha_i)),
+
+    # Another time-varying predictor (no endogeneity)
+    experience = time + rep(sample(0:10, n_subjects, replace = TRUE), each = n_time),
+
+    # Outcome (wages)
+    # True effects: training = 2, education = 0.5, experience = 0.3
+    wages = 10 + 2 * training + 0.5 * education + 0.3 * experience +
+            alpha_i + rnorm(n_subjects * n_time, sd = 1)
+  )
+
+head(panel_data, 10)
+```
+
+### Check for Endogeneity
+
+```{r}
+#| label: check-endogeneity
+
+# Correlation between training and unobserved effect
+panel_data |>
+  group_by(id) |>
+  summarise(
+    mean_training = mean(training),
+    alpha = first(alpha_i)
+  ) |>
+  summarise(
+    correlation = cor(mean_training, alpha)
+  )
+```
+
+We see that training is positively correlated with the unobserved individual effect (ability). This is endogeneity.
+
+### Analysis 1: Biostatistics Mixed Model (lme4)
+
+```{r}
+#| label: mixed-model
+
+library(lme4)
+
+fit_mixed <- lmer(wages ~ training + education + experience + (1 | id),
+                  data = panel_data)
+summary(fit_mixed)
+```
+
+**Result**: The training effect is estimated as `r round(fixef(fit_mixed)["training"], 3)`, which is **biased upward** from the true value of 2.0. This is because the mixed model does not account for the correlation between training and the unobserved individual effect.
+
+### Analysis 2: Econometrics Panel Models (plm)
+
+```{r}
+#| label: panel-models
+
+library(plm)
+
+# Convert to panel data frame
+pdata <- pdata.frame(panel_data, index = c("id", "time"))
+
+# RE estimator
+fit_re <- plm(wages ~ training + education + experience,
+              data = pdata,
+              model = "random")
+
+# FE estimator
+fit_fe <- plm(wages ~ training + education + experience,
+              data = pdata,
+              model = "within")
+
+cat("RE Estimator:\n")
+summary(fit_re)$coefficients
+
+cat("\n\nFE (Within) Estimator:\n")
+summary(fit_fe)$coefficients
+```
+
+**Key observations**:
+
+1. **RE estimate for training**: Similar to mixed model, biased upward
+2. **FE estimate for training**: `r round(coef(fit_fe)["training"], 3)`, much closer to true value of 2.0
+3. **Education coefficient**: Estimated by RE, but **NOT by FE** (time-invariant, differenced out)
+
+### Analysis 3: Hausman Test
+
+```{r}
+#| label: hausman-test
+
+# Hausman test: compare FE and RE
+hausman_test <- phtest(fit_fe, fit_re)
+hausman_test
+```
+
+The Hausman test is **significant** (p < 0.05), indicating that the RE estimator is inconsistent and we should use FE.
+
+### Analysis 4: Mundlak Approach
+
+```{r}
+#| label: mundlak
+
+# Add cluster means
+panel_data <- panel_data |>
+  group_by(id) |>
+  mutate(
+    training_mean = mean(training),
+    experience_mean = mean(experience)
+  ) |>
+  ungroup()
+
+# Mundlak model using lme4
+fit_mundlak <- lmer(wages ~ training + education + experience +
+                    training_mean + experience_mean + (1 | id),
+                    data = panel_data)
+summary(fit_mundlak)
+```
+
+**Mundlak results**:
+
+- **Within effect of training** (`training`): `r round(fixef(fit_mundlak)["training"], 3)` -- close to true value!
+- **Between effect of training** (`training_mean`): `r round(fixef(fit_mundlak)["training_mean"], 3)` -- different from within effect
+- **Education effect**: `r round(fixef(fit_mundlak)["education"], 3)` -- can now estimate this!
+
+The difference between within and between effects for training suggests endogeneity, consistent with our Hausman test.
+
+### Summary Comparison
+
+```{r}
+#| label: comparison-table
+
+comparison <- tibble(
+  Method = c("True Value", "Mixed Model (lme4)", "RE (plm)", "FE (plm)", "Mundlak"),
+  `Training Effect` = c(
+    2.0,
+    round(fixef(fit_mixed)["training"], 3),
+    round(coef(fit_re)["training"], 3),
+    round(coef(fit_fe)["training"], 3),
+    round(fixef(fit_mundlak)["training"], 3)
+  ),
+  `Education Effect` = c(
+    0.5,
+    round(fixef(fit_mixed)["education"], 3),
+    round(coef(fit_re)["education"], 3),
+    NA,  # FE cannot estimate
+    round(fixef(fit_mundlak)["education"], 3)
+  ),
+  `Experience Effect` = c(
+    0.3,
+    round(fixef(fit_mixed)["experience"], 3),
+    round(coef(fit_re)["experience"], 3),
+    round(coef(fit_fe)["experience"], 3),
+    round(fixef(fit_mundlak)["experience"], 3)
+  ),
+  Notes = c(
+    "Ground truth",
+    "Biased by endogeneity",
+    "Biased by endogeneity",
+    "Consistent, but loses education",
+    "Best of both worlds"
+  )
+)
+
+comparison |>
+  kable(caption = "Comparison of Estimators", digits = 3) |>
+  kable_styling(bootstrap_options = c("striped", "hover", "bordered")) |>
+  column_spec(1, bold = TRUE) |>
+  row_spec(1, background = "#E8F5E9") |>
+  row_spec(4:5, background = "#FFF9C4")
+```
+
+### Visualizing Within vs Between Variation
+
+```{r}
+#| label: within-between-plot
+#| fig-width: 10
+#| fig-height: 5
+
+# Show the within vs between variation
+p1 <- panel_data |>
+  ggplot(aes(x = training_mean, y = wages, group = id)) +
+  geom_point(alpha = 0.3) +
+  geom_smooth(method = "lm", se = FALSE, color = "red") +
+  labs(
+    title = "Between Variation",
+    subtitle = "Subject means (confounded)",
+    x = "Mean Training (by subject)",
+    y = "Wages"
+  ) +
+  theme_minimal()
+
+p2 <- panel_data |>
+  mutate(
+    training_demeaned = training - training_mean,
+    wages_demeaned = wages - mean(wages)  # simplified for visualization
+  ) |>
+  ggplot(aes(x = training_demeaned, y = wages_demeaned)) +
+  geom_point(alpha = 0.3) +
+  geom_smooth(method = "lm", se = FALSE, color = "blue") +
+  labs(
+    title = "Within Variation",
+    subtitle = "Demeaned (FE uses this)",
+    x = "Training - Subject Mean",
+    y = "Wages (demeaned)"
+  ) +
+  theme_minimal()
+
+library(patchwork)
+p1 + p2
+```
+
+## Key Takeaways
+
+::: {.callout-tip}
+## Summary
+
+1. **Check the framework** when reading papers: biostatistics "RE" $\neq$ econometrics "RE"
+
+2. **Endogeneity matters**: If time-invariant confounders exist, use FE or Mundlak
+
+3. **Hausman test** helps decide: significant = use FE; non-significant = RE is efficient
+
+4. **Mundlak approach** gives both within and between effects, and allows time-invariant predictors
+
+5. **Experimental data** avoids endogeneity by design; mixed models work well
+:::
+
+::: {.callout-warning}
+## When Reading Papers, Always Check Which Framework the Authors Are Using!
+
+The same terms mean different things. Look for clues:
+
+- "Within estimator" or "demeaning" = econometrics FE
+- "Random intercept model" = biostatistics mixed model
+- Hausman test mentioned = econometrics framework
+- `lme4` or `nlme` used = biostatistics framework
+- `plm` or `fixest` used = econometrics framework
+:::
+
+## Session Information
+
+```{r}
+#| label: session-info
+
+sessionInfo()
+```

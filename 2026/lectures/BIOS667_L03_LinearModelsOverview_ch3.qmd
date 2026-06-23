@@ -1,0 +1,1037 @@
+---
+title: "BIOS 667 - Lecture 3: Overview of Linear Models for Longitudinal Data (Ch. 3)"
+subtitle: "Fitzmaurice, Laird & Ware (2011) - Applied Longitudinal Data Analysis"
+author: "Naim Rashid"
+format:
+  revealjs:
+    theme: [default]
+    footer: BIOS 667 · UNC Gillings - Lecture 3 (Ch. 3)
+    slide-number: true
+    hash: true
+    toc: false
+    code-overflow: wrap
+    code-line-numbers: false
+    math: mathjax
+    incremental: true
+    embed-resources: true
+    chalkboard: false
+    scrollable: true
+    css: "../../unc-gillings.css"
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+# Lecture Objectives
+
+## By the End of This Lecture, You Will Be Able To
+
+- Define and use **vector and matrix notation** for longitudinal data
+- Specify the **general linear model** with mean and covariance components
+- Apply **descriptive visualization methods** to explore longitudinal patterns
+- Compare **three covariance modeling approaches**: unstructured, pattern models, and random effects
+- Explain limitations of **historical approaches** (summary measures, ANOVA, MANOVA)
+
+---
+
+## How These Objectives Map to Your Work
+
+| Objective | Where you use it |
+| :--- | :--- |
+| Vector/matrix notation | Every later lecture; HW1 setup of $\mathbf{Y}_i$, $\mathbf{X}_i$ |
+| General linear model (mean + covariance) | LME and GEE on HW3-HW4; final project model specification |
+| Descriptive visualization | HW1 exploratory plots; first step of the final-project analysis |
+| Three covariance approaches | Motivates covariance-pattern (Ch. 7) and random-effects (Ch. 8) choices on HW3 |
+| Limits of historical approaches | Justifies why the final project uses modern methods, not ANOVA/MANOVA |
+
+::: {.notes}
+This is the orientation lecture for the whole course. Tell students that nothing here is assessed in isolation: the payoff is that every later method is written in this notation, and the final project is exactly the "specify a mean model and a covariance model" workflow introduced today.
+:::
+
+
+# Roadmap
+
+## Lecture Overview
+
+| Section | Topics |
+| :--- | :--- |
+| **Part 1** | Notation and distributional assumptions |
+| **Part 2** | Descriptive methods for visualization |
+| **Part 3** | Modeling the covariance structure |
+| **Part 4** | Historical approaches and their limitations |
+| **Part 5** | Summary and next steps |
+
+---
+
+## Prerequisites / recall
+
+You will get the most out of this lecture if you are comfortable with:
+
+- **Column vectors and matrices**: stacking values into a vector, reading matrix dimensions
+- **The design matrix** and the regression form $\mathbf{X}\boldsymbol\beta$ in matrix notation (from Lecture 2)
+- **Transpose** notation ($\mathbf{X}^\top$) and **block-diagonal** matrices
+- The **multivariate normal** distribution as the multivariate analogue of the normal
+
+We build directly on the $\mathbf{X}\boldsymbol\beta$ matrix form from L02; today we add the within-subject covariance.
+
+::: {.notes}
+Quick gut check before starting. Ask who is shaky on matrix multiplication or the transpose. The single load-bearing prerequisite is reading $\mathbf{X}\boldsymbol\beta$ as a matrix-times-vector from L02: everything today is that, plus a covariance matrix on the errors.
+:::
+
+---
+
+{{< include _notation_box_intro.qmd >}}
+
+
+# Part 1: Notation and Distributional Assumptions
+
+---
+
+## The Response Vector $\mathbf{Y}_i$
+
+$Y_{ij}$ denotes the response for subject $i$ at occasion $j$.
+
+We group the $n_i$ repeated measures for subject $i$ into a column vector:
+
+$$ \mathbf{Y}_{i} = \begin{pmatrix} Y_{i1} \\ Y_{i2} \\ \vdots \\ Y_{in_{i}} \end{pmatrix}_{n_i \times 1} $$
+
+::: {.notes}
+This is the most important object in the course: from now on, a "data point" is a whole subject's vector, not a single measurement. Emphasize that $n_i$ can differ across subjects (unbalanced designs are normal). Common student error: treating each $Y_{ij}$ as an independent observation.
+:::
+
+---
+
+## Independence Structure
+
+| Level | Independence? |
+| :--- | :--- |
+| Between subjects | Yes (conditional on covariates) |
+| Within subject | No (repeated measures are correlated) |
+
+This within-subject correlation is the defining feature of longitudinal data.
+
+::: {.notes}
+The whole course exists because of the second row. Say it plainly: subjects are independent of each other, but a subject's own measurements are correlated. Ignoring that within-subject correlation is the mistake every method we teach is designed to avoid.
+:::
+
+---
+
+## The Covariate Matrix $\mathbf{X}_{i}$
+
+$X_{ij}$ is the $1 \times p$ **row vector** of covariates for subject $i$ at occasion $j$. Stacking these rows over the $n_i$ occasions gives the **design matrix** for subject $i$:
+
+$$ \mathbf{X}_{i} = \begin{pmatrix} X_{i1} \\ X_{i2} \\ \vdots \\ X_{in_{i}} \end{pmatrix}_{n_i \times p} $$
+
+So $\mathbf{X}_i$ is $n_i \times p$, and the model is written $\mathbf{X}_i\boldsymbol\beta$.
+
+```{r fig.align="center"}
+#| fig-width: 5
+#| fig-height: 3
+library(ggplot2)
+
+# Tiny design matrix: 3 occasions (rows) x 3 columns (intercept, time, sex).
+Xi <- data.frame(
+  occasion = factor(rep(c("j=1", "j=2", "j=3"), times = 3),
+                    levels = c("j=3", "j=2", "j=1")),
+  column   = factor(rep(c("Intercept", "Time", "Sex"), each = 3),
+                    levels = c("Intercept", "Time", "Sex")),
+  value    = c(1, 1, 1,   1, 2, 3,   0, 0, 0)
+)
+
+ggplot(Xi, aes(x = column, y = occasion)) +
+  geom_tile(fill = "white", color = "grey50") +
+  geom_text(aes(label = value), size = 7) +
+  labs(title = expression(paste("Design matrix ", X[i], "  (", n[i], " x p = 3 x 3)")),
+       x = "columns (p covariates)", y = "rows (occasions)") +
+  theme_minimal() +
+  theme(panel.grid = element_blank())
+```
+
+Rows are occasions, columns are covariates. Intercept is a column of 1s; Sex is constant (time-constant); Time increases down the rows (time-varying).
+
+::: {.notes}
+Get the dimensions right and the rest of the course is bookkeeping. Each row is one occasion, each column is one covariate. The number of columns $p$ is the same for everyone; the number of rows $n_i$ can vary by subject. Note the convention: $X_{ij}$ is already a row, so $\mathbf{X}_i$ stacks rows directly (no transpose needed in the picture).
+:::
+
+---
+
+## Covariate Types
+
+| Type | Description | Example |
+| :--- | :--- | :--- |
+| Time-constant | Does not change over time | Sex, race |
+| Time-varying | Changes at each occasion | Age, weight |
+
+::: {.notes}
+Tie this back to the design-matrix picture: a time-constant covariate is a column that repeats the same value down all $n_i$ rows; a time-varying covariate is a column whose entries change row to row. The worked example on the next slides shows both.
+:::
+
+---
+
+## The General Linear Model
+
+The model for the observation vector of subject $i$ is:
+
+$$ \mathbf{Y}_{i} = \mathbf{X}_{i}\boldsymbol{\beta} + \boldsymbol{\varepsilon}_{i} $$
+
+The mean response is **linear in $\boldsymbol{\beta}$**.
+
+::: {.notes}
+This is just ordinary regression written one subject at a time. The only new ingredient versus L02 is that $\boldsymbol\varepsilon_i$ is a vector whose entries are correlated within the subject; we model that correlation through its covariance. Linear in $\boldsymbol\beta$ does not mean linear in time: we can put time-squared or splines into $\mathbf{X}_i$.
+:::
+
+---
+
+## Model Components
+
+| Component | Notation | Description |
+| :--- | :--- | :--- |
+| Response vector | $\mathbf{Y}_i$ | Observed outcomes |
+| Design matrix | $\mathbf{X}_i$ | Covariates |
+| Regression parameters | $\boldsymbol{\beta}$ | Fixed effects |
+| Random errors | $\boldsymbol{\varepsilon}_i$ | Zero-mean errors |
+
+::: {.notes}
+Walk the four rows in order. Reinforce that $\boldsymbol\beta$ is shared across all subjects (population-average), while $\boldsymbol\varepsilon_i$ is subject-specific and carries the within-subject covariance.
+:::
+
+---
+
+## Example: Response Vector
+
+A subject measured at three time points with responses 12, 10, and 9.
+
+```{r}
+#| echo: true
+#| output-location: slide
+# Define the response vector for subject i
+Y_i <- c(12, 10, 9)
+print(Y_i)
+```
+
+**Interpretation:** This shows the response vector $\mathbf{Y}_i$ for a single subject with 3 measurements. The values (12, 10, 9) represent the outcome at times 1, 2, and 3 respectively. Notice the downward trend: this subject's response is decreasing over time. In R, this is stored as a numeric vector of length 3.
+
+::: {.notes}
+Smallest possible concrete instance of the $\mathbf{Y}_i$ slide. Point out that a length-3 R vector is exactly the $3 \times 1$ column we drew. The design-matrix example on the next slide pairs with this same subject.
+:::
+
+---
+
+## Example: Design Matrix
+
+Covariates include an intercept, sex (time-constant), and time (time-varying).
+
+```{r}
+#| echo: true
+#| output-location: slide
+# Column 1: intercept, Column 2: Sex (0 = male), Column 3: Time
+X_i <- matrix(c(1, 0, 1,
+                1, 0, 2,
+                1, 0, 3), nrow = 3, byrow = TRUE)
+colnames(X_i) <- c("Intercept", "Sex", "Time")
+print(X_i)
+```
+
+**Interpretation:** This $3 \times 3$ design matrix corresponds to the same subject with 3 visits. Each row is one occasion, so this is $X_{i1}, X_{i2}, X_{i3}$ stacked into $\mathbf{X}_i$. The intercept column is all 1s (standard for regression). The Sex column is 0 for all rows because sex is time-constant (this subject is male). The Time column increases (1, 2, 3) because time is time-varying. When we compute $\mathbf{X}_i\boldsymbol{\beta}$, we get the predicted mean response at each visit.
+
+::: {.notes}
+This is the design-matrix concept made concrete. Tie each column back to "time-constant vs time-varying" from two slides ago: Sex is a constant column, Time is an increasing column. Here $p = 3$ and $n_i = 3$, so the matrix is square by coincidence, not by rule. Common student error: forgetting the intercept column.
+:::
+
+---
+
+## The Full Data Model
+
+We can stack data for all $N$ subjects into one model:
+
+$$ \mathbf{Y} = \mathbf{X}\boldsymbol{\beta} + \boldsymbol{\varepsilon} $$
+
+Where $\mathbf{Y} = (\mathbf{Y}_1^{\top}, \dots, \mathbf{Y}_N^{\top})^{\top}$ and $\boldsymbol{\varepsilon} = (\boldsymbol{\varepsilon}_1^{\top}, \dots, \boldsymbol{\varepsilon}_N^{\top})^{\top}$.
+
+---
+
+## Block-Diagonal Covariance
+
+$\mathbf{X}$ is formed by stacking the subject-specific design matrices $\mathbf{X}_i$.
+
+The covariance matrix $\boldsymbol\Sigma$ for the full data set is **block-diagonal**:
+
+$$ \boldsymbol\Sigma = \mathrm{diag}(\Sigma_1, \Sigma_2, \dots, \Sigma_N) $$
+
+Here $\Sigma_i = \operatorname{Cov}(\mathbf{Y}_i)$ is the within-subject covariance of subject $i$'s response (unstructured for now). The off-diagonal blocks are zero because different subjects are independent.
+
+---
+
+## Block-Diagonal Covariance: the Picture
+
+```{r fig.align="center"}
+#| fig-width: 5
+#| fig-height: 4.5
+library(ggplot2)
+
+# 3 subjects, 3 occasions each: a 9x9 block-diagonal covariance Sigma.
+# Dense within-subject blocks on the diagonal; zero cross-subject blocks.
+n_sub <- 3
+n_occ <- 3
+Sig_i <- matrix(c(1.0, 0.7, 0.5,
+                  0.7, 1.0, 0.7,
+                  0.5, 0.7, 1.0), nrow = n_occ, byrow = TRUE)  # one subject's Sigma_i
+Sig <- matrix(0, n_sub * n_occ, n_sub * n_occ)
+for (s in 0:(n_sub - 1)) {
+  idx <- s * n_occ + (1:n_occ)
+  Sig[idx, idx] <- Sig_i
+}
+
+Sig_long <- expand.grid(row = 1:(n_sub * n_occ), col = 1:(n_sub * n_occ))
+Sig_long$value <- as.vector(Sig)
+
+ggplot(Sig_long, aes(x = col, y = row, fill = value)) +
+  geom_tile(color = "grey80") +
+  geom_vline(xintercept = c(3.5, 6.5), color = "black", linewidth = 0.8) +
+  geom_hline(yintercept = c(3.5, 6.5), color = "black", linewidth = 0.8) +
+  scale_fill_gradient(low = "white", high = "steelblue",
+                      name = "Cov", limits = c(0, 1)) +
+  scale_y_reverse(breaks = 1:9) +
+  scale_x_continuous(breaks = 1:9, position = "top") +
+  coord_equal() +
+  labs(title = "Block-diagonal covariance (3 subjects x 3 occasions)",
+       x = "column of full Y", y = "row of full Y") +
+  theme_minimal()
+```
+
+Dense blocks on the diagonal are the within-subject covariances $\Sigma_1, \Sigma_2, \Sigma_3$. The white off-diagonal blocks are zero: different subjects are independent.
+
+::: {.notes}
+The block-diagonal picture is independence-between-subjects drawn as a matrix. Each block $\Sigma_i$ is one subject's within-subject covariance; the zeros between blocks are the "subjects are independent" assumption. We treat $\Sigma_i$ as a free, unstructured matrix for now and only decompose it once random effects arrive in Ch. 8.
+:::
+
+---
+
+## The Two Key Components
+
+| Component | Expression | Meaning |
+| :--- | :--- | :--- |
+| Mean structure | $E(\mathbf{Y}_{i}) = \mathbf{X}_{i}\boldsymbol{\beta}$ | How the average response changes |
+| Covariance structure | $\mathrm{Cov}(\mathbf{Y}_{i}) = \Sigma_i$ | How measures are correlated |
+
+$\Sigma_i = \operatorname{Cov}(\mathbf{Y}_i)$ is the within-subject covariance of the response (unstructured for now); we decompose it once random effects appear in Ch. 8.
+
+::: {.notes}
+Every model in this course is "pick a mean structure, pick a covariance structure." Stress that today $\Sigma_i$ is just a generic covariance matrix; we are not yet committing to AR(1), compound symmetry, or a random-effects form. That choice is the subject of Chapters 7 and 8.
+:::
+
+
+# Distributional Assumptions
+
+---
+
+## The Multivariate Normal Assumption
+
+We assume the vector of responses for subject $i$ is multivariate normal:
+
+$$ \mathbf{Y}_i \sim N_{n_i}(\mathbf{X}_i\boldsymbol{\beta}, \Sigma_i) $$
+
+---
+
+## Why Multivariate Normal?
+
+- A **working assumption** for convenience, not a law of nature
+- Makes it easy to derive estimators for $\boldsymbol{\beta}$ and $\Sigma_i$ and to build tests
+- **Not strictly required**: inference is generally robust to non-normality
+- What matters more: the mean and covariance structure (covered next)
+
+---
+
+## Verifying the Assumption
+
+Unlike the univariate case, it is very difficult to formally verify the multivariate normal assumption.
+
+Formal statistical tests exist but are often unhelpful, as they can detect departures that are not substantively important.
+
+---
+
+## Practical Graphical Checks
+
+| Check | Purpose |
+| :--- | :--- |
+| Histograms of residuals | Assess marginal normality at each time |
+| Boxplots of residuals | Identify outliers and skewness |
+| Scatterplots of residual pairs | Check for linear trends between times |
+
+**Caveat**: These checks can only provide evidence of departures. They cannot prove the assumption holds.
+
+---
+
+## Why Normality Is Not Critical
+
+The assumption of multivariate normality is **not as critical** for valid inferences about $\boldsymbol{\beta}$ as the assumptions about:
+
+- **Independence** between subjects
+- **Covariance structure** within an individual
+
+Unless departures are very extreme (e.g., highly skewed data), correctly modeling dependence is more important.
+
+---
+
+## Common Pitfalls
+
+| Pitfall | Why It Matters |
+| :--- | :--- |
+| Confusing mean and covariance misspecification | Misspecifying the mean model is a bigger problem |
+| Overstating the role of normality | It is a working assumption, not a strict requirement |
+
+---
+
+## A Note on Notation
+
+For simplicity, we often use:
+
+- $E(\mathbf{Y}_i)$ for $E(\mathbf{Y}_i | \mathbf{X}_i)$
+- $\mathrm{Cov}(\mathbf{Y}_i)$ for $\mathrm{Cov}(\mathbf{Y}_i | \mathbf{X}_i)$
+
+We are always referring to the **conditional** distribution given the covariates.
+
+---
+
+::: {.callout-note collapse="true"}
+## Check Your Understanding: Part 1a (Dimensions and structure)
+
+1. For a subject with 5 repeated measurements and 3 covariates (including intercept), what are the dimensions of $\mathbf{Y}_i$ and $\mathbf{X}_i$?
+2. Why is the covariance matrix $\boldsymbol\Sigma$ for the full dataset block-diagonal?
+
+**Answers:**
+
+1. $\mathbf{Y}_i$ is $5 \times 1$; $\mathbf{X}_i$ is $5 \times 3$.
+2. Because subjects are independent of each other (no correlation between different subjects), only the within-subject blocks have non-zero covariances. The off-diagonal blocks (between subjects) are all zeros.
+:::
+
+::: {.callout-note collapse="true"}
+## Check Your Understanding: Part 1b (Normality)
+
+3. A colleague says "we must have normally distributed data to use these methods." How would you respond?
+
+**Answer:**
+
+3. Normality is a working assumption for convenience, but the methods are robust to departures from normality. What matters more is correctly specifying the mean structure and covariance structure.
+:::
+
+
+# Part 2: Descriptive Methods
+
+---
+
+## Why Visualize First?
+
+Before modeling, we need to understand the patterns in our data.
+
+**Goal**: To see individual trajectories and overall trends.
+
+---
+
+## The Spaghetti Plot
+
+A **spaghetti plot** connects successive repeated measures for each individual.
+
+**Purpose**: Shows **individual trajectories**, the spread of starting points (between-subject variability), and any outlying subjects or unbalanced/irregular data.
+
+**Caution (FLW Section 3.3)**: The joined-segments plot is not very informative about trends in the *mean* response; between- and within-subject variability is often almost completely obscured. For reading the mean trend, use the **mean-response (mean-trajectory) plot** instead, not the spaghetti plot.
+
+---
+
+## Spaghetti Plot: Code
+
+```{r fig.align="center"}
+#| echo: true
+#| output-location: slide
+# Load packages
+library(dplyr)
+library(ggplot2)
+
+# Create mock longitudinal data
+set.seed(123)
+data_long <- tibble(
+  subject = rep(1:20, each = 5),
+  time = rep(1:5, times = 20),
+  response = rnorm(100, mean = 50 + 2*time + 0.5*subject, sd = 5)
+)
+
+# Create the plot
+ggplot(data_long, aes(x = time, y = response, group = subject)) +
+  geom_line(alpha = 0.6) +
+  geom_point(alpha = 0.6) +
+  labs(title = "Spaghetti Plot", x = "Time", y = "Response") +
+  theme_minimal()
+```
+
+**Interpretation:** Each line represents one subject's trajectory over 5 time points. The plot is good for seeing the spread of starting points (substantial between-subject variability, with some subjects high and some low), how individuals maintain their relative positions over time (a subject who starts high tends to stay high), and any outlying subjects or unbalanced data. It is *not* the right tool for reading the mean trend: with many overplotted lines the average drift is easily obscured. For the mean trend, read the mean-response plot on the next slide. The persistence of relative position here is the visual cue for the within-subject correlation our models must accommodate.
+
+::: {.notes}
+First plot students should make for any longitudinal dataset, but be explicit about its limits per FLW Section 3.3: it shows individual trajectories, the spread of starting points (between-subject variability), and outliers/unbalanced data, but it is poor for the mean trend (the average drift gets obscured by overplotting). Send students to the mean-response plot for the mean trend. The persistence of relative position is the visual cue for within-subject correlation, which we model later.
+:::
+
+---
+
+## The Mean Trajectory Plot
+
+A **mean trajectory plot** reveals the overall trend in the data.
+
+**Purpose**: Shows the **overall trend** of the group and a confidence interval for that trend.
+
+---
+
+## Mean Trajectory Plot: Code
+
+```{r fig.align="center"}
+#| echo: true
+#| output-location: slide
+# Summarize data
+summary_data <- data_long %>%
+  group_by(time) %>%
+  summarize(
+    mean_response = mean(response),
+    sd_response = sd(response),
+    n = n(),
+    se_response = sd_response / sqrt(n)
+  )
+
+# Create the plot with a ribbon for uncertainty
+ggplot(summary_data, aes(x = time, y = mean_response)) +
+  geom_line(color = "blue", linewidth = 1.5) +
+  geom_point(color = "blue", size = 3) +
+  geom_ribbon(aes(ymin = mean_response - 1.96 * se_response,
+                  ymax = mean_response + 1.96 * se_response),
+              alpha = 0.2, fill = "blue") +
+  labs(title = "Mean Trajectory with 95% CI", x = "Time", y = "Mean Response") +
+  theme_minimal()
+```
+
+**Interpretation:** The blue line shows the average response at each time point across all 20 subjects. The shaded ribbon represents a 95% confidence interval for the mean. The upward slope indicates that, on average, the response increases by about 2 units per time point. The narrow confidence interval reflects relatively precise estimation of the mean trajectory. This plot complements the spaghetti plot by summarizing the overall trend while hiding individual variation.
+
+::: {.notes}
+This is the mean-structure picture: $E(\mathbf{Y}_i) = \mathbf{X}_i\boldsymbol\beta$ made visual. Warn students that the naive ribbon here uses a simple standard error that ignores within-subject correlation, so treat it as descriptive only. Proper standard errors come once we model $\Sigma_i$.
+:::
+
+---
+
+## The Correlation Heatmap
+
+A **correlation heatmap** shows pairwise correlations between repeated measures.
+
+**Purpose**: Shows how the **correlation decays over time**. Do measurements far apart in time have a lower correlation?
+
+::: {.callout-note}
+This heatmap is an instructor-added exploratory device, not one of the FLW Section 3.3 descriptive plots (which are time plots of the raw data, mean-response plots, and smoothing via moving averages or lowess). FLW introduces correlation and correlation decay later, under Section 3.5 "Modeling the Covariance"; we show the heatmap here to bridge into that section.
+:::
+
+---
+
+## Correlation Heatmap: Code
+
+```{r fig.align="center"}
+#| echo: true
+#| output-location: slide
+# Load packages
+library(tidyr)
+
+# Simulated illustration: genuine AR(1) serial correlation within each subject.
+# Each subject's 5 errors follow an AR(1) process, so correlation decays with
+# time separation. The population lag-k correlation is 0.8^k, but the finite-
+# sample estimate is weaker at longer lags. rho = 0.8 matches the running AR(1)
+# example in L02.
+set.seed(667)
+n_sub <- 200
+phi <- 0.8
+ar1_data <- do.call(rbind, lapply(1:n_sub, function(s) {
+  err <- as.numeric(arima.sim(model = list(ar = phi), n = 5))
+  tibble(subject = s, time = 1:5, response = 50 + 2 * (1:5) + err)
+}))
+
+# Pivot data to a wide format
+wide_data <- ar1_data %>%
+  select(subject, time, response) %>%
+  pivot_wider(names_from = time, values_from = response) %>%
+  select(-subject)
+
+# Calculate correlation matrix
+cor_matrix <- cor(wide_data, use = "pairwise.complete.obs")
+
+# Tidy matrix for plotting
+cor_long <- cor_matrix %>%
+  as.data.frame() %>%
+  tibble::rownames_to_column("Time1") %>%
+  pivot_longer(-Time1, names_to = "Time2", values_to = "Correlation")
+
+# Create the heatmap
+ggplot(cor_long, aes(x = Time1, y = Time2, fill = Correlation)) +
+  geom_tile() +
+  scale_fill_gradient2(low = "red", high = "blue", mid = "white",
+                       midpoint = 0, limit = c(-1,1), name = "Correlation") +
+  theme_minimal() +
+  labs(title = "Correlation Heatmap (AR(1) data)")
+```
+
+**Interpretation:** This heatmap displays the correlation matrix for the 5 time points. The diagonal is darkest blue (correlation = 1, since each time point is perfectly correlated with itself). Because the errors were simulated from an AR(1) process, the off-diagonal correlations fade as the time separation grows: adjacent times (lag 1) are strongly correlated, while the most separated pair (times 1 and 5, lag 4) is much weaker. That visible fade away from the diagonal is the signature of serial correlation, exactly the pattern an AR(1) covariance structure is built to capture.
+
+::: {.notes}
+This is the slide that motivates AR(1) versus compound symmetry. Have students trace one row away from the diagonal and watch the color lighten. Contrast with compound symmetry, where every off-diagonal cell would be the same shade. In this simulated illustration the lag-1 correlation is about `r round(cor_matrix[1, 2], 2)` and the most-separated lag-4 pair drops to about `r round(cor_matrix[1, 5], 2)` (the population value is $0.8^4 \approx 0.41$, but the finite-sample estimate is weaker), so the fade is real and not an artifact.
+:::
+
+---
+
+::: {.callout-note collapse="true"}
+## Check Your Understanding: Part 2a (Reading the plots)
+
+1. What is the primary purpose of a spaghetti plot versus a mean trajectory plot?
+2. In the correlation heatmap, what pattern would you expect if correlation decays with time separation (like AR(1))?
+
+**Answers:**
+
+1. Spaghetti plots show individual trajectories and between-subject variability; mean trajectory plots summarize the overall group trend and its uncertainty.
+2. You would see stronger correlations (darker colors) near the diagonal and weaker correlations (lighter colors) in the corners. The cells farthest from the diagonal would be lightest.
+:::
+
+::: {.callout-note collapse="true"}
+## Check Your Understanding: Part 2b (Why visualize first)
+
+3. Why should you always examine these plots before fitting a model?
+
+**Answer:**
+
+3. These plots reveal the data structure (trends, heterogeneity, potential outliers) and help you choose an appropriate model. You might discover nonlinear trends, unusual subjects, or correlation patterns that inform your covariance structure choice.
+:::
+
+
+# Case Study: TLC Lead-Exposure Trial
+
+---
+
+## Case Study: From Mock to Real Data
+
+The plots above used simulated data to isolate each idea. Now we run the **same three descriptive views** on a real FLW dataset.
+
+**Data**: Treatment of Lead-Exposed Children (TLC) trial, the running example from Lecture 2 (FLW Ch. 2, Tables 2.2-2.3). We use the **placebo group**: $N = 50$ children, blood-lead level measured at weeks 0, 1, 4, and 6 ($n = 4$ occasions).
+
+**Why placebo**: an untreated group lets us see the natural decay and the within-subject correlation structure without a treatment effect confounding the trend.
+
+```{r}
+#| label: tlc-load
+#| echo: true
+#| output-location: slide
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+# tlc.csv is WIDE: ID, Treatment Group, then lead level at weeks 0, 1, 4, 6.
+# Local-first with a download fallback (FLW ships a header-free, space-delim file).
+tlc_file <- "../../data/tlc.csv"
+if (!file.exists(tlc_file)) tlc_file <- "data/tlc.csv"
+if (file.exists(tlc_file)) {
+  tlc <- read.csv(tlc_file)
+} else {
+  tlc <- read.table("https://content.sph.harvard.edu/fitzmaur/ala2e/tlc-data.txt",
+                    header = FALSE,
+                    col.names = c("ID", "Treatment.Group",
+                                  "Lead.Level.Week.0", "Lead.Level.Week.1",
+                                  "Lead.Level.Week.4", "Lead.Level.Week.6"))
+}
+
+# Placebo group, one column per occasion -> long format for plotting
+weeks <- c(0, 1, 4, 6)
+# Select the four weekly lead-level columns BY NAME (robust to column order);
+# fall back to the last four columns if a local file uses non-standard names.
+lead_cols <- grep("Lead.*Level|Week", names(tlc), ignore.case = TRUE, value = TRUE)
+if (length(lead_cols) != 4) lead_cols <- tail(names(tlc), 4)
+pbo_wide <- tlc[tlc$Treatment.Group == "P", lead_cols]
+colnames(pbo_wide) <- paste0("w", weeks)
+pbo_wide$id <- seq_len(nrow(pbo_wide))
+
+pbo_long <- pbo_wide %>%
+  pivot_longer(cols = starts_with("w"), names_to = "wk", values_to = "lead") %>%
+  mutate(week = weeks[match(wk, paste0("w", weeks))])
+
+nrow(pbo_wide)            # number of placebo children
+range(pbo_long$lead)     # observed blood-lead range
+```
+
+::: {.notes}
+This anchors Part 2 in a real FLW dataset (continuity: it is the same TLC trial introduced in Lecture 2, Tables 2.2-2.3, and reused for the covariance estimates there). The load path is local-first (`../../data/tlc.csv`, then `data/tlc.csv`) with the FLW-site download fallback, matching how L01/L02 load their data. The subject count and observed range are pulled from the data at render, so nothing is hardcoded.
+:::
+
+---
+
+## TLC Placebo: Spaghetti Plot
+
+```{r}
+#| label: tlc-spaghetti
+#| echo: false
+#| fig-align: center
+#| fig-width: 8
+#| fig-height: 5
+ggplot(pbo_long, aes(x = week, y = lead, group = id)) +
+  geom_line(alpha = 0.4, color = "grey30") +
+  geom_point(alpha = 0.4, size = 1, color = "grey30") +
+  scale_x_continuous(breaks = weeks) +
+  labs(title = "TLC placebo: individual blood-lead trajectories (real data)",
+       x = "Week", y = "Blood-lead level (mcg/dL)") +
+  theme_minimal()
+```
+
+The `r nrow(pbo_wide)` placebo trajectories spread widely at baseline (the between-subject heterogeneity), and children who start high tend to stay high: relative position persists across weeks. That persistence is the visual signature of **within-subject correlation** the spaghetti plot exposes but cannot quantify.
+
+::: {.notes}
+Same plot, real data: individual trajectories, the spread of starting points, and persistence of relative position (the within-subject correlation cue). The subject count is inline-R (`nrow(pbo_wide)`), not hardcoded. Per FLW Section 3.3, do not read the mean trend off this plot; the next slide gives the mean-response plot for that.
+:::
+
+---
+
+## TLC Placebo: Mean Trajectory
+
+```{r}
+#| label: tlc-mean
+#| echo: false
+#| fig-align: center
+#| fig-width: 8
+#| fig-height: 5
+tlc_summary <- pbo_long %>%
+  group_by(week) %>%
+  summarize(mean_lead = mean(lead),
+            se_lead = sd(lead) / sqrt(n()), .groups = "drop")
+
+ggplot(tlc_summary, aes(x = week, y = mean_lead)) +
+  geom_line(color = "steelblue", linewidth = 1.3) +
+  geom_point(color = "steelblue", size = 3) +
+  geom_ribbon(aes(ymin = mean_lead - 1.96 * se_lead,
+                  ymax = mean_lead + 1.96 * se_lead),
+              alpha = 0.2, fill = "steelblue") +
+  scale_x_continuous(breaks = weeks) +
+  labs(title = "TLC placebo: mean blood-lead trajectory with 95% CI (real data)",
+       x = "Week", y = "Mean blood-lead level (mcg/dL)") +
+  theme_minimal()
+```
+
+Mean blood-lead drifts down only mildly under placebo, from about `r round(mean(pbo_wide$w0), 1)` mcg/dL at week 0 to about `r round(mean(pbo_wide$w6), 1)` mcg/dL at week 6. This is the mean-structure picture $E(\mathbf{Y}_i) = \mathbf{X}_i\boldsymbol\beta$ made visual.
+
+::: {.callout-warning}
+The 95% ribbon uses a naive standard error that **ignores within-subject correlation**, so treat it as descriptive only. Proper standard errors require modeling the marginal covariance $\Sigma_i$ (Part 3).
+:::
+
+::: {.notes}
+The mean-response plot (FLW Section 3.3) for the real placebo arm. Both endpoint means are inline-R from the data (`mean(pbo_wide$w0)`, `mean(pbo_wide$w6)`), confirmed at render: the placebo arm declines only slightly (no treatment), which is exactly why it is the right arm to expose the natural correlation structure. The naive ribbon warning carries the bridge to Part 3.
+:::
+
+---
+
+## TLC Placebo: Within-Subject Correlation
+
+```{r}
+#| label: tlc-cor
+#| echo: false
+#| fig-align: center
+#| fig-width: 7
+#| fig-height: 5.5
+tlc_cor <- cor(pbo_wide[, paste0("w", weeks)])
+lab <- paste0("Week ", weeks)
+dimnames(tlc_cor) <- list(lab, lab)
+
+cor_long <- as.data.frame(tlc_cor) %>%
+  tibble::rownames_to_column("Time1") %>%
+  pivot_longer(-Time1, names_to = "Time2", values_to = "Correlation") %>%
+  mutate(Time1 = factor(Time1, levels = lab),
+         Time2 = factor(Time2, levels = lab))
+
+ggplot(cor_long, aes(x = Time1, y = Time2, fill = Correlation)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = sprintf("%.2f", Correlation)), size = 4) +
+  scale_fill_gradient2(low = "red", high = "blue", mid = "white",
+                       midpoint = 0, limit = c(-1, 1), name = "Correlation") +
+  labs(title = "TLC placebo: within-subject correlation matrix (real data)",
+       x = NULL, y = NULL) +
+  theme_minimal()
+```
+
+Off-diagonal correlations are high and positive throughout, ranging from about `r round(min(tlc_cor[upper.tri(tlc_cor)]), 2)` to `r round(max(tlc_cor[upper.tri(tlc_cor)]), 2)` (FLW Table 2.3). The dominant signal is strong positive correlation everywhere (between-subject heterogeneity), with a modest decay as the gap between weeks widens. These are exactly the two facts (non-constant structure, decaying correlation) the covariance models in Part 3 are built to capture.
+
+::: {.notes}
+The real-data correlation heatmap reproduces FLW Table 2.3 for the TLC placebo arm. The min/max off-diagonal correlations are inline-R (`min`/`max` of the upper triangle of `tlc_cor`), confirmed at render to land near 0.76-0.87, so the narrative matches the actual matrix and nothing is hardcoded. Contrast the visual with the AR(1) heatmap earlier: real lead data shows a mild decay layered on a high common correlation, closer to compound symmetry than to a sharp AR(1) decay, which previews the covariance-structure choices in Part 3.
+:::
+
+
+# Part 3: Modeling the Covariance
+
+---
+
+## Why Model the Covariance?
+
+A **defining feature** of longitudinal data is that repeated responses on the same individual are **correlated**.
+
+This correlation **cannot be ignored**.
+
+---
+
+## Consequences of Proper Covariance Modeling
+
+| Benefit | Description |
+| :--- | :--- |
+| Valid inferences | Correct standard errors and p-values |
+| Efficiency | More precise estimates |
+| Missing data | Valid estimates under certain conditions |
+
+---
+
+## Three Covariance Approaches
+
+| Approach | Description |
+| :--- | :--- |
+| Unstructured | Completely arbitrary pattern |
+| Covariance pattern models | Specific parsimonious structure |
+| Random effects | Individual-specific effects induce structure |
+
+---
+
+## Approach 1: Unstructured Covariance
+
+This approach assumes **no explicit structure** for the covariance.
+
+It estimates the unique variance for each time point and the covariance for every possible pair.
+
+**Key Feature**: Provides a completely **flexible** and arbitrary pattern.
+
+---
+
+## Drawbacks of Unstructured Covariance
+
+| Issue | Description |
+| :--- | :--- |
+| Parameter-heavy | $\frac{n_i(n_i+1)}{2}$ parameters, where $n_i$ = number of occasions (55 for 10 occasions!) |
+| Unstable estimates | Small samples lead to instability |
+| Data limitations | Cannot accommodate irregular timing or missing data |
+
+::: {.notes}
+The formula is the punchline: parameters grow quadratically in the number of occasions $n_i$, so an unstructured matrix becomes unusable as occasions increase. Work the count aloud once for $n_i = 10$: $10 \times 11 / 2 = 55$. This is exactly why Chapters 7 and 8 introduce parsimonious structures.
+:::
+
+---
+
+## Approach 2: Covariance Pattern Models
+
+This approach places a **specific, parsimonious structure** on the covariance matrix.
+
+Inspired by **time series analysis**.
+
+**Key Idea**: The correlation between repeated measures **decays** as the time separation increases.
+
+---
+
+## Approach 3: Random Effects
+
+An alternative, **indirect** way to model the covariance.
+
+It accounts for correlation by introducing **individual-specific random effects** into the model.
+
+**Example**: A random intercept represents all unobserved factors that make some subjects naturally higher or lower responders.
+
+---
+
+## Benefits of Random Effects
+
+| Benefit | Description |
+| :--- | :--- |
+| Flexibility and parsimony | Few parameters, realistic patterns |
+| Handles irregular data | Natural handling of missing observations |
+| Multiple effects | Random intercepts and slopes for richer patterns |
+
+---
+
+## Summary of Covariance Approaches
+
+| Approach | Pros | Cons |
+| :--- | :--- | :--- |
+| **Unstructured** | Most flexible | Parameter-heavy, requires complete data |
+| **Covariance Pattern** | Parsimonious, handles irregular timing | Assumes a specific pattern |
+| **Random Effects** | Flexible, parsimonious, handles missing data | Structure can be too restrictive |
+
+---
+
+## Covariance Structure Visualized
+
+**Compound Symmetry (CS)**: Constant correlation ($\rho$) for any pair of times.
+
+$$ \begin{pmatrix} 1 & \rho & \rho & \rho \\ \rho & 1 & \rho & \rho \\ \rho & \rho & 1 & \rho \\ \rho & \rho & \rho & 1 \end{pmatrix} $$
+
+---
+
+## Covariance Structure Visualized
+
+**AR(1)**: Correlation decays exponentially as time separation increases ($\rho^k$).
+
+$$ \begin{pmatrix} 1 & \rho & \rho^2 & \rho^3 \\ \rho & 1 & \rho & \rho^2 \\ \rho^2 & \rho & 1 & \rho \\ \rho^3 & \rho^2 & \rho & 1 \end{pmatrix} $$
+
+---
+
+::: {.callout-note collapse="true"}
+## Check Your Understanding: Part 3a (Unstructured and pattern models)
+
+1. Why is an unstructured covariance matrix problematic with 10 time points?
+2. What is the key difference between compound symmetry (CS) and AR(1) covariance structures?
+
+**Answers:**
+
+1. An unstructured matrix with $n_i = 10$ occasions requires $\frac{n_i(n_i+1)}{2} = \frac{10 \times 11}{2} = 55$ parameters (here $n_i$ is the number of occasions, distinct from $n$, the number of subjects). This many parameters can lead to unstable estimates, especially with small samples, and the model may fail to converge.
+2. CS assumes the same correlation ($\rho$) between any two time points regardless of how far apart they are. AR(1) assumes correlation decays as time separation increases ($\rho^k$ for lag $k$), which is often more realistic for longitudinal data.
+:::
+
+::: {.callout-note collapse="true"}
+## Check Your Understanding: Part 3b (Random effects)
+
+3. How do random effects induce correlation among repeated measures?
+
+**Answer:**
+
+3. Random effects (e.g., a random intercept $b_i$) represent subject-specific deviations that are shared across all measurements for that subject. Since the same $b_i$ affects all of subject $i$'s responses, it creates positive correlation among them.
+:::
+
+
+# Part 4: Historical Approaches
+
+---
+
+## Three Classical Approaches
+
+| Method | Description |
+| :--- | :--- |
+| Summary Measures | Reduce to a single value |
+| Univariate Repeated Measures ANOVA | Extension of ANOVA |
+| MANOVA | Multivariate analysis of variance |
+
+---
+
+## Why We Do Not Use Them Anymore
+
+| Method | Advantage | Disadvantage |
+| :--- | :--- | :--- |
+| **Summary Measures** | Simple, easy to use | Discards trajectory information |
+| **Univariate ANOVA** | Easy to perform | Requires compound symmetry |
+| **MANOVA** | No covariance structure required | Cannot handle missing data |
+
+---
+
+## Method 1: Summary Measures
+
+The simplest approach: reduce repeated measures to a **single summary measure**.
+
+**Examples**: Mean response or regression slope.
+
+**Limitation**: Discards information about individual trajectories.
+
+---
+
+## Method 2: Univariate Repeated Measures ANOVA
+
+An extension of ANOVA.
+
+**Assumption**: **Compound symmetry** (equal variances and constant correlation).
+
+This is often inappropriate for longitudinal data where correlation typically decays with time separation.
+
+**Solution**: Greenhouse and Geisser (1959) developed an adjustment to correct the F-test.
+
+---
+
+## Method 3: MANOVA
+
+Treats repeated measures as a single, multi-dimensional outcome.
+
+**Advantage**: Does **not** assume a specific covariance structure; it estimates an **unstructured** matrix.
+
+**Limitation**: Requires a complete set of measurements for every subject.
+
+---
+
+## The Missing Data Problem in MANOVA
+
+MANOVA requires complete measurements for every subject.
+
+| Subject | Time 1 | Time 2 | Time 3 | Time 4 |
+| :--- | :--- | :--- | :--- | :--- |
+| 1 | 12 | 10 | 9 | 11 |
+| 2 | 15 | 14 | **-** | 13 |
+| 3 | 11 | 12 | 10 | 12 |
+
+Subject 2 would be **dropped** from the analysis.
+
+---
+
+## Comparison of Covariance Assumptions
+
+| Method | Assumption | Parameters |
+| :--- | :--- | :--- |
+| Univariate ANOVA | Compound symmetry | 2 |
+| MANOVA | Unstructured | Many |
+| Modern methods | Realistic and parsimonious | Few |
+
+
+# Part 5: Summary
+
+---
+
+## Common Mistakes to Avoid
+
+- **Focusing only on the mean structure**: The covariance structure is equally important. Misspecifying it leads to incorrect standard errors and invalid inference, even if your mean model is correct.
+
+- **Using unstructured covariance by default**: While flexible, unstructured covariance requires many parameters and cannot handle missing data or irregular timing. Consider parsimonious alternatives (CS, AR(1), random effects).
+
+- **Applying MANOVA with incomplete data**: MANOVA drops subjects with any missing observations. This wastes data and can introduce bias if missingness is related to the outcome.
+
+- **Assuming compound symmetry without checking**: Univariate repeated measures ANOVA assumes equal correlations across all pairs. This is often unrealistic, since correlations typically decay with time separation.
+
+- **Confusing the mean and covariance misspecification consequences**: Misspecifying the mean model biases $\hat{\beta}$. Misspecifying the covariance structure affects standard errors but not point estimates (if the mean is correct).
+
+---
+
+## The Core Components
+
+The general linear model has two parts:
+
+| Component | Expression |
+| :--- | :--- |
+| Mean structure | $E(\mathbf{Y}_i) = \mathbf{X}_i\boldsymbol{\beta}$ |
+| Covariance structure | $\mathrm{Cov}(\mathbf{Y}_i) = \Sigma_i$ |
+
+---
+
+## The Main Challenge
+
+**The covariance structure** makes longitudinal analysis unique.
+
+We must account for the non-independence of repeated measures.
+
+Choosing a model for $\Sigma_i$ that is both **flexible** and **parsimonious** is the main challenge.
+
+---
+
+## Further Reading
+
+- **Fitzmaurice, Laird & Ware (2011), Chapter 3** and its "Further Reading" notes: the primary reference for this lecture.
+- **Laird & Ware (1982)**, *Random-effects models for longitudinal data*, Biometrics 38:963-974: the foundational mixed-model paper we build toward in Ch. 8.
+- **Greenhouse & Geisser (1959)**, *On methods in the analysis of profile data*, Psychometrika 24:95-112: the classic ANOVA sphericity correction mentioned under historical approaches.
+- **Diggle, Heagerty, Liang & Zeger (2002)**, *Analysis of Longitudinal Data* (2nd ed.): complementary treatment of covariance structure and serial correlation.
+
+::: {.notes}
+Point students to FLW Ch. 3 first; the others are optional depth. Laird and Ware (1982) is worth flagging now so the random-effects approach in Ch. 8 does not feel like it appears from nowhere.
+:::
+
+---
+
+## What Comes Next?
+
+Upcoming chapters will cover **modern approaches** that are more flexible and robust.
+
+| Topic | Description |
+| :--- | :--- |
+| Serial correlation | Accounting for time-ordered dependence |
+| Random variation | Modeling individual-specific effects |
+| Incomplete data | Handling missing observations |
+
+---
+

@@ -1,0 +1,1799 @@
+---
+title: "BIOS 667 - Lecture 15: GLMM Random Slopes (Ch. 14)"
+subtitle: "Fitzmaurice, Laird & Ware (2011) - Applied Longitudinal Data Analysis"
+author: "Naim Rashid"
+format:
+  revealjs:
+    theme: [default]
+    footer: BIOS 667 · UNC Gillings - Lecture 15 (Ch.14)
+    slide-number: true
+    hash: true
+    toc: false
+    code-overflow: wrap
+    code-line-numbers: false
+    math: mathjax
+    incremental: true
+    embed-resources: true
+    chalkboard: false
+    css: "../../unc-gillings.css"
+    scrollable: true
+execute:
+  warning: false
+  message: false
+---
+
+## Lecture Objectives
+
+- Extend random-intercept GLMMs to include **random slopes**
+- Specify random slope models for **binary** and **count** outcomes
+- Interpret the **variance-covariance structure** $G$ of random effects
+- Compute and interpret **empirical Bayes predictors** for subject-specific inference
+- Understand computational approaches: **Laplace**, **adaptive Gauss-Hermite quadrature**
+- Apply model selection criteria for comparing GLMMs
+
+::: {.notes}
+This deck builds directly on L14 (random-intercept GLMMs). Frame the whole lecture as one question: do subjects differ not just in where they start but in how fast they change? Tell the class the running example is the progabide seizure trial we will carry through to the end. Objectives map to HW5 (fit and interpret a random-slope GLMM, report conditional vs marginal effects) and to the final project (subject-specific prediction with empirical Bayes). Emphasize that everything we estimate here is conditional on the random effects unless we say otherwise.
+:::
+
+---
+
+## A Note on FLW Chapter Numbering
+
+::: {.callout-note}
+**This lecture's content is FLW Chapter 14** (Generalized Linear Mixed Effects Models): random-slope specification, subject-specific interpretation, empirical Bayes prediction, and adaptive Gaussian quadrature, including the very epilepsy Poisson random-slope model used here (FLW Examples, Sec. 14.3-14.7, Tables 14.5-14.8).
+
+The course slot is "Lecture 15," but FLW's **physical Chapter 15** is a different topic: *Approximate Methods of Estimation* (penalized and marginal quasi-likelihood, PQL/MQL). We touch PQL/MQL and the Laplace approximation only briefly, and flag them as FLW Ch. 15 material when we do.
+:::
+
+::: {.notes}
+Say this out loud once so a substitute and the students are not confused: the slide is labeled Lecture 15 but the book chapter is 14. The course resequences late topics. The approximate-estimation methods (PQL, MQL, Laplace) belong to FLW's Chapter 15; we benchmark against adaptive Gaussian quadrature, which IS the Chapter 14 true-likelihood method.
+:::
+
+---
+
+## Roadmap
+
+**Part I (Day 1, ~75 min):** specification and interpretation
+
+| Part | Topic |
+|------|-------|
+| I | From Random Intercepts to Random Slopes |
+| II | Model Specification for Discrete Outcomes |
+| III | Interpretation of Random Slope Variance |
+| IV | Prediction and Empirical Bayes Predictors |
+
+**Part II (Day 2, ~75 min):** computation, selection, full case study
+
+| Part | Topic |
+|------|-------|
+| V | Computational Considerations |
+| VI | Model Selection and Comparison |
+| VII | Applied Case Study: Epilepsy Data |
+
+::: {.notes}
+This is a two-period deck. Day 1 ends after empirical Bayes prediction (Part IV); Day 2 opens with a one-slide recap and runs the full epilepsy case study. Pacing: Parts I-II about 30 min, Part III about 20 min, Part IV about 25 min on Day 1. Day 2: computation about 20 min, selection about 15 min, case study and diagnostics and marginal prediction about 40 min.
+:::
+
+---
+
+{{< include _notation_box.qmd >}}
+
+---
+
+## Notation (this lecture)
+
+::: {.notation-card style="font-size: 0.85em;"}
+
+| Symbol | Meaning |
+|:--|:--|
+| $G = \begin{pmatrix} \sigma_0^2 & \sigma_{01} \\ \sigma_{01} & \sigma_1^2 \end{pmatrix}$ | $2\times2$ random-effects covariance (intercept, slope) |
+| $\sigma_0^2,\ \sigma_1^2$ | between-subject variance of random intercept, random slope |
+| $\sigma_{01}$ | intercept-slope covariance; $\rho_{01} = \sigma_{01}/(\sigma_0\sigma_1)$ |
+| $\hat{\mathbf{b}}_i = E[\mathbf{b}_i \mid \mathbf{Y}_i; \hat{\boldsymbol\beta}, \hat G]$ | empirical Bayes (EB) predictor of subject $i$'s random effects |
+| $v(\mu)$ | GLM mean-variance function (scalar) |
+
+:::
+
+::: {.notes}
+This slide comes after the shared canonical notation box, per the notation standard: do not edit the shared partial. The only new objects this lecture adds are the 2x2 structure of G and the EB predictor. Reinforce the canon: G is the random-effects covariance (FLW's letter, not D), the mean model is the row form $X_{ij}\beta + Z_{ij}b_i$. The EB predictor is the posterior mean of b_i given that subject's data; define it once here and refer back. We unpack BLUP vs EB terminology on the prediction slides.
+:::
+
+---
+
+## Part I: From Random Intercepts to Random Slopes
+
+---
+
+## Review: Random Intercept GLMM
+
+In Lecture 14, we modeled:
+
+$$g(E[Y_{ij}|\mathbf{b}_i]) = X_{ij}\beta + b_{0i}$$
+
+where $b_{0i} \sim N(0, \sigma_0^2)$
+
+**Limitation:** All subjects share the same covariate effects (slopes).
+
+::: {.notes}
+Anchor in L14: the random intercept shifts every subject's whole trajectory up or down by a constant on the link scale. Ask: what does that force? It forces every subject to have the SAME slope. The intercept-only model says people differ in level but change identically. That is the limitation we relax today.
+:::
+
+---
+
+## Why Random Slopes?
+
+In longitudinal studies, subjects often differ not just in **baseline levels** but also in **rates of change**.
+
+| Aspect | Random Intercept | Random Slope |
+|--------|------------------|--------------|
+| Subject heterogeneity | Baseline only | Baseline + trajectory |
+| Covariate effect | Same for all subjects | Varies across subjects |
+| Correlation structure | Induced by shared intercept | More flexible |
+
+::: {.notes}
+The clinical hook: two patients can start at the same seizure rate but respond to the drug very differently over time. A random slope lets each subject have an individual rate of change. Note the correlation column: adding a random slope makes the induced marginal correlation depend on time (variances grow as time moves away from the centering point), which is more realistic than the constant exchangeable correlation of the intercept-only model.
+:::
+
+---
+
+## Motivating Example: Epilepsy Trial
+
+- 59 epileptic patients randomized to progabide vs placebo
+- Baseline seizure count over an 8-week interval, then counts at 4 post-baseline visits (2-week intervals)
+- Patients may differ in:
+  - **Baseline seizure rate** (random intercept)
+  - **Response to treatment over time** (random slope for time)
+
+::: {.callout-note}
+This is FLW's Ch. 14 case study (Sec. 14.7, Tables 14.5-14.8; Thall and Vail 1990; Leppik et al. 1987). We carry it through to the full worked analysis in Part VII.
+:::
+
+::: {.notes}
+Introduce the running example now so the abstract model has a concrete referent. The data ship with a baseline 8-week count and four 2-week follow-up counts. Flag the outlier early: patient 49 had 151 baseline and 302 follow-up seizures (FLW Fig 14.2); we return to it in the case study when we refit excluding patient 49 and fit a negative binomial. Tell the class FLW's exact model uses an offset for time-at-risk and a binary baseline/follow-up indicator; our worked variant differs and we will flag it.
+:::
+
+---
+
+## Random Slope Model: Concept
+
+$$g(\mu_{ij}) = X_{ij}\beta + b_{0i} + b_{1i}\, t_{ij}$$
+
+where:
+
+- $b_{0i}$ = subject-specific intercept deviation
+- $b_{1i}$ = subject-specific slope deviation for time $t_{ij}$ (a column of $Z_{ij}$)
+
+$$\mathbf{b}_i = \begin{pmatrix} b_{0i} \\ b_{1i} \end{pmatrix} \sim N\left(\begin{pmatrix} 0 \\ 0 \end{pmatrix}, G = \begin{pmatrix} \sigma_0^2 & \sigma_{01} \\ \sigma_{01} & \sigma_1^2 \end{pmatrix}\right)$$
+
+::: {.notes}
+Write the mean model in the canonical row form $X_{ij}\beta$ for the fixed part, then add the subject-specific intercept and slope. The random-slope design column (here time) is part of $Z_{ij}$, never a fixed covariate symbol. Stress that b_i is a 2-vector with covariance G, and that the off-diagonal sigma_01 is what couples a subject's starting level to their rate of change. We interpret each element of G on the next slides.
+:::
+
+---
+
+## What the Covariance Matrix G Captures
+
+$$G = \begin{pmatrix} \sigma_0^2 & \sigma_{01} \\ \sigma_{01} & \sigma_1^2 \end{pmatrix}$$
+
+| Parameter | Interpretation |
+|-----------|----------------|
+| $\sigma_0^2$ | Between-subject variance in intercepts |
+| $\sigma_1^2$ | Between-subject variance in slopes |
+| $\sigma_{01}$ | Covariance between intercepts and slopes |
+| $\rho_{01} = \sigma_{01}/(\sigma_0 \sigma_1)$ | Correlation between intercepts and slopes |
+
+::: {.notes}
+Walk the matrix entry by entry. sigma_0^2 is heterogeneity in starting level, sigma_1^2 is heterogeneity in rate of change, sigma_01 couples them. Remind students these are variances on the LINK scale (log for Poisson, logit for binary), so interpretation needs the inverse link. The correlation rho_01 is the dimensionless summary of the off-diagonal; we interpret its sign next.
+:::
+
+---
+
+## Correlation Interpretation
+
+| Sign of $\rho_{01}$ | Interpretation |
+|---------------------|----------------|
+| $\rho_{01} > 0$ | Subjects with higher baseline also have steeper slopes |
+| $\rho_{01} < 0$ | Subjects with higher baseline have flatter slopes |
+| $\rho_{01} = 0$ | Intercepts and slopes are independent |
+
+This correlation **can be** scientifically meaningful, but it is often weak and hard to estimate.
+
+::: {.callout-warning}
+Do not assume a strong intercept-slope correlation. For the epilepsy data, FLW find $\rho_{01}$ near zero (Table 14.6: $g_{12}=0.054$, indistinguishable from 0), and our own fit in Part VII reproduces this. Interpret the table above as the **meaning of the sign**, not a prediction.
+:::
+
+::: {.notes}
+This is a deliberate caution. The textbook habit is to tell a tidy regression-to-the-mean story (high starters decline fastest, negative correlation). FLW's actual epilepsy fit finds g12 near zero and statistically indistinguishable from zero. So teach the table as "if rho_01 is negative, here is what it would mean," not as the epilepsy conclusion. We confront the real estimate in the case study.
+:::
+
+---
+
+## Part II: Model Specification for Discrete Outcomes
+
+---
+
+## Binary Outcome: Random Slope Logistic GLMM
+
+**Model:**
+
+$$\log\left(\frac{P(Y_{ij}=1|b_i)}{1-P(Y_{ij}=1|b_i)}\right) = X_{ij}\beta + b_{0i} + b_{1i} \cdot \text{time}_{ij}$$
+
+**Key features:**
+
+- Subject-specific log-odds trajectory
+- Coefficients $\beta$ are **conditional** on $(b_{0i}, b_{1i})$
+- Allows subjects to have different treatment response rates
+
+::: {.notes}
+Logit link version. The single most important sentence in the chapter: with a non-linear link, beta is a subject-specific (conditional) effect, NOT a population-average effect. Preview that this gap is the whole point of the conditional-vs-marginal discussion later (and the focus of Ch. 16). For binary longitudinal data FLW warn that random slopes are often hard to fit (sparse information per subject), so this slide is mainly conceptual; our worked count example is more stable.
+:::
+
+---
+
+## Count Outcome: Random Slope Poisson GLMM
+
+**Model:**
+
+$$\log(E[Y_{ij}|\mathbf{b}_i]) = X_{ij}\beta + b_{0i} + b_{1i} \cdot t_{ij}$$
+
+**For epilepsy data:** allows each patient to have:
+
+- Own baseline seizure rate (intercept)
+- Own time trend (slope)
+
+::: {.notes}
+This is the form we fit in the case study. Log link, so beta and b_i live on the log-rate scale and exponentiate to rate ratios. Emphasize again: conditional on b_i, the count is Poisson; the random effects induce overdispersion marginally, which we check later. FLW's exact model also carries an offset log(T_ij) for time-at-risk, which we discuss when we flag our instructor variant.
+:::
+
+---
+
+## General Random Slope GLMM Structure
+
+**Level 1** (observation level):
+
+$$Y_{ij} | \mathbf{b}_i \sim \text{EF}(\mu_{ij}, \phi), \quad g(\mu_{ij}) = X_{ij}\beta + Z_{ij} \mathbf{b}_i$$
+
+**Level 2** (subject level):
+
+$$\mathbf{b}_i \sim N_q(0, G)$$
+
+where $q$ = dimension of random effects vector.
+
+::: {.callout-note}
+$\text{EF}(\mu,\phi)$ is the exponential family from Ch. 11 (mean $\mu$, dispersion $\phi$, variance $\phi\, v(\mu)$). For the Poisson count outcome, $g^{-1}=\exp$ and $\phi=1$ (no separate dispersion parameter), so do not look for a $\phi$ estimate in the output.
+:::
+
+::: {.notes}
+Tie EF back to the GLM review in Ch. 11 so students do not wonder where the dispersion parameter went. For Poisson phi is fixed at 1; for binary it is also 1. The dispersion only reappears when we relax Poisson for overdispersion (gamma errors / negative binomial) in Part VI. The two-level structure is the same skeleton as the LMM in Ch. 8, just with a link function at level 1.
+:::
+
+---
+
+## Design Matrices for Random Slopes
+
+**Fixed effects design:** $X_i$ (typically includes all predictors)
+
+**Random effects design:** $Z_i$ (subset of $X_i$)
+
+| Common specification | $Z_i$ columns |
+|----------------------|---------------|
+| Random intercept only | 1 (constant) |
+| Random intercept + time slope | 1, time |
+| Random intercept + treatment slope | 1, treatment indicator |
+
+::: {.notes}
+Key rule: the random-effects design Z_i is almost always a SUBSET of the fixed design X_i. You cannot have a random slope for a covariate without (conceptually) also modeling its fixed effect. Treatment here is between-subject (time-invariant), so a random treatment slope is generally not identifiable from a single observation period; the natural random slope in a longitudinal study is for time. We use random intercept + time slope in the case study.
+:::
+
+---
+
+## Datasets and Packages (load cold)
+
+**Dataset:** `epilepsy.txt` (FLW Ch. 14 case study). Load local first, else download from the FLW site.
+
+**Packages:** `dplyr`, `tidyr`, `ggplot2`, `lme4` (fitting), `broom.mixed` (tidy output), `patchwork` (plot layout), `glmmTMB` (negative binomial mixed model, called qualified). `MASS` is also called qualified (`MASS::mvrnorm`) so it does not mask `dplyr::select`.
+
+```{r}
+#| echo: true
+#| output-location: slide
+suppressPackageStartupMessages({
+  library(dplyr)
+  library(tidyr)
+  library(ggplot2)
+  library(lme4)
+  library(broom.mixed)
+  library(patchwork)
+})
+theme_set(theme_minimal(base_size = 16))
+```
+
+::: {.notes}
+Reproducible-cold checklist: this is the one dataset and the package list a substitute needs. Note explicitly that we do NOT library(MASS): it masks dplyr::select and breaks later pipes. We call MASS::mvrnorm qualified in the Monte Carlo function instead.
+:::
+
+---
+
+## Load Epilepsy Data (download fallback)
+
+```{r}
+#| echo: true
+#| output-location: slide
+# Local first, else download from the FLW site (CLAUDE.md data-loading pattern)
+data_url  <- "https://content.sph.harvard.edu/fitzmaur/ala2e/epilepsy.txt"
+data_file <- "../../data/epilepsy.txt"
+if (!file.exists(data_file)) {
+  dir.create(dirname(data_file), showWarnings = FALSE, recursive = TRUE)
+  download.file(data_url, data_file)
+}
+
+# The file has a 36-line comment header; columns are wide (one row per patient)
+epi_raw <- read.table(data_file, skip = 36, header = FALSE,
+                      col.names = c("id", "trt", "age", "base",
+                                    "y1", "y2", "y3", "y4"))
+
+# Reshape to long format
+epi_long <- epi_raw %>%
+  pivot_longer(cols = y1:y4, names_to = "visit_num", values_to = "seizures") %>%
+  mutate(
+    visit = as.integer(gsub("y", "", visit_num)),
+    time = (visit - 1) * 2,  # weeks since first post-baseline visit
+    trt = factor(trt, levels = c(0, 1), labels = c("Placebo", "Progabide")),
+    log_base = log(base / 4),  # log of baseline rate per 2-week period
+    age_c = age - mean(age)    # centered age
+  )
+
+glimpse(epi_long)
+```
+
+::: {.callout-warning}
+**Instructor variant (flag for the class).** FLW's Ch. 14 model (p. 422, Table 14.5) includes the **baseline period as period 0** with an **offset** $\log(T_{ij})$ (8 weeks baseline vs 2 weeks follow-up) and a **binary** Time indicator. Our reshaping keeps only the 4 post-baseline visits, uses **continuous** `visit`, and adds $\log(\text{base}/4)$ and centered age as covariates with **no offset**. This is the standard Thall-Vail / Breslow-Clayton epilepsy parameterization, a legitimate variant, but it is not FLW's exact Ch. 14 model. We reproduce FLW's offset model in the case study.
+:::
+
+::: {.notes}
+The download-fallback pattern is the CLAUDE.md standard: never hardcode a read with no fallback. Inspect the header before parsing (36 comment lines, then wide rows). Be honest about the model: ours is the Thall-Vail style (log baseline as a covariate, no offset). FLW uses an offset for time-at-risk and a binary Time. Tell students why ours still teaches the point (subject-specific intercept and slope) but is not the book's exact specification; the FLW offset fit appears in Part VII.
+:::
+
+---
+
+## Explore the Data Structure
+
+```{r}
+#| echo: true
+#| output-location: slide
+# Summary by treatment
+epi_long %>%
+  group_by(trt, visit) %>%
+  summarise(
+    mean_seizures = mean(seizures),
+    sd_seizures = sd(seizures),
+    median = median(seizures),
+    n = n(),
+    .groups = "drop"
+  )
+```
+
+::: {.notes}
+Point out the mean exceeds the median at every visit: right-skewed counts, a hint of overdispersion. The SDs are large relative to means, the other overdispersion signal. This motivates checking the Poisson assumption later and previewing the negative binomial.
+:::
+
+---
+
+## Visualize Individual Trajectories
+
+```{r}
+#| echo: true
+#| output-location: slide
+#| fig-height: 5
+#| fig-width: 10
+ggplot(epi_long, aes(x = visit, y = seizures, group = id, color = trt)) +
+  geom_line(alpha = 0.4) +
+  stat_summary(aes(group = trt), fun = mean, geom = "line",
+               linewidth = 1.5, linetype = "dashed") +
+  facet_wrap(~trt) +
+  labs(x = "Visit (2-week periods)", y = "Seizure Count",
+       title = "Individual Seizure Trajectories by Treatment") +
+  scale_y_log10() +
+  theme(legend.position = "none")
+```
+
+::: {.notes}
+Thin gray lines are individual patients; the dashed line is the group mean. The log y-axis is deliberate: on the log scale a random intercept is a vertical shift and a random slope is a change in tilt, exactly the two things we are modeling. Ask the class to eyeball whether the tilts look heterogeneous (some go up, some down): that is the visual case for a random slope.
+:::
+
+---
+
+## Key Observations
+
+- **High variability** between subjects (need random intercepts)
+- Some subjects show **decreasing** trends, others **increasing** (need random slopes?)
+- Potential **outliers** with very high counts (overdispersion concern)
+- Treatment effect may **evolve** over time
+
+::: {.notes}
+This is the bridge from picture to model. Each bullet maps to a modeling choice: variability to random intercept, heterogeneous tilts to random slope, outliers and skew to overdispersion (negative binomial), evolving treatment effect to the trt-by-time interaction. The outlier is patient 49, which FLW handle by refitting without it; we do the same in the case study.
+:::
+
+---
+
+## Part III: Interpretation of Random Slope Variance
+
+---
+
+## What Does $\sigma_1^2$ Tell Us?
+
+$\sigma_1^2$ = variance of subject-specific slopes (on the link scale)
+
+- Small $\sigma_1^2$: Subjects respond similarly to time/treatment
+- Large $\sigma_1^2$: Heterogeneous responses across subjects
+
+::: {.callout-tip}
+**Anchor on the multiplicative (exp) scale.** For a log link, $\sigma_1$ is the SD of per-time-unit log-rate-of-change. $\sigma_1 = 0.5$ means subject slopes vary by about a factor of $\exp(0.5) \approx 1.65\times$ per time unit (roughly 95% within $\exp(\pm 2\sigma_1)$). The "$\sigma_1 > 0.5$" cutoff is an **instructor heuristic**, not an FLW threshold; always read $\sigma_1$ through the inverse link in context.
+:::
+
+::: {.notes}
+The point of this slide is that a raw variance on the log scale is uninterpretable until you exponentiate. Do the arithmetic live: exp(0.5) ~ 1.65, so a one-SD-fast subject changes 65% more per unit time than the average subject. Stress the heuristic is mine, not the book's; the right anchor is always the exp-scale magnitude for the actual time unit.
+:::
+
+---
+
+## Interpreting the Correlation $\rho_{01}$
+
+The **sign** of $\rho_{01}$ has a clinical reading:
+
+| $\rho_{01}$ | Interpretation (illustrative) |
+|-------------|-------------------------------|
+| $\rho_{01} > 0$ | Patients with more baseline seizures also have steeper time trends |
+| $\rho_{01} < 0$ | Patients with more baseline seizures have flatter/lower time trends |
+
+::: {.callout-warning}
+This is the **meaning of the sign**, not the epilepsy finding. For these data FLW estimate $\rho_{01}$ near zero (Table 14.6) and set the covariance to zero in their negative-binomial extension. Do not present a strong correlation as the result before seeing the estimate.
+:::
+
+::: {.notes}
+Repeat the caution from Part I deliberately, because the temptation to over-read rho_01 is strong. The honest message: the intercept-slope correlation is often weak and poorly estimated with few occasions per subject. We confront the actual epilepsy estimate (near zero) in Part VII.
+:::
+
+---
+
+## Conditional vs Marginal Effects (Revisited)
+
+```{r}
+#| echo: false
+#| fig-height: 4.2
+#| fig-width: 9
+set.seed(667)
+t <- seq(0, 3, length.out = 50)
+b0 <- rnorm(40, 0, 0.5); b1 <- rnorm(40, 0, 0.35)
+subj <- do.call(rbind, lapply(seq_along(b0), function(k)
+  data.frame(t = t, id = k, eta = 1 + (-0.2 + b1[k]) * t + b0[k])))
+subj$rate <- exp(subj$eta)
+marg <- data.frame(t = t,
+  rate = sapply(t, function(tt) mean(exp(1 + (-0.2 + b1) * tt + b0))))
+ggplot() +
+  geom_line(data = subj, aes(t, rate, group = id), color = "grey70", alpha = 0.6) +
+  geom_line(aes(t, exp(1 - 0.2 * t)), color = "black", linewidth = 1.3) +
+  geom_line(data = marg, aes(t, rate), color = "firebrick", linewidth = 1.3,
+            linetype = "dashed") +
+  annotate("text", x = 2.3, y = exp(1 - 0.2 * 2.3) * 0.78,
+           label = "conditional (b=0)", color = "black") +
+  annotate("text", x = 2.3, y = max(marg$rate) * 0.92,
+           label = "marginal (average of curves)", color = "firebrick") +
+  labs(x = "Time", y = "Rate", title = "Subject curves fan out; the average is not a single curve")
+```
+
+Because subjects **fan out**, the average of the subject curves is not a single curve with the same slope. With a non-linear link, the population-average (marginal) effect is **not** the conditional ($b=0$) effect.
+
+::: {.callout-note}
+**Recall (L14):** the marginal coefficient is an attenuated version of the conditional one. The attenuation gets harder to summarize with a single factor once slopes are random (it varies by covariate level). We quantify the gap on the real fit in Part VII.
+:::
+
+::: {.notes}
+Lead with the picture, then the integral idea. The grey curves are subjects, the solid black is the b=0 curve, the dashed red is the true marginal (average of the grey curves). The marginal bends away from the conditional because exp of an average is not the average of exps (Jensen). Recall from L14 the attenuation idea: for the LOGISTIC random-intercept model, beta_marg approx beta_cond / sqrt(1 + c2^2 * sigma_b^2) with the single constant c2 = 16*sqrt(3)/(15*pi) approx 0.588 (FLW p.477); 0.346 is c2^2 (the multiplier on sigma_b^2, = (1/1.7)^2 probit form), NOT a separate constant. That closed-form constant is a logistic-link result; the Poisson/log-link fan-out shown here is the same Jensen mechanism but has no single such attenuation constant (and Poisson random SLOPES are not attenuated this way). The Zeger-Liang attenuation factor is a Ch. 16 / Zeger-Liang-Albert (1988) result, beyond Ch. 14; do not assert a numeric gap here, we compute it on the epilepsy fit in Part VII.
+:::
+
+---
+
+## Part IV: Prediction and Empirical Bayes Predictors
+
+---
+
+## What Are Empirical Bayes Predictors?
+
+**Definition (once, then reused):** the **empirical Bayes (EB) predictor** of subject $i$'s random effects is the posterior mean given that subject's data,
+
+$$\hat{\mathbf{b}}_i = E[\mathbf{b}_i \mid \mathbf{Y}_i;\, \hat{\boldsymbol\beta}, \hat\phi, \hat G]$$
+
+evaluated at the ML estimates (hence "empirical"). It requires integrating over $\mathbf{b}_i$, so it is computed numerically.
+
+::: {.callout-note}
+FLW use "empirical Bayes" and "empirical BLUP" **interchangeably** for GLMM random-effect predictions (Sec. 14.5, pp. 411-412): $\hat{\mathbf{b}}_i$ "coincides with the empirical Bayes or BLUP used in Chapter 8." The "linear/unbiased" properties of BLUP are exact only in the LMM; for a GLMM the term is FLW's convention, not a claim of exact linearity.
+:::
+
+::: {.notes}
+Define EB once here and refer back. Be careful with terminology: do NOT tell students BLUP is wrong for GLMMs. FLW themselves call these empirical BLUPs. The honest statement is that "best linear unbiased" is a literal property only in the linear case; in the GLMM the name carries over by convention. Mechanically it is a posterior mean of b_i given Y_i, computed by numerical integration, plugged in at the ML estimates.
+:::
+
+---
+
+## Properties of Empirical Bayes Predictors
+
+| Property | Description |
+|----------|-------------|
+| **Shrinkage** | Extreme observations pulled toward population mean |
+| **Reliability** | More shrinkage with fewer observations per subject |
+| **Conditioning** | Based on observed data for that subject |
+| **Normality leverage** | EB predictors inherit the assumed normal shape (FLW p. 412) |
+
+::: {.notes}
+Shrinkage is the headline property: a subject with few observations or an extreme apparent effect gets pulled toward the population mean. Reliability: more data per subject means less shrinkage. One subtle FLW point (p.412): because the empirical BLUPs are pulled toward a normal, their histogram/Q-Q plot cannot by itself validate the normality assumption. We still plot them as a rough check but flag this caveat on the diagnostics slide.
+:::
+
+---
+
+## Shrinkage Effect (LMM vs GLMM)
+
+**GLMM takeaway:** shrinkage still happens. A subject's EB predictor is pulled toward the population mean, and **more** so when that subject has few observations or when the between-subject variance is small. We see this directly in the epilepsy shrinkage plot (Part VII).
+
+::: {.callout-note}
+**In the linear (LMM) case this is exact:** the shrinkage factor has a closed form,
+$$\frac{\sigma^2_{\text{within}}}{\sigma^2_{\text{within}} + n_i\, \sigma^2_{\text{between}}}.$$
+For a GLMM with a non-linear link the same forces operate but there is no simple closed form.
+:::
+
+::: {.notes}
+Lead with the GLMM takeaway, not the LMM formula, because this is a GLMM lecture. The closed form is a callout for the linear case the students already know from Ch. 8. The two levers are intuitive: small n_i means little subject-specific information so we trust the population mean more; small between-subject variance means subjects are alike so we again pull toward the center. Forward-reference the shrinkage scatterplot in Part VII as the visual proof.
+:::
+
+---
+
+## Computing Empirical Bayes Predictors in R
+
+```{r}
+#| echo: true
+#| eval: false
+# After fitting a model:
+ranef(model)              # Random effects estimates (EB predictors)
+coef(model)               # Fixed + random effects combined
+predict(model, type = "response")  # Subject-specific predictions
+```
+
+::: {.notes}
+Quick orientation to the three functions: ranef gives the b_i deviations (the EB predictors), coef gives beta + b_i per subject (the subject-specific coefficients), predict with type=response gives fitted means on the data scale. We use ranef in the case study and rename its columns; flag now that ranef(model)$id is a data frame keyed by the grouping factor "id" and its columns are in the order they appear in the random-effects formula (intercept, then slope).
+:::
+
+---
+
+## Subject-Specific Predictions
+
+For subject $i$ at covariate value $x^*$ (with random-effect design row $z^*$):
+
+$$\hat{\mu}_i = g^{-1}\!\left(x^{*}\hat{\boldsymbol\beta} + z^{*}\hat{\mathbf{b}}_i\right)$$
+
+This gives **individual-level predictions** incorporating the subject's EB-predicted random effects.
+
+::: {.notes}
+This is the conditional (subject-specific) prediction: plug in this subject's own b_i. Contrast it now with two other targets we will hit later: the b=0 prediction (re.form=NA, a hypothetical average subject) and the true marginal mean (integrate over b). All three differ under a non-linear link. Set up the distinction here so the re.form=NA warning in Part VII lands.
+:::
+
+# Part II (Day 2, ~75 min): Computation, Selection, Case Study
+
+## Recap of Day 1
+
+On Day 1 we covered specification and interpretation:
+
+- Random slopes let each subject have an individual **rate of change**, with $\mathbf{b}_i \sim N(0, G)$
+- $G$ holds $\sigma_0^2$ (intercept var), $\sigma_1^2$ (slope var), $\sigma_{01}$ (their covariance)
+- Read variance components through the **inverse link** (exp for log); $\rho_{01}$ is often weak
+- $\beta$ is **conditional** on $\mathbf{b}_i$; the marginal effect is attenuated (non-linear link)
+- **Empirical Bayes** predictors give shrinkage-based subject-specific estimates
+
+::: {.notes}
+Day 2 opener. Spend two minutes re-grounding before the computational machinery. The single sentence to repeat: everything is conditional on b_i, and that is why computation is hard (we must integrate b_i out for the likelihood) and why marginal differs from conditional (Jensen). Today: how the fitting actually works, how to choose between models, then the full epilepsy case study with diagnostics and marginal prediction.
+:::
+
+---
+
+## Part V: Computational Considerations
+
+---
+
+## The Integration Challenge
+
+**Marginal (integrated) likelihood** (FLW Sec. 14.5):
+
+$$L(\beta, \phi, G) = \prod_{i=1}^N \int \left[\prod_{j=1}^{n_i} f(y_{ij}\mid \mathbf{b}_i; \beta)\right] \phi(\mathbf{b}_i; G)\, d\mathbf{b}_i$$
+
+Unlike the LMM (Ch. 8), this integral has **no closed form** for a non-linear link. With random slopes $\mathbf{b}_i \in \mathbb{R}^q$ (typically $q = 2$), it is a $q$-dimensional integral per subject.
+
+::: {.notes}
+The whole reason GLMM fitting is harder than LMM fitting lives on this slide. In the Gaussian LMM the integral over b_i is available in closed form (normal-normal conjugacy); with a log or logit link it is not, so we approximate it numerically. FLW Sec. 14.5 calls L the marginal or integrated likelihood. Quadrature methods approximate the integral by a weighted sum; that is the next slide.
+:::
+
+---
+
+## Adaptive Gauss-Hermite Quadrature (the FLW Ch. 14 method)
+
+**Idea:** approximate the integral by a weighted sum of integrand evaluations.
+
+$$L(\beta,\phi,G) \approx \prod_{i=1}^N \sum_{k=1}^K f(\mathbf{Y}_i \mid \mathbf{b}_i = v_k)\, w_k$$
+
+**Adaptive:** centers the quadrature points $v_k$ near the mode of each subject's integrand (more accurate than fixed points).
+
+::: {.callout-note}
+This is FLW's true-likelihood method (Tables 14.2/14.6 used **50-point** adaptive Gaussian quadrature). FLW Table 14.3 shows estimates **stabilize once $K$ exceeds about 30**; using too few points (5-10) gave misleading values. Recommendation: increase $K$ until estimates and SEs stop moving.
+:::
+
+::: {.notes}
+AGQ is the Chapter 14 benchmark, not an approximation in the Ch.15 sense. Anchor to FLW Table 14.3: for the amenorrhea data the variance component was unstable at 5-10 points and only settled past 30; FLW used 50. The practical rule is to keep raising K until nothing moves. Cost grows like K^q, which is why high K is only feasible for low-dimensional random effects.
+:::
+
+---
+
+## Laplace Approximation (beyond FLW Ch. 14)
+
+::: {.callout-warning}
+**Beyond FLW Ch. 14 (this is FLW Ch. 15 / approximate-methods material).** FLW Ch. 14 names only generic quadrature; it does not derive the Laplace formula and explicitly defers the less-demanding approximate methods (PQL, Laplace-type) to Chapter 15.
+:::
+
+**Idea:** approximate the integrand with a single Gaussian centered at the mode.
+
+$$\int f(b)\, db \approx f(\hat{b}) \cdot (2\pi)^{q/2} |H(\hat{b})|^{-1/2}$$
+
+In `lme4`, **`nAGQ = 1` is the Laplace approximation** (one quadrature point at the mode). It is fast and the only option for $q \geq 2$ in `lme4`, but can be biased for sparse/binary data.
+
+::: {.notes}
+Flag this honestly: the Laplace-vs-AGQ dichotomy and the nAGQ=1 = Laplace fact are useful operationally but are not Chapter 14 content; FLW push the approximate methods to Ch. 15. Teach it as the practical reality of lme4 (Laplace is the only choice for 2+ random effects there), but tell students the book treats AGQ as the accurate benchmark and PQL/Laplace as the cheaper approximations.
+:::
+
+---
+
+## Choosing the Number of Quadrature Points
+
+| nAGQ | Accuracy | When |
+|------|----------|------|
+| 1 (Laplace) | Lowest | Random slopes in `lme4` ($q \geq 2$), large $n_i$ |
+| 5-10 | Moderate | Random intercept, small $n_i$ |
+| 15-30+ | High | Sparse binary data; raise until stable (FLW Table 14.3) |
+
+**Cost:** time scales as $O(K^q)$, $q$ = number of random effects per subject.
+
+::: {.callout-note}
+**`lme4` limit:** `nAGQ > 1` works only for a **single** random effect ($q=1$). For random slopes ($q \geq 2$) `lme4` uses Laplace; for higher accuracy with $q \geq 2$, use `glmmTMB` or a Bayesian fit.
+:::
+
+::: {.notes}
+This single slide replaces the old separate "Choosing nAGQ" and "Practical Limit" tables (compressed per the audit, to free time for the marginal-prediction block). The operational facts: in lme4 you only get AGQ for a random-intercept model; the moment you add a random slope you are on Laplace. That is why our case study fits the random-intercept model with nAGQ=10 to sanity-check Laplace, then keeps the random-slope model on Laplace.
+:::
+
+---
+
+## Fit Random Intercept Model (Baseline)
+
+```{r}
+#| echo: true
+#| output-location: slide
+# Random intercept Poisson GLMM
+fit_ri <- glmer(
+  seizures ~ trt * visit + log_base + age_c + (1 | id),
+  data = epi_long,
+  family = poisson(link = "log")
+)
+
+summary(fit_ri)
+```
+
+::: {.notes}
+Start simple, as the workflow says: random intercept only. Point out in the output the single variance component (intercept) and that all fixed effects are conditional log-rate-ratios. This is the baseline we will test the random slope against. The trt*visit term is the trt-by-time interaction (differential time trend by treatment), the scientific quantity of interest.
+:::
+
+---
+
+## Fit Random Slope Model
+
+```{r}
+#| echo: true
+#| output-location: slide
+# Random intercept + slope for visit
+fit_rs <- glmer(
+  seizures ~ trt * visit + log_base + age_c + (1 + visit | id),
+  data = epi_long,
+  family = poisson(link = "log"),
+  control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 1e5))
+)
+
+summary(fit_rs)
+```
+
+::: {.notes}
+Add the random slope for visit: (1 + visit | id). Note the control object: bobyqa with a raised iteration cap helps the harder 2-D random-effects fit converge; explain it once here. lme4 fits this by Laplace (nAGQ=1) because q=2. Have students locate the new slope variance and the intercept-slope correlation in the Random effects block; we extract them cleanly next.
+:::
+
+---
+
+## Understanding `VarCorr()` Output
+
+```{r}
+#| echo: true
+#| output-location: slide
+vc <- VarCorr(fit_rs)
+print(vc)                 # human-readable: SDs on the diagonal, Corr off-diagonal
+```
+
+::: {.callout-note}
+`VarCorr(fit)` returns a **list keyed by grouping factor**, so `VarCorr(fit)$id` is the $2\times2$ covariance $\hat G$ for the `id` grouping. `print()` shows **standard deviations** (not variances) and the correlation. `as.data.frame(vc)$sdcor` is ordered: intercept SD, slope SD, then the correlation.
+:::
+
+::: {.notes}
+Students trip over VarCorr structure constantly. Make three things explicit: (1) it is a LIST, one entry per grouping factor, hence the $id; (2) the printed numbers are SDs and a correlation, not variances; (3) as.data.frame gives a tidy sdcor column in a fixed order. We rely on $id being the 2x2 G matrix in the Monte Carlo function later, so plant it now.
+:::
+
+---
+
+## Interpret the Random Effects Structure
+
+```{r}
+#| echo: true
+#| output-location: slide
+vc_df <- as.data.frame(vc)
+sigma_int   <- vc_df$sdcor[1]   # intercept SD
+sigma_slope <- vc_df$sdcor[2]   # slope SD
+rho         <- vc_df$sdcor[3]   # intercept-slope correlation
+
+cat("Random intercept SD:", round(sigma_int, 3), "\n")
+cat("Random slope SD:    ", round(sigma_slope, 3), "\n")
+cat("Intercept-slope correlation:", round(rho, 3), "\n")
+```
+
+::: {.notes}
+Read the three numbers aloud. The intercept SD (about 0.52 on the log scale) means baseline rates vary by roughly exp(2*0.52) ~ 2.8-fold across patients. The slope SD is small. The correlation, computed below, comes out near zero, which is the next slide's whole point.
+:::
+
+---
+
+## Interpretation of Correlation (what the data actually say)
+
+```{r}
+#| echo: false
+rho_val <- round(as.data.frame(VarCorr(fit_rs))$sdcor[3], 3)
+```
+
+For these data the intercept-slope correlation is **`r rho_val`**: essentially **zero**.
+
+- This **matches FLW Table 14.6**, where $g_{12} = 0.054$ and the LRT of $H_0: g_{12}=0$ gives $G^2 = 0.08$ (1 df, $p > 0.95$). FLW set the covariance to zero in their negative-binomial extension.
+- So there is **no evidence** that baseline seizure rate predicts the rate of change. The "high starters decline fastest" regression-to-the-mean story does **not** hold here.
+
+::: {.callout-warning}
+This is the corrected reading. An earlier instinct to narrate a strong negative correlation (regression to the mean) is **not supported** by either our fit or FLW's. With only 4 occasions per subject, the intercept-slope covariance is barely identified.
+:::
+
+::: {.notes}
+This is the reconciled slide. The number is inlined from the actual fit (r rho_val), not hardcoded, and it is near zero, agreeing with FLW. Make the teaching point: the tidy correlation story is a trap; the data here say intercepts and slopes are about independent. Mention FLW's formal LRT (G^2=0.08, p>0.95) and that they zeroed g12 in the NB model. With 4 time points there simply is not enough information to pin down the covariance.
+:::
+
+---
+
+## Check Your Understanding: Variance Components
+
+**Question:** A Poisson GLMM for hospital readmission counts yields:
+
+- Random intercept SD: $\sigma_0 = 0.8$
+- Random slope SD (for time): $\sigma_1 = 0.3$
+- Intercept-slope correlation: $\rho_{01} = -0.6$
+
+**Interpret these results clinically.**
+
+::: {.fragment}
+**Answer:**
+
+1. **$\sigma_0 = 0.8$**: Substantial between-patient variability in baseline readmission rates. On the log scale, patients vary by roughly $\pm 1.6$ (i.e., $\pm 2 \times 0.8$), meaning some patients have baseline rates $\exp(1.6) \approx 5$ times higher than others.
+
+2. **$\sigma_1 = 0.3$**: Patients differ in how their readmission risk changes over time. Some improve faster, others slower.
+
+3. **$\rho_{01} = -0.6$**: Patients with higher baseline readmission rates tend to show more improvement (steeper decline) over time. This could reflect regression to the mean or that high-risk patients benefit more from interventions.
+:::
+
+::: {.notes}
+This is a HYPOTHETICAL readmission example with a made-up strong negative correlation, used only to practice reading the sign and magnitude. Say so explicitly so students do not confuse it with the epilepsy result two slides back (where rho was near zero). The contrast is itself instructive: rho_01 can be strong in principle, but in our real data it was not.
+:::
+
+---
+
+## Increase Quadrature Points for Accuracy
+
+```{r}
+#| echo: true
+#| output-location: slide
+# Fit with adaptive Gauss-Hermite (nAGQ > 1)
+# Note: nAGQ > 1 only works with 1 random effect dimension in lme4
+# For 2+ random effects, use glmmTMB or stay with Laplace
+
+fit_ri_agq <- glmer(
+  seizures ~ trt * visit + log_base + age_c + (1 | id),
+  data = epi_long,
+  family = poisson(link = "log"),
+  nAGQ = 10
+)
+
+# Compare coefficient estimates
+cbind(Laplace = fixef(fit_ri), AGQ10 = fixef(fit_ri_agq)) %>% round(4)
+```
+
+::: {.notes}
+This is the practical version of FLW Table 14.3's sensitivity check, run on our own random-intercept fit. Laplace (nAGQ=1) vs 10-point AGQ should be close here because n_i is small but not pathological; if they differed materially you would keep raising nAGQ. Remind students this AGQ check is only available because this is a single random effect; the random-slope model cannot do nAGQ>1 in lme4.
+:::
+
+---
+
+## A Word on PQL and MQL (FLW Ch. 15)
+
+::: {.callout-note}
+**Penalized quasi-likelihood (PQL)** and **marginal quasi-likelihood (MQL)** are *approximate* estimation methods (a Laplace/Taylor-expansion approach), the subject of FLW **Chapter 15**, not Chapter 14.
+:::
+
+- **PQL** (`MASS::glmmPQL`) is fast and the only "legitimate" approximate method of the two, but **biased**, worst for **binary** outcomes and **few-cluster** data.
+- **MQL** does **not** even estimate the GLMM parameters and is generally not recommended.
+- **Benchmark:** adaptive Gaussian quadrature (the Ch. 14 method we use) is the **more accurate** integrated-likelihood estimator. Prefer it when feasible; reach for PQL only when AGQ is computationally out of reach.
+
+::: {.notes}
+This slide exists so glmmPQL is not a mystery one-liner in the software table. Define PQL/MQL briefly and flag them as Chapter 15 content. The examinable Ch.15 facts (for students who continue): PQL is the only one of the two that targets the GLMM parameters, both are biased especially for sparse binary data, and AGQ is the accurate benchmark. We are not teaching Ch.15 here; we are placing glmmPQL correctly.
+:::
+
+---
+
+## Software for Flexible GLMMs
+
+For more complex models (negative binomial, zero-inflation), consider:
+
+| Package | Features |
+|---------|----------|
+| `lme4::glmer` | ML via Laplace / AGQ (used here); Poisson, binomial |
+| `glmmTMB` | Negative binomial, zero-inflation, flexible covariance |
+| `brms` | Bayesian GLMMs with Stan (full posterior) |
+| `MCMCglmm` | Bayesian with multivariate response |
+| `MASS::glmmPQL` | Penalized quasi-likelihood (PQL); fast, approximate, biased (FLW Ch. 15) |
+
+::: {.notes}
+glmmPQL is now flagged as Ch.15 approximate-method material, consistent with the previous slide. Point students to glmmTMB for the negative binomial we fit in the case study, since lme4 has no NB family. brms/MCMCglmm are the Bayesian routes when quadrature is infeasible (q>=3).
+:::
+
+---
+
+## Part VI: Model Selection and Comparison
+
+---
+
+## Model Comparison Approaches
+
+| Method | Use Case | Notes |
+|--------|----------|-------|
+| **LRT** | Nested models | Chi-square approximation may fail at boundary |
+| **AIC/BIC** | Non-nested OK | BIC more conservative |
+| **Profile CI** | Single parameters | More accurate than Wald |
+
+---
+
+## Likelihood Ratio Test: Random Slope
+
+```{r}
+#| echo: true
+#| output-location: slide
+# Compare random intercept vs random intercept + slope
+# (this drops TWO parameters: the slope variance AND the intercept-slope covariance)
+anova(fit_ri, fit_rs)
+```
+
+::: {.notes}
+The anova() compares the random-intercept model to the random-intercept-plus-slope model. Crucial point for the next slide: going from RI to RI+slope adds TWO variance-covariance parameters, sigma_1^2 and sigma_01. So lme4 reports a 2-df chi-square. That is exactly why the naive "halve the p-value" rule is wrong here.
+:::
+
+---
+
+## LRT Caveat: Boundary Mixture (Stram-Lee)
+
+Testing whether to add the random slope puts the null **on the boundary** of the parameter space, so the reference distribution is **not** a plain $\chi^2$.
+
+::: {.callout-warning}
+**This test drops TWO parameters** ($\sigma_1^2$ **and** $\sigma_{01}$), so the correct reference is the **Stram-Lee 50:50 mixture**
+$$\tfrac12\chi^2_1 + \tfrac12\chi^2_2,$$
+**NOT** "halve the p-value" (which is right only for a single 1-df boundary test). Dropping just a 1-df variance would use $\tfrac12\chi^2_0 + \tfrac12\chi^2_1$; dropping a slope from a random-intercept model is the 1-vs-2 case above.
+:::
+
+```{r}
+#| echo: true
+#| output-location: slide
+# anova() reports a naive 2-df chi-square; recompute under the Stram-Lee mixture
+lrt <- anova(fit_ri, fit_rs)
+G2  <- lrt$Chisq[2]
+p_naive   <- lrt$`Pr(>Chisq)`[2]                            # naive chi^2_2
+p_mixture <- 0.5 * pchisq(G2, 1, lower.tail = FALSE) +
+             0.5 * pchisq(G2, 2, lower.tail = FALSE)          # 1/2 chi^2_1 + 1/2 chi^2_2
+cat("LRT statistic G^2:", round(G2, 2), "\n")
+cat("Naive 2-df p-value:        ", signif(p_naive, 3), "\n")
+cat("Stram-Lee mixture p-value: ", signif(p_mixture, 3), "\n")
+```
+
+::: {.callout-note}
+**Gold standard for a GLMM:** the exact-LRT simulation in `RLRsim` is **Gaussian-LMM only**. For this **Poisson** GLMM use a **parametric bootstrap** instead (`pbkrtest::PBmodcomp(fit_rs, fit_ri)`), which simulates the null reference distribution directly and needs no boundary formula.
+:::
+
+::: {.notes}
+This is the corrected boundary caveat. Two errors fixed from the old slide. First: "halve the p-value" is only valid for a single 1-df variance test; here we drop a slope, which removes both sigma_1^2 and the covariance sigma_01, so the Stram-Lee mixture is 1/2 chi^2_1 + 1/2 chi^2_2. The inlined computation shows the mixture p-value is smaller (less conservative) than the naive 2-df p-value. Second: do NOT reach for RLRsim here, it is exact only for Gaussian LMMs. For a Poisson GLMM the clean route is a parametric bootstrap (PBmodcomp), which we name but do not run live (slow).
+:::
+
+---
+
+## AIC/BIC Comparison
+
+```{r}
+#| echo: true
+#| output-location: slide
+model_comparison <- data.frame(
+  Model = c("Random Intercept (Poisson)", "Random Slope (Poisson)"),
+  AIC = c(AIC(fit_ri), AIC(fit_rs)),
+  BIC = c(BIC(fit_ri), BIC(fit_rs))
+)
+model_comparison
+```
+
+::: {.notes}
+AIC/BIC sidestep the boundary problem (no reference distribution needed). Note BIC penalizes complexity harder, so it may favor the simpler random-intercept model even when AIC and the LRT lean toward the random slope. Combine with the near-zero slope variance and correlation we found: the random slope buys little here, a recurring honest conclusion in this dataset.
+:::
+
+---
+
+## Check Overdispersion in Poisson Model
+
+```{r}
+#| echo: true
+#| output-location: slide
+# Check overdispersion in Poisson model
+pearson_resid <- residuals(fit_rs, type = "pearson")
+overdispersion <- sum(pearson_resid^2) / df.residual(fit_rs)
+cat("Overdispersion ratio (Poisson):", round(overdispersion, 2), "\n")
+```
+
+::: {.notes}
+The Pearson-based ratio is a quick overdispersion screen: well above 1 signals extra-Poisson variability. The random effects soak up some of it, but a large remaining ratio (driven partly by the patient-49 outlier) says the conditional Poisson assumption is shaky. FLW resolve this two ways, refit excluding patient 49 and fit a negative binomial; we do both in the case study.
+:::
+
+---
+
+## When to Choose Negative Binomial
+
+| Overdispersion Ratio | Recommendation |
+|----------------------|----------------|
+| < 1.5 | Poisson adequate |
+| 1.5 - 2.5 | Consider NB |
+| > 2.5 | Strongly prefer NB |
+
+Random effects can absorb **some** overdispersion, but not all.
+
+::: {.notes}
+This is a rule-of-thumb table, not a hard test. The deeper point (FLW Sec. 14.4): adding random intercepts AND slopes already induces marginal overdispersion, but the model still assumes Poisson variation conditional on b_i. The negative binomial mixed model adds a further multiplicative gamma error to relax that. We fit it (via glmmTMB) on the patient-49-excluded data to mirror FLW Table 14.8.
+:::
+
+---
+
+## Likelihood (MAR) vs GEE (MCAR)
+
+A signature GLMM advantage (FLW Sec. 14.5; Table 14.4 footnote, p. 420):
+
+::: {.callout-note}
+Likelihood-based GLMM estimation (what `glmer` does) gives **valid inference under MAR** (missing at random), provided the model is correctly specified. **GEE / marginal models require the stronger MCAR** (missing completely at random).
+:::
+
+- Epilepsy and most longitudinal trials have **dropout**, so this matters in practice.
+- It is a reason to prefer the likelihood-based mixed model when the scientific target is subject-specific and data are incomplete.
+
+::: {.notes}
+This contrast is a CLAUDE.md precision standard and a natural GLMM-lecture slide. The asymmetry: because the GLMM specifies the full joint distribution, the marginal likelihood remains valid under MAR; GEE specifies only the mean and working correlation, so it needs MCAR for the estimating equations to be unbiased under missingness. FLW make this point in the amenorrhea footnote (Table 14.4). Connect forward to the missing-data lectures (L17-L19).
+:::
+
+---
+
+## Part VII: Applied Case Study - Complete Analysis
+
+---
+
+## Final Model: Poisson with Random Slopes
+
+```{r}
+#| echo: true
+#| output-location: slide
+# Refit with centered visit for interpretability
+epi_long <- epi_long %>%
+  mutate(visit_c = visit - mean(visit))
+
+final_model <- glmer(
+  seizures ~ trt * visit_c + log_base + age_c + (1 + visit_c | id),
+  data = epi_long,
+  family = poisson(link = "log"),
+  control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 1e5))
+)
+
+broom.mixed::tidy(final_model, effects = "fixed", conf.int = TRUE)
+```
+
+::: {.notes}
+We center visit so the intercept and the treatment main effect are interpretable at the average visit, not at an extrapolated visit 0. This is the model we carry through diagnostics and marginal prediction. Have students find the trt:visit_c interaction, the differential time trend, the scientific quantity. The fixed effects are conditional (subject-specific) log-rate-ratios; we exponentiate next.
+:::
+
+---
+
+## Fixed Effects Interpretation
+
+```{r}
+#| echo: true
+#| output-location: slide
+# Exponentiate for rate ratios
+fe <- broom.mixed::tidy(final_model, effects = "fixed", conf.int = TRUE) %>%
+  mutate(
+    RR = exp(estimate),
+    RR_lower = exp(conf.low),
+    RR_upper = exp(conf.high)
+  ) %>%
+  dplyr::select(term, estimate, RR, RR_lower, RR_upper, p.value)
+
+fe
+```
+
+::: {.notes}
+Exponentiating puts everything on the rate-ratio scale a clinician reads. Walk one row: exp(trtProgabide) is the rate ratio comparing progabide to placebo at the average visit for a typical (b=0) patient. The CIs are profile-free Wald here; for a key term you could profile. Stress one more time these are subject-specific rate ratios, not population-average.
+:::
+
+---
+
+## Rate Ratio Interpretation
+
+| Effect | Interpretation |
+|--------|----------------|
+| trtProgabide | Treatment effect at average visit |
+| visit_c | Time trend for placebo group |
+| log_base | Per-unit increase in log baseline rate |
+| trt:visit_c | Differential time trend for progabide vs placebo |
+
+All effects are **conditional** on random effects (subject-specific).
+
+::: {.notes}
+This table maps each coefficient to its plain-language meaning. The trt:visit_c interaction is the headline: a negative value means progabide bends the seizure trajectory down faster than placebo, which is FLW's beta_4 (the ratio of rate ratios, Table 14.5/14.6). Tie it back to the FLW reproduction on the next slides.
+:::
+
+---
+
+## Reproducing FLW's Exact Ch. 14 Model
+
+FLW's actual model uses an **offset** $\log(T_{ij})$ (8 wk baseline, 2 wk follow-up), the **baseline period included** ($j=0$), and a **binary** Time indicator:
+
+$$\log E(Y_{ij}\mid \mathbf{b}_i) = \log(T_{ij}) + (\beta_1 + b_{1i}) + (\beta_2 + b_{2i})\,\text{Time}_{ij} + \beta_3 \text{Trt}_i + \beta_4 \text{Trt}_i\!\times\!\text{Time}_{ij}$$
+
+```{r}
+#| echo: true
+#| output-location: slide
+# Rebuild in FLW's layout: baseline as period 0, offset for time-at-risk, binary Time
+flw <- epi_raw %>%
+  pivot_longer(cols = c(base, y1, y2, y3, y4),
+               names_to = "period", values_to = "count") %>%
+  mutate(
+    Time = ifelse(period == "base", 0, 1),          # binary baseline/follow-up
+    Tij  = ifelse(period == "base", 8, 2),           # weeks at risk
+    Trt  = factor(trt, levels = c(0, 1), labels = c("Placebo", "Progabide"))
+  )
+
+flw_fit <- glmer(count ~ Time * Trt + (1 + Time | id),
+  data = flw, family = poisson(link = "log"), offset = log(Tij),
+  control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 1e5)))
+
+round(fixef(flw_fit), 4)        # compare to FLW Table 14.6
+print(VarCorr(flw_fit))
+```
+
+::: {.callout-note}
+This matches **FLW Table 14.6** closely: Intercept $\approx 1.07$, Time $\approx 0.00$, Trt $\approx 0.05$, Trt$\times$Time $\approx -0.31$ (FLW: 1.0707, -0.0004, 0.0513, -0.3065). The intercept-slope correlation is again near zero ($g_{12}=0.054$, LRT $p>0.95$).
+:::
+
+::: {.notes}
+This is the fidelity slide: we reproduce FLW's exact specification (offset, baseline period, binary Time) and recover Table 14.6 to three decimals. Use it to make the instructor-variant point concrete: our earlier Thall-Vail model (continuous visit, log_base covariate, no offset) and FLW's offset model give the same scientific conclusion (significant Trt-by-Time interaction, near-zero rate change in placebo, about 26% reduction with progabide), but they are not the same model. The trt:Time estimate -0.31 gives exp(-0.31) ~ 0.74, the 26% reduction FLW report.
+:::
+
+---
+
+## Outlier and Overdispersion: FLW's Resolution
+
+```{r}
+#| echo: true
+#| output-location: slide
+# (1) Refit excluding patient 49 (the 151/302-count outlier; FLW Table 14.7)
+flw_fit49 <- glmer(count ~ Time * Trt + (1 + Time | id),
+  data = subset(flw, id != 49), family = poisson(link = "log"),
+  offset = log(Tij),
+  control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 1e5)))
+
+# (2) Negative binomial mixed model, excluding 49 (FLW Table 14.8); needs glmmTMB
+nb_fit <- glmmTMB::glmmTMB(count ~ Time * Trt + (1 + Time || id),
+  data = subset(flw, id != 49), family = glmmTMB::nbinom2,
+  offset = log(Tij))
+
+rbind(
+  `Poisson, full (T14.6)`      = fixef(flw_fit),
+  `Poisson, excl 49 (T14.7)`   = fixef(flw_fit49),
+  `Neg. binom, excl 49 (T14.8)`= glmmTMB::fixef(nb_fit)$cond
+) |> round(4)
+```
+
+::: {.callout-note}
+Patient 49 (151 baseline, 302 follow-up seizures) inflates the variance components. Excluding it (Table 14.7) and switching to a **negative binomial** mixed model (Table 14.8) is FLW's actual overdispersion remedy. The Trt$\times$Time effect is stable across all three (about $-0.31$ to $-0.36$), so the treatment conclusion is robust.
+:::
+
+::: {.notes}
+This closes the canonical chapter result the deck previously omitted. Two moves, both FLW's: drop patient 49 (Table 14.7) and fit the negative binomial (Table 14.8, via glmmTMB since lme4 has no NB family; we use the uncorrelated || form because FLW set g12=0 in the NB model). The key teaching point: the headline Trt-by-Time effect barely moves, so the substantive conclusion does not depend on the outlier or the Poisson assumption. The variances shrink without patient 49, as expected.
+:::
+
+---
+
+## Extract and Visualize Empirical Bayes Predictors
+
+```{r}
+#| echo: true
+#| output-location: slide
+#| fig-height: 5
+#| fig-width: 9
+# Get random effects
+re <- ranef(final_model)$id
+colnames(re) <- c("Intercept", "Slope")
+re$id <- rownames(re)
+
+ggplot(re, aes(x = Intercept, y = Slope)) +
+  geom_point(alpha = 0.7, size = 2) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "red") +
+  labs(x = "Random Intercept (log scale)",
+       y = "Random Slope for Visit",
+       title = "Subject-Specific Deviations from Population Mean") +
+  annotate("text", x = max(re$Intercept) * 0.8, y = min(re$Slope) * 0.8,
+           label = paste("Correlation:", round(cor(re$Intercept, re$Slope), 2)))
+```
+
+::: {.notes}
+ranef(final_model)$id is the data frame of EB predictors, keyed by the id grouping factor; we rename its columns Intercept and Slope (they come in formula order). The scatter is the visual of G: a roughly elliptical cloud centered at zero. The near-zero correlation annotation matches the variance-component estimate, reinforcing that intercept and slope are about independent here. Subjects far from the origin are candidates for the influence check we do shortly.
+:::
+
+---
+
+## Subject-Specific Predictions
+
+```{r}
+#| echo: true
+#| output-location: slide
+#| fig-height: 5
+#| fig-width: 10
+# Predictions for each subject
+epi_long$pred <- predict(final_model, type = "response")
+
+# Plot for 9 random subjects
+set.seed(42)
+sample_ids <- sample(unique(epi_long$id), 9)
+
+epi_long %>%
+  filter(id %in% sample_ids) %>%
+  ggplot(aes(x = visit)) +
+  geom_point(aes(y = seizures), alpha = 0.7) +
+  geom_line(aes(y = pred), color = "blue", linewidth = 1) +
+  facet_wrap(~id, scales = "free_y", ncol = 3) +
+  labs(x = "Visit", y = "Seizure Count",
+       title = "Observed (points) vs Subject-Specific Predictions (lines)")
+```
+
+::: {.notes}
+These are conditional predictions: each line uses that subject's own EB-predicted random effects, so the lines track the points closely. This is what subject-specific prediction buys you over a single population curve. Contrast with the next slide, where we show the shrinkage that produced these lines.
+:::
+
+---
+
+## Empirical Bayes Shrinkage Illustration
+
+```{r}
+#| echo: true
+#| output-location: slide
+#| fig-height: 4.5
+#| fig-width: 9
+# Compare observed means to predicted (shrunk) means
+subject_summary <- epi_long %>%
+  group_by(id, trt) %>%
+  summarise(
+    observed_mean = mean(seizures),
+    predicted_mean = mean(pred),
+    n_obs = n(),
+    .groups = "drop"
+  )
+
+ggplot(subject_summary, aes(x = observed_mean, y = predicted_mean, color = trt)) +
+  geom_point(alpha = 0.7, size = 2) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed") +
+  labs(x = "Observed Mean Seizures", y = "Predicted Mean (Shrunk)",
+       title = "Empirical Bayes Shrinkage: Predictions vs Observed",
+       subtitle = "Points below diagonal show shrinkage toward population mean") +
+  coord_equal()
+```
+
+::: {.callout-note}
+**Reading it:** the dashed line is "no shrinkage" (predicted = observed). Points pulled **toward the population mean** (off the line, especially extreme subjects with few/noisy observations) show empirical Bayes shrinkage in action.
+:::
+
+::: {.notes}
+This is the promised visual proof of shrinkage. Extreme observed means get pulled in toward the middle; subjects near the population mean barely move. Connect to the Part IV levers: the pull is stronger for subjects with less information. Patient 49 sits far out; note it as the outlier we handled in the FLW reproduction.
+:::
+
+---
+
+## Diagnostic: Residuals vs Fitted, Residuals by Visit
+
+```{r}
+#| echo: false
+#| fig-height: 4.5
+#| fig-width: 9
+epi_long$resid <- residuals(final_model, type = "pearson")
+
+p1 <- ggplot(epi_long, aes(x = pred, y = resid)) +
+  geom_point(alpha = 0.5) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+  geom_smooth(se = FALSE) +
+  labs(x = "Fitted", y = "Pearson Residual", title = "Residuals vs Fitted")
+
+p2 <- ggplot(epi_long, aes(x = visit, y = resid)) +
+  geom_boxplot(aes(group = visit)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+  labs(x = "Visit", y = "Pearson Residual", title = "Residuals by Visit")
+
+p1 + p2
+```
+
+::: {.callout-note}
+**Reading it.** Left (residuals vs fitted): the red line at 0 is the target; a flat blue smoother and a roughly symmetric, constant-width band is good. A funnel (spread growing with the fitted value) signals **overdispersion**, expected here and the reason we consider negative binomial. Right (residuals by visit): each box should center on 0 with similar spread; a drifting median means the **time trend is mis-specified**.
+:::
+
+::: {.notes}
+Show the code on the setup slide earlier; here the plots render inline (echo=false) so the reading rule sits with them, per the diagnostics guideline. Tell students the funnel in the left panel is the overdispersion fingerprint, not a modeling mistake to "fix" by transformation; the right response is the negative binomial. The right panel checks whether the linear-in-time mean is adequate; flat medians across visits say yes.
+:::
+
+---
+
+## Diagnostic: Random Effects Q-Q Plots
+
+```{r}
+#| echo: false
+#| fig-height: 4.5
+#| fig-width: 9
+p3 <- ggplot(re, aes(sample = Intercept)) +
+  stat_qq() + stat_qq_line(color = "red") +
+  labs(title = "Q-Q Plot: Random Intercepts")
+
+p4 <- ggplot(re, aes(sample = Slope)) +
+  stat_qq() + stat_qq_line(color = "red") +
+  labs(title = "Q-Q Plot: Random Slopes")
+
+p3 + p4
+```
+
+::: {.callout-note}
+**Reading it.** Points on the red line support normality of the random effects. **Points curving up at the right** are a heavy right tail (positive skew); points curving down at the left are a heavy left tail. A few extreme points at the very ends are usually fine.
+:::
+
+::: {.callout-warning}
+**Caveat (FLW p. 412):** empirical BLUPs are shrunk toward a normal, so a clean Q-Q plot does **not** by itself confirm normality. Fixed-effect estimates are fairly robust to non-normal random effects; treat these plots as a rough screen, not a formal test.
+:::
+
+::: {.notes}
+The reading rule now lives on the plot slide. Annotate verbally: trace the upper-right of the intercept Q-Q for any upward curl (heavy right tail from high-count patients). Then deliver the important caveat: because EB predictors are pulled toward normal, the Q-Q plot is biased toward looking normal, so it cannot validate the assumption; FLW make exactly this point on p.412. The good news is fixed effects are robust to this misspecification.
+:::
+
+---
+
+## Q-Q Plot Pattern Reference
+
+**Quick reference for random-effects Q-Q patterns:**
+
+| Pattern | Interpretation | Concern |
+|---------|---------------|---------|
+| Points on the line | Normality satisfied | None |
+| Slight S-curve | Light tails | Minor |
+| Curving up at right | Heavy right tail (positive skew) | Moderate |
+| Curving down at left | Heavy left tail (negative skew) | Moderate |
+| Systematic departure | Severe non-normality | Serious |
+
+::: {.notes}
+This is the reference table only; the numbered "what to do" list and the robustness note moved into the speaker notes here to keep the slide light. If the random effects show severe, systematic non-normality the options are: (1) check for outliers or data errors first, (2) consider a heavier-tailed (e.g. Bayesian t) random-effects distribution, (3) reconsider the response model. But recall the previous slide's caveat: GLMMs are reasonably robust to moderate departures, and the Q-Q plot of shrunken EB predictors understates non-normality anyway, so do not over-react.
+:::
+
+---
+
+## Identifying Influential Subjects
+
+```{r}
+#| echo: true
+#| output-location: slide
+# Subjects with extreme random effects
+extreme_subjects <- re %>%
+  mutate(
+    extreme_int = abs(Intercept) > 2 * sd(Intercept),
+    extreme_slope = abs(Slope) > 2 * sd(Slope)
+  ) %>%
+  filter(extreme_int | extreme_slope)
+
+cat("Subjects with extreme random effects:\n")
+print(extreme_subjects)
+```
+
+::: {.notes}
+A quick influence screen: which subjects sit beyond 2 SD on either random effect. Patient 49 should surface. This is informal (not Cook's distance), but it points the eye at the same subjects we handled in the FLW reproduction. In a report you would refit without the flagged subjects to confirm conclusions are stable, which is exactly what excluding patient 49 demonstrated.
+:::
+
+---
+
+## Predictions at $b_i = 0$ (re.form = NA): the Concept
+
+**Critical distinction:** `re.form = NA` gives predictions at $\mathbf{b}_i = 0$, which is **NOT** the true marginal (population-average) prediction.
+
+Per FLW (p. 477): for non-linear links, $E[Y \mid \mathbf{b} = 0] \neq E[Y]$.
+
+- `re.form = NA`: a hypothetical subject with $\mathbf{b}_i = 0$ (the "typical" subject)
+- True marginal: $E[Y] = \displaystyle\int g^{-1}(X_{ij}\beta + Z_{ij}\mathbf{b})\, \phi(\mathbf{b}; G)\, d\mathbf{b}$
+
+::: {.callout-warning}
+Reporting `re.form = NA` as a population-average mean is a common error. For a log link the true marginal is **larger** (Jensen). We quantify the gap two slides on.
+:::
+
+::: {.notes}
+Pure-concept slide (code moved to the next slide). Hammer the distinction: the b=0 prediction is for one idealized subject sitting exactly at the population center, not the average over the population. Under a non-linear link these differ because the inverse link is convex/concave. Cite FLW p.477. This sets up both the code (next) and the Monte Carlo integration (after).
+:::
+
+---
+
+## Predictions at $b_i = 0$: the Code
+
+```{r}
+#| echo: true
+#| output-location: slide
+#| fig-height: 4.5
+#| fig-width: 8
+# Create prediction grid
+newdata <- expand.grid(
+  trt = c("Placebo", "Progabide"),
+  visit_c = seq(-1.5, 1.5, length.out = 50),
+  log_base = mean(epi_long$log_base),
+  age_c = 0
+)
+
+# Predictions at b_i = 0 (NOT marginal/population-average!)
+newdata$pred <- predict(final_model, newdata = newdata,
+                        re.form = NA, type = "response")
+
+ggplot(newdata, aes(x = visit_c + 2.5, y = pred, color = trt)) +
+  geom_line(linewidth = 1.2) +
+  labs(x = "Visit", y = "Predicted Seizure Rate",
+       title = "Predictions at b = 0 (Conditional on Zero Random Effects)",
+       subtitle = "Note: This is NOT the same as true marginal/population-average predictions",
+       color = "Treatment")
+```
+
+::: {.notes}
+This is the b=0 prediction curve. Useful for visualizing the fitted treatment trajectories for a typical subject, but label it honestly: not the population average. The grid fixes log_base at its mean and age at center so only treatment and visit vary. Next we build the true marginal by integrating over b.
+:::
+
+---
+
+## True Marginal Predictions Require Integration
+
+For GLMMs with non-linear links, the true marginal mean is
+
+$$E[Y_{ij}] = \int g^{-1}(X_{ij}\beta + Z_{ij}\mathbf{b})\, \phi(\mathbf{b}; G)\, d\mathbf{b}$$
+
+**Ways to evaluate it:**
+
+1. **Monte Carlo integration:** simulate many $\mathbf{b}$ from $N(0, G)$, predict, average (we use this)
+2. **Numerical quadrature:** Gauss-Hermite approximation of the integral
+
+::: {.callout-note}
+A closed-form **attenuation factor** (Zeger-Liang) exists for some links but is a Ch. 16 / Zeger, Liang & Albert (1988) result, **beyond FLW Ch. 14**. Monte Carlo is exact up to simulation error and needs no such formula.
+:::
+
+::: {.notes}
+This is the same integral as the concept slide, stated once (the duplicate that used to appear here is removed). The honest, general-purpose method is Monte Carlo: draw b from the fitted N(0,Ghat), push each through the inverse link, average. The Zeger-Liang attenuation factor is flagged as beyond-Ch.14 enrichment; we do not rely on it.
+:::
+
+---
+
+## Monte Carlo Marginal Predictions: the Recipe
+
+The marginal mean is $E[Y] = \int g^{-1}(X_{ij}\beta + Z_{ij}\mathbf{b})\,\phi(\mathbf{b};G)\,d\mathbf{b}$. Approximate it:
+
+```
+1. Simulate b_1, ..., b_M  ~  N(0, G_hat)         # M = 2000 draws from the fitted G
+2. For each prediction point:
+     eta_fixed = X*beta_hat                         # linear predictor at b = 0 (re.form = NA)
+     for each draw b_m:  eta_m = eta_fixed + z' b_m  # add the random part, z = (1, visit_c)
+3. Average exp(eta_m) over the M draws              # inverse link (exp) then Monte Carlo mean
+```
+
+::: {.callout-note}
+**Assumptions:** a **single** grouping factor and a **Poisson/log** link ($g^{-1} = \exp$). For other families swap the inverse link in step 3; for crossed/nested grouping factors the simulation is more involved.
+:::
+
+::: {.notes}
+Pseudocode first, function next, so students see the three-step logic before the R. Map each step to the integral: step 1 draws b from the fitted normal (the phi(b;G) weight), step 2 forms the conditional linear predictor per draw, step 3 applies the inverse link and averages (the integral). Flag the two assumptions baked into the helper: one grouping factor (so VarCorr(fit)$id is the whole story) and a log link.
+:::
+
+---
+
+## Monte Carlo Marginal Predictions: the Function
+
+```{r}
+#| echo: true
+#| output-location: slide
+# Monte Carlo approach for true marginal predictions with random slopes
+compute_marginal_poisson <- function(fit, newdata, n_sim = 2000, seed = 667) {
+  set.seed(seed)
+
+  # --- Step 1: draw b ~ N(0, G_hat) ------------------------------------------
+  # VarCorr(fit) is a LIST keyed by grouping factor; $id is the 2x2 G_hat
+  # (assumes a SINGLE grouping factor named "id")
+  G_hat <- as.matrix(VarCorr(fit)$id)
+  b_sim <- MASS::mvrnorm(n_sim, mu = c(0, 0), Sigma = G_hat)   # n_sim x 2
+
+  # Fixed-effect linear predictor at b = 0 (the X*beta term), one per grid point
+  eta_fixed <- predict(fit, newdata = newdata, re.form = NA, type = "link")
+
+  # --- Step 2 & 3: add z'b per draw, inverse-link, then average --------------
+  marginal_preds <- sapply(seq_along(eta_fixed), function(i) {
+    z_i <- c(1, newdata$visit_c[i])     # random-effects design row z = (intercept, slope)
+    eta_with_re <- eta_fixed[i] + b_sim %*% z_i   # Step 2: X*beta + z'b for all draws
+    mean(exp(eta_with_re))              # Step 3: exp() is g^{-1}; mean() is the MC integral
+  })
+
+  return(marginal_preds)
+}
+
+# Apply to prediction grid
+newdata_marginal <- expand.grid(
+  trt = c("Placebo", "Progabide"),
+  visit_c = c(-1.5, 0, 1.5),
+  log_base = mean(epi_long$log_base),
+  age_c = 0
+)
+
+newdata_marginal$pred_b0 <- predict(final_model, newdata = newdata_marginal,
+                                     re.form = NA, type = "response")
+newdata_marginal$pred_marginal <- compute_marginal_poisson(final_model, newdata_marginal)
+
+# Compare predictions
+contrast_tbl <- newdata_marginal %>%
+  mutate(visit = visit_c + 2.5,
+         difference = pred_marginal - pred_b0,
+         pct_diff = round(100 * difference / pred_b0, 1)) %>%
+  dplyr::select(trt, visit, pred_b0, pred_marginal, pct_diff)
+contrast_tbl
+```
+
+::: {.notes}
+This is the worked numeric conditional-vs-marginal contrast on the actual epilepsy fit, the FLW signature point made concrete. pred_b0 is the conditional (typical-subject) rate; pred_marginal is the population-average rate from Monte Carlo. The pct_diff column is the gap. We pull out the headline number on the next slide.
+:::
+
+---
+
+## Conditional vs Marginal: the Number
+
+```{r}
+#| echo: false
+gap_plac <- contrast_tbl %>% filter(trt == "Placebo", visit == 2.5)
+gap_pct  <- round(mean(contrast_tbl$pct_diff), 1)
+```
+
+For the epilepsy fit, the true marginal (population-average) seizure rate is about **`r round(mean(contrast_tbl$pct_diff),1)`% higher** than the conditional ($b=0$) prediction. For the placebo group at the average visit: conditional rate **`r round(gap_plac$pred_b0,2)`**, marginal rate **`r round(gap_plac$pred_marginal,2)`** (a **`r gap_plac$pct_diff`%** gap).
+
+::: {.callout-note}
+This is FLW's Ch. 14 signature point (Table 14.1 illustration: the population-average effect is roughly **15-25% smaller/larger** than the subject-specific one). Here the gap is driven by the **random-intercept variance** through Jensen ($E[\exp(\cdot)] > \exp(E[\cdot])$). The treatment **rate ratio** is nearly unchanged, because a shared-scale random intercept multiplies both arms equally; the gap shows up in the **level**, not the ratio.
+:::
+
+::: {.notes}
+Land the signature number out loud: marginal is about 15% above the b=0 prediction. This is exactly the magnitude FLW report in their Table 14.1 worked example (population-averaged effect ~15% different from subject-specific). The mechanism here is Jensen via the intercept variance: exp(0.5*sigma0^2) inflates the marginal level. Subtle but important: the treatment RATE RATIO is preserved (the intercept cancels in the ratio), so the conditional-vs-marginal gap here is about the level, not the slope or the treatment contrast. That is itself a teachable nuance about where the gap appears.
+:::
+
+---
+
+## Interpreting the Marginal vs b=0 Difference
+
+```{r}
+#| echo: true
+#| output-location: slide
+#| fig-height: 4.5
+#| fig-width: 9
+# Visualize the difference
+newdata_plot <- expand.grid(
+  trt = c("Placebo", "Progabide"),
+  visit_c = seq(-1.5, 1.5, length.out = 20),
+  log_base = mean(epi_long$log_base),
+  age_c = 0
+)
+
+newdata_plot$pred_b0 <- predict(final_model, newdata = newdata_plot,
+                                 re.form = NA, type = "response")
+newdata_plot$pred_marginal <- compute_marginal_poisson(final_model, newdata_plot)
+
+newdata_plot %>%
+  pivot_longer(cols = c(pred_b0, pred_marginal),
+               names_to = "type", values_to = "pred") %>%
+  mutate(type = recode(type,
+                       pred_b0 = "At b=0 (re.form=NA)",
+                       pred_marginal = "True Marginal (MC)"),
+         visit = visit_c + 2.5) %>%
+  ggplot(aes(x = visit, y = pred, color = trt, linetype = type)) +
+  geom_line(linewidth = 1) +
+  labs(x = "Visit", y = "Predicted Seizure Rate",
+       title = "True Marginal vs b=0 Predictions",
+       subtitle = "True marginal predictions are higher due to Jensen's inequality (log link)",
+       color = "Treatment", linetype = "Prediction Type") +
+  theme(legend.position = "bottom")
+```
+
+**Key insight:** For log link, true marginal > b=0 prediction because $E[\exp(X)] > \exp(E[X])$ (Jensen).
+
+::: {.notes}
+The figure shows both curves: dashed b=0 below, solid marginal above, the constant vertical gap is the ~15% Jensen inflation. Make the visual point that the two curves are roughly parallel on the rate scale here (gap is multiplicative and constant), consistent with the previous slide's "ratio preserved, level shifted" message.
+:::
+
+---
+
+## Uncorrelated Random Effects (Alternative)
+
+```{r}
+#| echo: true
+#| output-location: slide
+# Sometimes useful when correlation is near-zero or causing convergence issues
+fit_uncorr <- glmer(
+  seizures ~ trt * visit_c + log_base + age_c +
+    (1 | id) + (0 + visit_c | id),  # Uncorrelated
+  data = epi_long,
+  family = poisson(link = "log"),
+  control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 1e5))
+)
+
+# Compare AIC
+cat("Correlated RE AIC:", round(AIC(final_model), 1), "\n")
+cat("Uncorrelated RE AIC:", round(AIC(fit_uncorr), 1), "\n")
+```
+
+::: {.notes}
+Because rho_01 was near zero, forcing it to zero (uncorrelated) costs almost nothing in fit and saves a parameter; the AICs should be close. This is exactly what FLW did for the negative binomial model (g12 set to zero). It is the practical resolution when the correlation is weak or the correlated model will not converge. The syntax is the focus of the next slide.
+:::
+
+---
+
+## Why Use Uncorrelated Random Effects?
+
+| Situation | Recommendation |
+|-----------|----------------|
+| Correlation near 0 | Uncorrelated may be sufficient |
+| Convergence issues | Uncorrelated often more stable |
+| Few observations per subject | Correlation hard to estimate |
+| Scientific interest in correlation | Keep correlated structure |
+
+::: {.notes}
+Decision table for correlated vs uncorrelated random effects. The epilepsy data hit the first three rows: correlation near zero, only 4 occasions per subject. Keep the correlated structure only when the intercept-slope correlation is itself a scientific question and the data can support it. The syntax to force rho_01=0 is on the next slide, a frequent point of confusion.
+:::
+
+---
+
+## Understanding the Uncorrelated Syntax
+
+**Syntax:** `(1 | id) + (0 + visit_c | id)`
+
+Let us break this down:
+
+- `(1 | id)` - random intercept for each subject
+- `(0 + visit_c | id)` - random slope for `visit_c`, **without** an intercept in this term
+
+**Why `0 +`?** The `0 +` removes the implicit intercept from the second random effects term. Without it, `(visit_c | id)` would estimate both an intercept AND a slope, leading to redundancy.
+
+**The key insight:** When you specify two separate random effects terms for the same grouping factor, `lme4` estimates them **independently** (i.e., assumes zero correlation).
+
+**Comparison:**
+
+- `(1 + visit_c | id)` - estimates $\sigma_0^2$, $\sigma_1^2$, and $\rho_{01}$ (3 parameters)
+- `(1 | id) + (0 + visit_c | id)` - estimates $\sigma_0^2$ and $\sigma_1^2$ only (2 parameters, $\rho_{01} = 0$)
+
+::: {.notes}
+This is the single most common lme4 syntax confusion, so slow down. The `||` shorthand (`(1 + visit_c || id)`) does the same thing as the two-term form for a continuous slope. Emphasize the `0 +` removes the implicit intercept from the second term so you do not double-count it. The parameter count drop from 3 to 2 is the whole point: you trade the correlation for stability.
+:::
+
+---
+
+## Convergence Troubleshooting Summary
+
+| Issue | Solution |
+|-------|----------|
+| Model fails to converge | Center continuous predictors |
+| Singular fit (variance = 0) | Drop the problematic random effect |
+| Near-singular Hessian | Simplify random effects structure |
+| Very slow fitting | Reduce nAGQ or use Laplace |
+
+::: {.notes}
+The four failure modes a student will hit. The fixes in order of first resort: center continuous predictors (almost always helps), then simplify the random-effects structure (drop the correlation, then the slope), then change optimizer or raise maxfun. A singular fit (variance pinned at 0) is the model telling you the random effect is not supported by the data; believe it and simplify.
+:::
+
+---
+
+## SAS Equivalent (reference only)
+
+FLW Tables 14.2/14.6 use `PROC GLIMMIX` with adaptive quadrature. The standalone program for our random-slope Poisson GLMM:
+
+```sas
+proc glimmix data=epilepsy method=quad(qpoints=50);
+  class id;
+  model seizures = trt|visit_c log_base age_c
+        / dist=poisson link=log solution;
+  random intercept visit_c / subject=id type=un;
+run;
+```
+
+::: {.callout-note}
+`trt|visit_c` expands to the main effects and their interaction. `type=un` gives the **unstructured** $2\times2$ $G$ (the correlated form); use `type=vc` for the uncorrelated version. `method=quad(qpoints=50)` requests 50-point adaptive Gaussian quadrature, matching FLW; `/solution` prints the fixed-effect estimates.
+:::
+
+::: {.notes}
+This is the static, non-runnable SAS slide the spec requires, a complete standalone program (not a fragment table). Walk the mapping to our glmer call: CLASS id is the grouping factor, MODEL is the fixed part with DIST/LINK, RANDOM intercept visit_c / TYPE=UN is (1 + visit_c | id). method=quad(qpoints=50) is the FLW 50-point AGQ; note SAS GLIMMIX can do AGQ for q=2, unlike lme4. Shown for reference only; students run R.
+:::
+
+---
+
+## Practical Workflow for Random Slope GLMMs
+
+1. Start with the **random intercept** model
+2. Add **random slopes** one at a time
+3. Check **convergence** and variance estimates (watch for singular fits)
+4. Justify complexity with **LRT (boundary mixture) or AIC**
+5. Check **overdispersion** (counts); consider negative binomial
+6. Examine **empirical Bayes** predictor distributions
+7. Run **diagnostics** on residuals and random effects
+8. Report **both conditional and marginal** effects
+
+::: {.notes}
+This recipe card mirrors the case study we just ran end to end. Two emphases tied to today's fixes: step 4 uses the Stram-Lee mixture (or parametric bootstrap), not a naive halving; step 8 is not optional, we actually computed the ~15% conditional-vs-marginal gap. Note the workflow is presented as bullets, not a code block, so it reads cleanly on the slide.
+:::
+
+---
+
+## Summary
+
+- Random slopes allow **subject-specific covariate effects**
+- The correlation $\rho_{01}$ between intercepts and slopes is often interpretable
+- Empirical Bayes predictors provide shrinkage-based predictions for individual subjects
+- `re.form = NA` gives predictions at $b_i = 0$, **not** true marginal predictions
+- Computation is harder: Laplace for speed, AGQ for accuracy
+- Model selection balances fit (AIC/LRT) with interpretability
+- Always check for overdispersion in count data
+
+::: {.notes}
+The takeaways. If students remember three things: (1) beta is conditional, marginal differs (Jensen, ~15% here); (2) the boundary LRT for a random slope is the Stram-Lee mixture, not a halving; (3) interpret variance components through the inverse link. The epilepsy through-line: random slope added little, correlation near zero, treatment effect robust to outlier and to Poisson-vs-NB.
+:::
+
+---
+
+## Key Equations
+
+**Random Slope GLMM:**
+
+$$g(\mu_{ij}) = X_{ij}\beta + Z_{ij} b_i, \quad b_i \sim N_q(0, G)$$
+
+**Variance-Covariance Matrix:**
+
+$$G = \begin{pmatrix} \sigma_0^2 & \sigma_{01} \\ \sigma_{01} & \sigma_1^2 \end{pmatrix}$$
+
+**Empirical Bayes Predictor:** $\hat{\mathbf{b}}_i = E[\mathbf{b}_i \mid \mathbf{Y}_i, \hat{\boldsymbol\beta}, \hat{G}]$
+
+::: {.notes}
+The three equations to take away, in canonical notation: the row-form mean model, the 2x2 G, and the EB predictor as a posterior mean. Note G (not D) for the random-effects covariance, per the course notation standard.
+:::
+
+---
+
+## Reporting Random Slope Models
+
+When reporting, include:
+
+1. Fixed effects with CIs (state: **conditional** on random effects)
+2. Random effects variance components ($\sigma_0^2$, $\sigma_1^2$) on an interpretable scale
+3. Intercept-slope correlation **and whether it is distinguishable from zero**
+4. Model comparison (AIC; LRT with the **boundary mixture** for variance components)
+5. Estimation method (Laplace vs AGQ, number of quadrature points)
+6. Software and version
+
+::: {.notes}
+The reporting checklist a student uses for HW5 and the final project. Two items reflect today's fixes: report variance components on an interpretable (exp) scale, and state whether rho_01 is distinguishable from zero rather than over-interpreting its sign. The LRT line specifies the boundary mixture, not a naive test.
+:::
+
+---
+
+## Common Mistakes in Random Slope GLMMs
+
+| Mistake | Why It Is Wrong | Correction |
+|---------|----------------|------------|
+| Adding random slopes with too few observations per subject | Cannot reliably estimate slope variance with $n_i < 5$ | Use random intercept only, or collect more data |
+| Ignoring singular fit warnings | Variance estimate at boundary (0) indicates overfitting | Simplify random effects structure |
+| Using one combined random-slope term when you want uncorrelated REs | A single combined term estimates the intercept-slope correlation $\rho_{01}$ | Use the two-separate-terms (uncorrelated) form shown earlier to force $\rho_{01}=0$ |
+| Not centering time variables | Can cause convergence issues and make intercept hard to interpret | Center time so 0 is meaningful |
+| Forgetting that `re.form=NA` is NOT marginal | For Poisson/logistic, $E[Y \mid b=0] \neq E[Y]$ | Use Monte Carlo integration for true marginal |
+| Using Laplace when nAGQ would help | Laplace can be biased with small clusters or random slopes | Increase nAGQ to 5-10 for random slope models (lme4: only for q=1) |
+| Halving the p-value for a random-slope LRT | Adding a slope drops TWO parameters (variance + covariance) | Use the Stram-Lee mixture $\tfrac12\chi^2_1+\tfrac12\chi^2_2$, or a parametric bootstrap |
+
+::: {.notes}
+The gotchas slide. The last two rows are the precision points from today: nAGQ>1 only works for a single random effect in lme4, and the boundary correction for a random slope is the Stram-Lee mixture, not a naive halving. Walk students through why re.form=NA is not marginal one more time, it is the single most common reporting error.
+:::
+
+---
+
+## Check Your Understanding: Model Selection
+
+**Question:** You fit two models to seizure count data:
+
+- Model A: Random intercept only (AIC = 1245)
+- Model B: Random intercept + slope for time (AIC = 1238)
+
+`anova(A, B)` reports $\chi^2 = 9.0$ on **2 df** ($p = 0.011$). Model B shows a singular fit with $\hat{\sigma}_1^2 = 0.001$.
+
+**Which model should you report, and what is the correct boundary correction?**
+
+::: {.fragment}
+**Answer:** Report **Model A** (random intercept only).
+
+1. Going A $\to$ B adds **two** parameters ($\sigma_1^2$ **and** $\sigma_{01}$), so the boundary reference is the **Stram-Lee mixture** $\tfrac12\chi^2_1 + \tfrac12\chi^2_2$, **not** "halve the p-value." Under the mixture, $p = 0.5\,P(\chi^2_1 > 9) + 0.5\,P(\chi^2_2 > 9) \approx 0.007$, still nominally significant.
+2. But the variance estimate is essentially zero ($\hat{\sigma}_1^2 = 0.001$, singular fit): the random slope buys nothing.
+3. **Rule:** when a variance component is at the boundary, prefer the simpler model regardless of the test. A "significant" LRT against a near-zero variance is an artifact of the boundary, not evidence the slope is real.
+:::
+
+::: {.notes}
+This is the corrected CYU. The old version said "halve the p-value," which is wrong for a 2-df test. The fix teaches the Stram-Lee mixture explicitly and even computes it (~0.007). The deeper lesson is that the singular fit, not the p-value, drives the decision: a variance pinned at the boundary means the data do not support the random slope, so you simplify regardless of what any test says.
+:::
+
+---
+
+## For Next Time
+
+**Topics:**
+
+- Transition models for longitudinal data
+- Markov structures for discrete outcomes
+- Comparison of marginal, mixed, and transition approaches
+
+**Reading:**
+
+- Fitzmaurice et al. Chapter 16
+
+::: {.notes}
+Next lecture (L16) is FLW Ch. 16, contrasting marginal, mixed, and transition models, which is where the conditional-vs-marginal coefficient comparison we previewed today gets formalized (and where the Zeger-Liang attenuation factor properly lives). Point students who want the approximate-estimation methods (PQL/MQL) to FLW's own Chapter 15.
+:::
+
+---
+
+## Further Reading
+
+- **Fitzmaurice, Laird & Ware (2011)**, *Applied Longitudinal Analysis*, **Ch. 14** (GLMMs; this lecture), Sec. 14.7 case studies (Tables 14.5-14.8). **Ch. 15** for PQL/MQL approximate estimation; **Ch. 16** for marginal-vs-mixed coefficient comparison.
+- **Breslow & Clayton (1993)**, "Approximate inference in generalized linear mixed models," *JASA* 88, 9-25 (PQL; the epilepsy parameterization).
+- **Thall & Vail (1990)**, *Biometrics* 46, 657-671 (the seizure data).
+- **Zeger, Liang & Albert (1988)**, *Biometrics* 44, 1049-1060 (marginal-vs-conditional attenuation; beyond Ch. 14).
+- **Stram & Lee (1994)**, *Biometrics* 50, 1171-1177 (boundary mixture for variance-component LRTs).
+- R: `lme4` (Bates et al. 2015, *JSS*), `glmmTMB` (Brooks et al. 2017) for negative binomial mixed models.
+
+::: {.notes}
+The Further Reading the spec asks for, with the key citations. Breslow-Clayton is the source of both PQL and the log-baseline-covariate epilepsy parameterization we flagged as the instructor variant. Stram-Lee is the boundary-mixture reference for the LRT fix. Zeger-Liang-Albert is the attenuation result we flagged as beyond Ch.14.
+:::
+
+---
+
+## Session Info
+
+```{r}
+#| echo: true
+#| output-location: slide
+sessionInfo()
+```
+
+---

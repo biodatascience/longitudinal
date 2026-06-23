@@ -1,0 +1,9 @@
+arm,time,mean,sd
+Succimer,baseline,26.5,5.0
+Succimer,week1,13.5,7.7
+Succimer,week4,15.5,7.8
+Succimer,week6,20.8,9.2
+Placebo,baseline,26.3,5.0
+Placebo,week1,24.7,5.5
+Placebo,week4,24.1,5.8
+Placebo,week6,23.6,5.6

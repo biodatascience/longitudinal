@@ -1,0 +1,29 @@
+project:
+  type: website
+  output-dir: _site
+  render:
+    - index.qmd
+    - 2026/lectures/BIOS667_L*.qmd
+    - 2026/homework/HW*.qmd
+    - 2026/quizzes/Quiz*.qmd
+
+website:
+  title: "BIOS 667"
+  description: "Applied Longitudinal Data Analysis (UNC Gillings)"
+  site-url: https://biodatascience.github.io/longitudinal
+  repo-url: https://github.com/biodatascience/longitudinal
+  navbar:
+    background: primary
+    left:
+      - href: index.qmd
+        text: Schedule
+    right:
+      - icon: github
+        href: https://github.com/biodatascience/longitudinal
+  page-footer: "BIOS 667 - Applied Longitudinal Data Analysis - UNC Gillings Department of Biostatistics"
+
+format:
+  html:
+    theme: cosmo
+    toc: true
+    code-overflow: wrap

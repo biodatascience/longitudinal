@@ -1,0 +1,822 @@
+---
+title: "BIOS 667 - Lecture 10: Residual Analyses and Diagnostics (Ch. 10)"
+subtitle: "Fitzmaurice, Laird & Ware (2011) - Applied Longitudinal Data Analysis"
+author: "Naim Rashid"
+format:
+  revealjs:
+    theme: [default]
+    footer: BIOS 667 · UNC Gillings - Lecture 10 (Ch.10)
+    slide-number: true
+    hash: true
+    toc: false
+    code-overflow: wrap
+    code-line-numbers: false
+    math: mathjax
+    incremental: true
+    embed-resources: true
+    chalkboard: false
+    css: "../../unc-gillings.css"
+    scrollable: true
+execute:
+  warning: false
+  message: false
+---
+
+## Lecture Objectives
+
+By the end of this lecture, you will be able to:
+
+- Compute **raw** and **transformed (Cholesky-standardized)** residuals and explain why the transform decorrelates them
+- Use the **Mahalanobis distance** $d_i = r_i^{*\top} r_i^{*}$ to flag outlying individuals
+- Use the **semi-variogram of transformed residuals** to diagnose covariance misspecification
+- Use random-effect (empirical BLUP) plots to spot **individuals with unusual profiles** (NOT to test RE normality)
+- Read each diagnostic plot: what a good vs problematic pattern looks like
+
+::: {.notes}
+This deck maps to FLW Chapter 10. The single most important takeaway is the transformed residual: it is the chapter's defining tool and it is what makes "all the usual regression diagnostics" valid for correlated longitudinal data. Tell students up front that "marginal vs conditional" is software (nlme/lme4) vocabulary, while FLW's split is raw vs transformed. Assessment for this material is HW4 (residual diagnostics, covariance adequacy). Note deliberately: we do NOT use BLUP QQ plots to judge random-effect normality (FLW p.273 cautions against it); that line is corrected later in the deck.
+:::
+
+---
+
+## Prerequisites / Recall
+
+This lecture builds directly on two earlier ones.
+
+| Recall from | What we reuse |
+|-------------|---------------|
+| **Ch. 7 (L07)** | Covariance pattern models; the marginal covariance $\Sigma_i = \operatorname{Cov}(\mathbf{Y}_i)$, with CS / AR(1) / unstructured forms |
+| **Ch. 8 (L08)** | The LME $\mathbf{Y}_i = \mathbf{X}_i\boldsymbol\beta + \mathbf{Z}_i\mathbf{b}_i + \boldsymbol\varepsilon_i$, with $\Sigma_i = \mathbf{Z}_i G \mathbf{Z}_i^\top + R_i$, and REML estimation |
+
+::: {.callout-note}
+Residual diagnostics ask: having fit a mean model $\mathbf{X}_i\boldsymbol\beta$ and a covariance model $\Sigma_i$, are BOTH adequate?
+:::
+
+::: {.notes}
+Two minutes of recall. Draw $\Sigma_i = Z_i G Z_i^\top + R_i$ on the board and remind them that $G$ (NOT $D$) is the random-effects covariance and $R_i$ the within-subject residual covariance. The whole chapter is "now that we have $\hat\beta$ and $\hat\Sigma_i$, did we get them right?" The transform we are about to define needs $\hat\Sigma_i$, which is why Ch. 7-8 are prerequisites.
+:::
+
+---
+
+## Roadmap
+
+| Part | Topic |
+|------|-------|
+| 1 | Raw residuals, transformed residuals, Mahalanobis distance |
+| 2 | The semi-variogram (covariance adequacy) |
+| 3 | Worked Case Study: dental growth (real FLW data) |
+| 4 | Software diagnostics in `nlme` / `lme4` (marginal vs conditional) |
+| 5 | Beyond FLW Ch. 10: ACF, cluster influence, CUSUM |
+| 6 | Practical checklist and pitfalls |
+
+::: {.notes}
+Two-period (75-min) lecture. Part 1-2 is the FLW core; Part 3 is the real worked example; Part 4 connects to the software students will actually run; Part 5 is clearly flagged beyond-FLW material. Do not compress to one period.
+:::
+
+---
+
+{{< include _notation_box.qmd >}}
+
+---
+
+## Notation (this lecture)
+
+::: {.notation-card}
+
+| Symbol | Meaning |
+|:--|:--|
+| $r_i = \mathbf{Y}_i - \mathbf{X}_i\hat{\boldsymbol\beta}$ | raw (marginal) residual vector for subject $i$ |
+| $L_i$ | lower-triangular Cholesky factor, $\hat\Sigma_i = L_i L_i^\top$ |
+| $r_i^{*} = L_i^{-1} r_i$ | transformed residual (uncorrelated, unit variance) |
+| $d_i = r_i^{*\top} r_i^{*}$ | Mahalanobis distance for subject $i$, $\approx \chi^2_{n_i}$ |
+| $\gamma(h)$ | semi-variogram at time-lag $h$ |
+| $r^{M}_{ij},\; r^{C}_{ij}$ | software residuals: marginal ($\mathbf{Y}-\mathbf{X}\hat\beta$) vs conditional ($\mathbf{Y}-\mathbf{X}\hat\beta-\mathbf{Z}\hat{\mathbf{b}}$) |
+
+:::
+
+::: {.notes}
+These are the lecture-specific symbols, declared after the shared notation include per the notation canon. Stress: $r_i^{*}$ is the star of the chapter. The marginal/conditional pair ($r^M$, $r^C$) is software vocabulary, NOT FLW; they get distinct superscripts so they never collide on a single $\hat\varepsilon_{ij}$.
+:::
+
+---
+
+## Part 1: Raw, Transformed, and Outlier Diagnostics
+
+---
+
+## Why Diagnostics for LMMs?
+
+Linear mixed-effects models rest on assumptions more complex than OLS.
+
+| Assumption Category | What to Check |
+|---------------------|---------------|
+| Mean structure | Is the form of $\mathbf{X}_i\boldsymbol\beta$ (e.g. linear time) adequate? |
+| Covariance structure | Is $\Sigma_i$ (CS / AR(1) / RE structure) adequate? |
+| Distribution | Approximate normality, no gross outliers |
+| Outlying individuals | Subjects whose whole profile is unusual |
+
+::: {.notes}
+Frame the chapter's logic: a correctly specified mean AND covariance is what lets us "decorrelate" the residuals. If the transform is built from a wrong $\hat\Sigma_i$, the transformed residuals will NOT look iid - that is exactly how the variogram detects covariance misspecification. Common student error: treating the LME like OLS and only looking at residuals-vs-fitted.
+:::
+
+---
+
+## Raw Residuals (FLW eq 10.1)
+
+The raw (marginal) residual for subject $i$ is
+
+$$ r_i \;=\; \mathbf{Y}_i - \mathbf{X}_i\hat{\boldsymbol\beta}. \tag{10.1}$$
+
+- One residual vector per subject, length $n_i$.
+- If the mean model $\mathbf{X}_i\boldsymbol\beta$ is correct, these are centered at zero.
+- **Problem:** raw residuals are *correlated* and have *unequal variances* (they inherit $\Sigma_i$), so ordinary regression diagnostics do not apply directly.
+
+::: {.notes}
+Emphasize the limitation: this is why we cannot just QQ-plot raw residuals and trust it. The variances differ across occasions and the within-subject residuals are correlated. The fix on the next slide (the transform) is the heart of the chapter. FLW eq 10.1, p.265.
+:::
+
+---
+
+## Transformed Residuals (FLW eq 10.2)
+
+Take the Cholesky factorization of the estimated marginal covariance, $\hat\Sigma_i = L_i L_i^\top$ ($L_i$ lower-triangular). Define
+
+$$ r_i^{*} \;=\; L_i^{-1} r_i \;=\; L_i^{-1}\!\left(\mathbf{Y}_i - \mathbf{X}_i\hat{\boldsymbol\beta}\right). \tag{10.2}$$
+
+::: {.callout-note}
+The transformed residuals $r_i^{*}$ are **uncorrelated** and have **unit variance** - they mimic residuals from a standard linear regression.
+:::
+
+- First element = standardized baseline residual.
+- $k$-th element estimates $\dfrac{Y_{ik}-E(Y_{ik}\mid Y_{i1},\dots,Y_{i,k-1})}{\sqrt{\operatorname{Var}(Y_{ik}\mid Y_{i1},\dots,Y_{i,k-1})}}$.
+
+::: {.notes}
+This is THE chapter tool (FLW eq 10.2, pp.266-267). The key sentence to say aloud: "Once we transform, ALL the usual regression diagnostics become valid." Mechanically it is exactly GLS-as-OLS: regressing $Y_i^{*}=L_i^{-1}Y_i$ on $X_i^{*}=L_i^{-1}X_i$ by OLS reproduces the GLS fit, and its OLS residuals ARE the transformed residuals. Common student error: forgetting the transform is per-subject ($L_i$ depends on $n_i$).
+:::
+
+---
+
+## Mahalanobis Distance for Outlying Individuals (FLW eq 10.3)
+
+A single summary of how far subject $i$'s whole profile is from its fitted values:
+
+$$ d_i \;=\; r_i^{*\top}\, r_i^{*}. \tag{10.3}$$
+
+::: {.callout-note}
+Under a correctly specified model, $d_i \approx \chi^2_{n_i}$ ($n_i$ = number of repeated measures on subject $i$). Outlying individuals have **small p-values**.
+:::
+
+- p-values give a *common metric* when $n_i$ varies across subjects.
+- **Caution (FLW p.268):** because we focus on the most extreme $d_i$, the true tail behaves worse than a plain $\chi^2_{n_i}$; a Bonferroni correction ($p \times N$) is available but very conservative. Expect about $0.05N$ "significant" $d_i$ by chance.
+
+::: {.notes}
+This is FLW's in-chapter individual-outlier diagnostic - it REPLACES the old fabricated cluster-deletion plot. Equation 10.3, p.268. In the case study FLW finds 7 girls with p<0.05, two with p<0.01 (IDs 128 and 79). Tell students: a few small p-values are EXPECTED; use them as a ranked screen, then look at those subjects' profiles, do not auto-delete.
+:::
+
+---
+
+## Part 2: The Semi-Variogram
+
+---
+
+## Variogram: FLW Definition (eq 10.4)
+
+The semi-variogram is one-half the expected squared difference between two residuals on the **same** individual, at time-lag $h_{ijk}$:
+
+$$ \gamma(h_{ijk}) \;=\; \tfrac12\,\mathbb{E}\big[(r_{ij}-r_{ik})^2\big]. \tag{10.4}$$
+
+Since residuals have mean zero,
+
+$$ \gamma(h_{ijk}) \;=\; \tfrac12\operatorname{Var}(r_{ij}) + \tfrac12\operatorname{Var}(r_{ik}) - \operatorname{Cov}(r_{ij},r_{ik}). $$
+
+::: {.callout-note}
+**Key result.** Applied to the *transformed* residuals (variance 1, zero correlation), this becomes $\tfrac12(1)+\tfrac12(1)-0 = 1$. So under a correct covariance model the variogram of transformed residuals **fluctuates around 1** with no systematic curvature.
+:::
+
+::: {.notes}
+FLW eq 10.4, p.272. The whole point: the "good" reference line is the constant 1 ON THE TRANSFORMED SCALE. If the variogram of transformed residuals drifts away from 1 or shows curvature, the covariance model is wrong. This is the chapter's primary covariance-adequacy check. Verify against PDF before claiming the value (it is 1, not 0.8 - 0.8 is the absolute-value-of-residual reference, a different plot).
+:::
+
+---
+
+## Variogram: the Geostatistics Motivation (flagged)
+
+::: {.callout-warning}
+**Beyond FLW Ch. 10 (motivation only).** In spatial / geostatistics, for a stationary process with process variance $\sigma^2$ and correlation function $\rho(u)$ at lag $u$,
+$$ \gamma(u) = \sigma^2\{1 - \rho(u)\}. $$
+This is the Diggle et al. (2002) form. FLW *cites* this literature but does NOT use this expression in Ch. 10; its in-chapter rule is "transformed-residual variogram centers at 1."
+:::
+
+| Pattern (stationary motivation) | Implied correlation |
+|---------------------------------|---------------------|
+| Flat across lags | constant correlation (CS) |
+| Rising toward $\sigma^2$ with lag | decaying correlation (AR(1)) |
+
+::: {.notes}
+This slide is explicitly flagged as the geostatistics motivation, separated from FLW's definition on the previous slide, per the spec's beyond-FLW flagging rule. $u$ = lag, $\sigma^2$ = process/sill variance, $\rho(u)$ = correlation at lag $u$. Tell students the intuition (rising = decaying correlation) but anchor the actual diagnostic on the previous slide's "centers at 1" rule.
+:::
+
+---
+
+## How to Read a Variogram
+
+::: {.callout-note}
+## Reading rule (transformed-residual scale)
+
+**Y-axis:** semi-variance $\gamma(h)$ (half mean squared difference of residuals at lag $h$). **X-axis:** time-lag $h$.
+
+| Pattern You See | What It Means | Model Implication |
+|-----------------|---------------|-------------------|
+| **Flat, fluctuating around 1** | covariance model adequate | keep the model |
+| **Rising with lag** | correlation decays but model assumes constant | switch CS to AR(1) / exponential |
+| **Rising without bound** | long-range dependence unmodeled | add random slope or longer-range correlation |
+:::
+
+::: {.notes}
+This reading rule sits on the same slide as the rule (per the per-plot annotation requirement); a rendered good-vs-bad pair appears in the Case Study. Stress the reference line is 1 ON THE TRANSFORMED SCALE; on the raw scale it is the marginal variance, which is why the transform matters for a clean reading.
+:::
+
+---
+
+## Part 3: Case Study (Real FLW Data)
+
+---
+
+## Case Study: Dental Growth Data
+
+::: {.callout-important}
+**Instructor substitution.** FLW Ch. 10's worked example is the menarche / percent-body-fat study (162 girls, MIT Growth & Development Study), which is **not** distributed with the course. We substitute the **dental growth** data (Potthoff & Roy 1964; the Ch. 5/7/8 running example) and carry the identical Ch. 10 workflow end to end.
+:::
+
+- 27 children (11 girls, 16 boys), distance (mm) from pituitary to pteryomaxillary fissure at ages 8, 10, 12, 14.
+- Fit the Ch. 8 LME, then: **transformed residuals -> Mahalanobis outlier scan -> semi-variogram**.
+
+::: {.notes}
+The visible substitution label satisfies the dataset-provenance rule. Dental is the canonical Ch. 5/7/8 dataset, so we keep course continuity. Walk students through the plan: same three FLW tools (10.2, 10.3, 10.4) on a dataset they already know.
+:::
+
+---
+
+## Case Study: Load and Reshape
+
+```{r}
+#| label: load-dental
+#| echo: true
+#| output-location: slide
+suppressPackageStartupMessages({
+  library(nlme); library(ggplot2); library(dplyr)
+})
+
+# Download fallback (FLW site); local copy preferred
+data_file <- "../../data/dental.txt"
+if (!file.exists(data_file)) {
+  dir.create("../../data", showWarnings = FALSE, recursive = TRUE)
+  download.file("https://content.sph.harvard.edu/fitzmaur/ala2e/dental.txt",
+                data_file)
+}
+
+# FLW dental.txt has a comment-header block and is WIDE (one row per child)
+raw <- readLines(data_file)
+dat_lines <- grep("^[[:space:]]*[0-9]+[[:space:]]+[FM]", raw, value = TRUE)
+wide <- read.table(text = dat_lines, header = FALSE,
+                   col.names = c("id", "gender", "age8", "age10", "age12", "age14"))
+
+# reshape WIDE -> LONG
+long <- reshape(wide, varying = c("age8", "age10", "age12", "age14"),
+                v.names = "distance", timevar = "age",
+                times = c(8, 10, 12, 14), idvar = "id", direction = "long")
+long <- long[order(long$id, long$age), ]
+long$id    <- factor(long$id)
+long$age_c <- long$age - 8          # center at first occasion
+head(long, 6)
+```
+
+::: {.notes}
+This is FLW gotcha #9 in action: dental.txt is wide with a comment header, so a plain read.table fails. Show the readLines + grep + reshape pattern. Highlight that we center age at 8 so the intercept is interpretable (mean at age 8). Confirm the long frame is 108 rows (27 x 4).
+:::
+
+---
+
+## Case Study: Fit the Ch. 8 LME
+
+```{r}
+#| label: fit-lme
+#| echo: true
+#| output-location: slide
+fit <- lme(distance ~ age_c * gender,
+           random = ~ 1 + age_c | id,
+           data = long, method = "REML")
+round(fixef(fit), 3)
+```
+
+```{r}
+#| label: fit-vc
+#| echo: true
+#| output-location: slide
+VarCorr(fit)
+```
+
+::: {.notes}
+Random intercept + slope in (centered) age, with a gender main effect and gender-by-age interaction. Highlight the boys' steeper growth (age_c:genderM > 0). Numbers to point at: intercept ~21.2 mm at age 8, slope ~0.48 mm/yr for girls. This is the model whose adequacy we now interrogate.
+:::
+
+---
+
+## Case Study: Transformed Residuals (eq 10.2)
+
+```{r}
+#| label: transformed-resid
+#| echo: true
+#| output-location: slide
+uids   <- levels(long$id)
+r_marg <- resid(fit, level = 0)          # RAW residual Y - X*beta (level=0)
+long$r_marg <- r_marg
+
+long$r_star <- NA_real_
+d_i <- setNames(numeric(length(uids)), uids)   # Mahalanobis distances
+
+for (u in uids) {
+  idx   <- which(long$id == u)
+  Sig_i <- getVarCov(fit, individual = u, type = "marginal")[[1]]  # Sigma_i hat
+  L_i   <- t(chol(Sig_i))                # lower-triangular: Sigma_i = L_i L_i'
+  r_i   <- long$r_marg[idx]
+  rstar <- solve(L_i, r_i)               # r* = L_i^{-1} r_i   (eq 10.2)
+  long$r_star[idx] <- rstar
+  d_i[u] <- sum(rstar^2)                 # d_i = r*' r*        (eq 10.3)
+}
+
+c(var_transformed = round(var(long$r_star), 3))   # should be ~1
+```
+
+::: {.notes}
+This is the worked computation FLW asks for. Point at the per-subject loop: each child gets its own Cholesky factor $L_i$ from $\hat\Sigma_i$. The punchline number: the variance of the stacked transformed residuals is ~0.97, i.e. ~1 as theory says (FLW: uncorrelated, unit variance). Note resid(fit, level=0) is the RAW/marginal residual - level matters, covered explicitly in Part 4.
+:::
+
+---
+
+## Case Study: QQ Plot of Transformed Residuals
+
+```{r}
+#| label: qq-transformed
+#| echo: false
+qqnorm(long$r_star, main = "QQ Plot: Transformed Residuals (dental LME)")
+qqline(long$r_star, col = "red")
+```
+
+::: {.callout-note}
+## Reading rule
+**Straight line** = approximate normality, model adequate. **Bow shape** = skewness. **Stragglers at the ends** = candidate outliers (here, the upper tail bends out, flagging an unusual observation - which the Mahalanobis scan localizes next).
+:::
+
+::: {.notes}
+FLW Fig 10.2 analog. In FLW's data the transformed-residual QQ plot revealed one extreme observation (girl ID 128). Tell students: do the QQ plot on the TRANSFORMED residuals, not raw - only the transform makes the iid-N(0,1) reference legitimate. The reading rule is on the same slide as the plot (per the annotation requirement).
+:::
+
+---
+
+## Case Study: Mahalanobis Outlier Scan (eq 10.3)
+
+```{r}
+#| label: mahalanobis
+#| echo: false
+n_i   <- as.integer(table(long$id))            # = 4 for all (balanced)
+pvals <- pchisq(d_i, df = n_i, lower.tail = FALSE)
+ord   <- order(pvals)
+plot(seq_along(d_i), d_i, type = "h", lwd = 2,
+     xlab = "Child (id)", ylab = expression(d[i] == r * "*'" * r * "*"),
+     main = "Mahalanobis distance per child (chi-sq df = 4 reference)")
+abline(h = qchisq(0.95, df = 4), col = "red", lty = 2)
+text(which.max(d_i), max(d_i), labels = names(which.max(d_i)), pos = 3, col = "red")
+```
+
+::: {.callout-note}
+## Reading rule
+**Red line** = upper 5% point of $\chi^2_4$. Bars above it flag children whose whole profile fits poorly. Here `r sum(pvals < 0.05)` children cross p<0.05 (most extreme: id `r names(which.min(pvals))`). Inspect, do not auto-delete; a few crossings are expected by chance ($\approx 0.05N$).
+:::
+
+::: {.notes}
+This is FLW's actual individual diagnostic and it REPLACES the fabricated rnorm() plot the old deck had. The reference is $\chi^2_{n_i}$ with $n_i=4$ here (balanced). Two children flag; that matches the "a handful by chance" caution. Inline R reports the actual count and the flagged id so the slide stays honest if the data changes.
+:::
+
+---
+
+## Case Study: Semi-Variogram of Transformed Residuals (eq 10.4)
+
+```{r}
+#| label: variogram-transformed
+#| echo: false
+vg <- do.call(rbind, lapply(uids, function(u) {
+  idx <- which(long$id == u); rs <- long$r_star[idx]; ag <- long$age[idx]
+  cmb <- expand.grid(a = seq_along(idx), b = seq_along(idx))
+  cmb <- cmb[cmb$b > cmb$a, ]
+  data.frame(lag = ag[cmb$b] - ag[cmb$a], hsd = 0.5 * (rs[cmb$b] - rs[cmb$a])^2)
+}))
+agg <- aggregate(hsd ~ lag, vg, mean)
+ggplot(agg, aes(lag, hsd)) +
+  geom_line() + geom_point(size = 3) +
+  geom_hline(yintercept = 1, linetype = "dashed", color = "red") +
+  labs(title = "Semi-Variogram of TRANSFORMED residuals (dental LME)",
+       x = "Time lag (years)", y = expression(gamma(h))) +
+  ylim(0, 1.6) + theme_bw()
+```
+
+::: {.callout-note}
+## Reading rule
+**Red dashed line at 1** = the FLW reference for transformed residuals. Points fluctuating around 1 with no systematic curvature = the random-intercept-plus-slope covariance is **adequate**. Drift away from 1 / curvature = wrong covariance model.
+:::
+
+::: {.notes}
+FLW eq 10.4 + the "centers at 1" result, on REAL data. The empirical variogram here hovers near 1 across lags, so the chosen covariance structure is adequate for the dental data. The NEXT slide compares this RI+slope fit against a random-intercept-only fit; on dental the two are nearly identical (the random slope adds little to the covariance), which is itself the honest finding - dental does not provide a dramatic misfit contrast, so we describe what a drift off 1 would look like rather than manufacture one.
+:::
+
+---
+
+## Case Study: Does Dropping the Random Slope Change the Variogram? (dental)
+
+```{r}
+#| label: variogram-contrast
+#| echo: false
+# Transformed-residual variogram under random-intercept-only vs the RI+slope fit.
+# Each model's transform uses its OWN marginal covariance, so if the dropped
+# structure mattered for the covariance, the simpler model's variogram would
+# drift away from 1. (On dental it barely moves; see the reading rule.)
+fit_ri <- lme(distance ~ age_c * gender, random = ~ 1 | id,
+              data = long, method = "REML")
+mk_vg <- function(model, lab, transformed = TRUE) {
+  rr <- resid(model, level = 0)
+  do.call(rbind, lapply(uids, function(u) {
+    idx <- which(long$id == u); ag <- long$age[idx]
+    if (transformed) {
+      Si <- getVarCov(model, individual = u, type = "marginal")[[1]]
+      rv <- as.numeric(solve(t(chol(Si)), rr[idx]))
+    } else rv <- rr[idx]
+    cmb <- expand.grid(a = seq_along(idx), b = seq_along(idx)); cmb <- cmb[cmb$b > cmb$a, ]
+    data.frame(model = lab, lag = ag[cmb$b] - ag[cmb$a],
+               hsd = 0.5 * (rv[cmb$b] - rv[cmb$a])^2)
+  }))
+}
+both <- rbind(
+  aggregate(hsd ~ model + lag, mk_vg(fit_ri, "Random intercept only"), mean),
+  aggregate(hsd ~ model + lag, mk_vg(fit,    "Intercept + slope"), mean)
+)
+ggplot(both, aes(lag, hsd, color = model)) +
+  geom_line() + geom_point(size = 3) +
+  geom_hline(yintercept = 1, linetype = "dashed", color = "grey40") +
+  labs(title = "Transformed-residual variogram: RI-only vs RI+slope (dental)",
+       x = "Time lag (years)", y = expression(gamma(h)), color = NULL) +
+  theme_bw() + theme(legend.position = "top")
+```
+
+::: {.callout-note}
+## Reading rule
+On dental the two transformed-residual variograms are **nearly identical** and both hover around the dashed line at 1 (range about `r round(min(both$hsd),2)`-`r round(max(both$hsd),2)`, with a small-sample dip at the middle lag). So dropping the random slope barely changes the covariance fit here: the random-intercept structure is already close to adequate for these data. The pattern to watch for elsewhere is a variogram that drifts steadily **up and away from 1** (the simpler model's would, if the dropped structure mattered) - dental does not show that.
+:::
+
+::: {.notes}
+On dental the random-intercept-only and RI+slope transformed-residual variograms come out nearly identical (both near 1), so there is no dramatic misfit contrast here: the honest finding is that the random slope adds little to the covariance fit for these data. Both curves are real computations (no fabricated numbers); the slide describes what a drift off 1 WOULD signal rather than manufacturing one. (Earlier this slide overstated a "misfit vs corrected" contrast the data does not show - a narrative-vs-output catch.)
+:::
+
+---
+
+## Case Study: Standalone SAS (PROC MIXED)
+
+```sas
+/* Dental growth LME with residual + influence diagnostics.
+   Data already reshaped to LONG: id gender age_c distance.            */
+proc mixed data=dental_long method=reml;
+    class id gender;
+    model distance = age_c gender age_c*gender /
+          solution outpm=marg_resid outp=cond_resid
+          residual influence(effect=id);
+    random intercept age_c / subject=id type=un g;
+run;
+
+/* outpm= : marginal residuals (Y - X*beta)         -> variogram input
+   outp=  : conditional residuals (Y - X*beta - Z*b)
+   influence(effect=id) : leave-one-cluster-out Cook's D / restricted
+                          likelihood distance per child (Level-2)       */
+```
+
+::: {.notes}
+Static, non-runnable SAS slide (per spec). Point out the two residual outputs: OUTPM = marginal (the FLW raw residual, the variogram input), OUTP = conditional. INFLUENCE(EFFECT=id) is SAS's cluster-level influence, the Level-2 analog of the R leave-one-out loop in Part 5. Do not run this in class; it is the production-SAS reference for students who use SAS.
+:::
+
+---
+
+## Part 4: Software Diagnostics (`nlme` / `lme4`)
+
+---
+
+## Two Residual Types in Software
+
+FLW's split is raw vs transformed. Software (`nlme`, `lme4`) instead exposes two *levels* of residual. Keep the vocabulary distinct:
+
+| Software residual | Formula | Use |
+|-------------------|---------|-----|
+| **Marginal** $r^{M}_{ij}$ | $Y_{ij} - X_{ij}\hat{\boldsymbol\beta}$ | mean / covariance adequacy (this is FLW's *raw* residual) |
+| **Conditional** $r^{C}_{ij}$ | $Y_{ij} - (X_{ij}\hat{\boldsymbol\beta} + Z_{ij}\hat{\mathbf{b}}_i)$ | within-subject error assumptions |
+
+::: {.callout-warning}
+**`level` matters.** `residuals.lme()` defaults to the **innermost** level = **conditional** residuals ($Y - X\hat\beta - Z\hat{\mathbf b}$). For **marginal** residuals you must pass **`level = 0`**. (Direct analog of the `re.form = NA` trap.)
+:::
+
+::: {.notes}
+This corrects the old deck's false "resid() gives marginal by default." It does NOT. Default = innermost = conditional. So `resid(fit, type="response")` with the default level is conditional, while `resid(fit, level=0)` (used in the Case Study) is marginal/raw. Give the two software residuals distinct symbols $r^M$ vs $r^C$ so they never collide. This is software vocabulary, explicitly flagged as distinct from FLW's raw/transformed.
+:::
+
+---
+
+## Conditional Residuals vs Fitted
+
+```{r}
+#| label: cond-resid-fitted
+#| echo: false
+long$r_cond <- resid(fit, level = 1)   # CONDITIONAL: Y - X*beta - Z*b
+long$f_cond <- fitted(fit, level = 1)
+ggplot(long, aes(f_cond, r_cond)) +
+  geom_point(alpha = 0.5) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  geom_smooth(method = "loess", se = FALSE, color = "red") +
+  labs(title = "Conditional residuals vs subject-specific fitted (dental)",
+       x = "Fitted (level 1)", y = expression(r^C)) + theme_bw()
+```
+
+::: {.callout-note}
+## Reading rule
+**Dashed line at 0** = target mean. Random scatter, constant spread = error assumptions OK. **Funnel / fanning** = non-constant variance. **Curvature in the red smooth** = mean model misspecified.
+:::
+
+::: {.notes}
+Explicitly `level = 1` -> conditional residual $r^C$. For the dental LME the scatter is roughly flat with stable spread, so the within-subject error assumptions are reasonable. Reading rule on the same slide as the plot. Common error: students plot conditional residuals but call them marginal; the symbol $r^C$ keeps it honest.
+:::
+
+---
+
+## Conditional Residual ACF (beyond FLW)
+
+```{r}
+#| label: acf-cond
+#| echo: false
+plot(ACF(fit, resType = "normalized"), alpha = 0.05,
+     main = "ACF of normalized residuals (dental LME)")
+```
+
+::: {.callout-warning}
+**Beyond FLW Ch. 10.** FLW diagnoses covariance adequacy with the semi-variogram of transformed residuals, NOT an ACF plot. `nlme::ACF` is a time-series convention shown here as a complementary software check.
+:::
+
+::: {.callout-note}
+## Reading rule
+**Blue/grey bands** = 95% no-correlation envelope (they **widen** at higher lags as fewer pairs contribute). Here the lag-1 normalized-residual autocorrelation is about `r round(ACF(fit, resType = "normalized")$ACF[2], 2)`, just **outside** the lag-1 band; the lag-3 value is also negative but sits **within** its (wider) band. With only **4 occasions per child**, decorrelating such short within-subject vectors tends to induce spurious **negative** autocorrelation, so the lag-1 excursion is most likely a small-sample/normalization artifact, not genuine serial dependence. The FLW-preferred adequacy check is the transformed-residual semi-variogram (near 1, prior slide), which says the covariance model is fine, so we do **not** add `corAR1` on the basis of this ACF. Read normalized-residual ACFs cautiously when $n_i$ is small.
+:::
+
+::: {.notes}
+ACF flagged beyond-FLW per the spec. Honest verdict that matches the output: the normalized-residual lag-1 is negative and just outside its band, while lag-3 is negative but within its (wider) band - a short-series (n_i=4) decorrelation artifact, not real AR(1) serial correlation. Defer the adequacy call to the transformed-residual variogram (FLW's method, near 1 = adequate), not this ACF. This replaces the earlier (incorrect) "lag-1 within bands" claim, which the data did not support - a narrative-vs-output catch. (Lag-1 value shown on the slide via inline R, not hardcoded.)
+:::
+
+---
+
+## Random-Effect (Empirical BLUP) Plots: Correct Use
+
+```{r}
+#| label: blup-qq
+#| echo: false
+re <- ranef(fit)
+par(mfrow = c(1, 2))
+qqnorm(re[, "(Intercept)"], main = "Empirical BLUP: Intercept"); qqline(re[, "(Intercept)"], col = "red")
+qqnorm(re[, "age_c"],       main = "Empirical BLUP: Slope");     qqline(re[, "age_c"], col = "red")
+par(mfrow = c(1, 1))
+```
+
+::: {.callout-warning}
+**FLW p.273 caution.** Do **NOT** use histograms / QQ plots of empirical BLUPs to judge the **normality of the random-effects distribution**. BLUPs are *shrunk* toward the population mean, so their spread understates the true RE variance.
+:::
+
+::: {.callout-note}
+## Reading rule
+Use these plots only to **spot individuals** with extreme/unusual subject-specific profiles (points far from the line), exactly as FLW does. A "non-normal looking" BLUP plot is NOT evidence the RE distribution is non-normal.
+:::
+
+::: {.notes}
+This is the HIGH-severity caution-reversal fix. The old deck listed "assess RE normality via QQ plots" as an objective and a checklist step - FLW p.273 explicitly cautions AGAINST that exact practice because of shrinkage. Reframed: BLUP plots spot unusual individuals, full stop. Use "empirical BLUP" / "predicted random effects" per FLW convention. The objective and the checklist were edited to match.
+:::
+
+---
+
+## Part 5: Beyond-FLW Diagnostics (flagged)
+
+---
+
+## Cluster Influence: Leave-One-Out Refit (beyond FLW)
+
+```{r}
+#| label: loco-refit
+#| echo: true
+#| output-location: slide
+# REAL leave-one-cluster-out refit (N=27 children -> fast, runs in full)
+beta_full <- fixef(fit)
+ctrl  <- lmeControl(maxIter = 200, msMaxIter = 200, opt = "optim")
+delta <- setNames(rep(NA_real_, length(uids)), uids)
+for (u in uids) {
+  sub <- long[long$id != u, ]
+  rf  <- tryCatch(
+    lme(distance ~ age_c * gender, random = ~ 1 + age_c | id,
+        data = sub, method = "REML", control = ctrl),
+    error = function(e) NULL)
+  if (!is.null(rf)) delta[u] <- max(abs(fixef(rf) - beta_full))  # max |change|
+}
+delta <- delta[!is.na(delta)]   # drop any child whose deletion-refit failed
+plot(seq_along(delta), delta, type = "h", lwd = 2,
+     xlab = "Child (id) dropped", ylab = "max |delta beta|",
+     main = "Leave-one-child-out: max |change| in fixed effects")
+text(which.max(delta), max(delta), labels = names(which.max(delta)), pos = 3, col = "red")
+```
+
+::: {.callout-warning}
+**Beyond FLW Ch. 10** (instructor extension; see Pinheiro & Bates 2000, `influence.ME` for `lmer`). FLW's in-chapter individual diagnostic is the **Mahalanobis distance** (Part 1), not deletion influence.
+:::
+
+::: {.notes}
+This is the REAL refit loop that replaces the fabricated abs(rnorm(...)) plot. With 27 children it runs in full in seconds - no pre-computed stand-in. delta[u] is the actual largest change in any fixed effect when child u is dropped; the tallest bar (id 10) is the most influential child. Flagged beyond-FLW with a citation, as the spec requires.
+:::
+
+---
+
+## CUSUM (recursive): beyond FLW (flagged)
+
+```{r}
+#| label: cusum-demo
+#| echo: true
+#| output-location: slide
+suppressPackageStartupMessages(library(strucchange))
+# Recursive CUSUM is an OLS/structural-change construct -> run on an OLS fit
+fm <- efp(distance ~ age_c + gender, type = "Rec-CUSUM", data = long)
+plot(fm, main = "Recursive CUSUM (OLS mean model) - beyond-FLW demo")
+```
+
+::: {.callout-warning}
+**Beyond FLW Ch. 10** (Zeileis et al. `strucchange`, econometric structural-change literature). It is run on an **OLS** fit because recursive CUSUM is an OLS construct, and it assumes **ordered, independent** observations - which stacked longitudinal rows violate. Treat as illustrative only.
+:::
+
+::: {.callout-note}
+## Reading rule
+**Red boundary lines** = simulated null envelope. The empirical fluctuation process **crossing** the boundary flags a structural change in the mean over the ordering. Staying inside = no detected change.
+:::
+
+::: {.notes}
+Flagged beyond-FLW with citation AND the independence/ordering caveat, per the audit. Crucially, this recursive-CUSUM is NOT FLW's method - the next slide describes what FLW actually does (Lin-Wei-Ying aggregated sums).
+:::
+
+---
+
+## What FLW Actually Does: Aggregated Sums (Section 10.4)
+
+FLW Section 10.4 ("aggregating residuals") uses the **Lin, Wei & Ying (2002)** cumulative / moving sums of *raw* residuals over a covariate $x_{ijk}$ or fitted value:
+
+$$ W_k(x) = \frac{1}{\sqrt{N}}\sum_{i=1}^{N}\sum_{j=1}^{n_i} I(x_{ijk}\le x)\, r_{ij}. $$
+
+- Under a correct mean model, $W_k(\cdot)$ behaves like a **zero-mean Gaussian process**.
+- Assess by **simulating** many null realizations and comparing the observed $\max|W_k|$ to the simulated maxima (a **supremum** test, p-value = proportion exceeding).
+- **Robust:** valid regardless of the true covariance among responses.
+
+::: {.notes}
+This is the chapter's ACTUAL "aggregating residuals" method (eq forms p.270-271, Figs 10.5-10.7), distinct from the recursive CUSUM demo. The reference distribution is SIMULATED zero-mean Gaussian, and the test is a supremum (max|W|) test. Tell students the recursive-CUSUM demo on the prior slide is a software stand-in; this is what FLW means by aggregated residuals.
+:::
+
+---
+
+## Part 6: Checklist and Pitfalls
+
+---
+
+## Practical Diagnostic Checklist (FLW Ch. 10)
+
+| Step | Action |
+|------|--------|
+| 1 | Compute **transformed** residuals $r_i^{*}=L_i^{-1}(\mathbf Y_i-\mathbf X_i\hat{\boldsymbol\beta})$ |
+| 2 | QQ plot of $r_i^{*}$ (normality, stragglers) |
+| 3 | **Mahalanobis** $d_i=r_i^{*\top}r_i^{*}\sim\chi^2_{n_i}$ to rank outlying individuals |
+| 4 | **Semi-variogram** of transformed residuals: should center at 1 |
+| 5 | Empirical-BLUP plots to **spot unusual individuals** (NOT to test RE normality) |
+| 6 | Revise mean / covariance; re-check |
+
+::: {.notes}
+This checklist now mirrors FLW's actual workflow, in order. Note step 5 is the corrected wording: spot individuals, do not test RE normality. CUSUM/ACF/influence are deliberately NOT in this FLW checklist - they are the flagged beyond-FLW extras from Part 5.
+:::
+
+---
+
+## RI vs RS: Comparison (boundary caveat)
+
+| Model | Random Effects | When residuals/variogram suggest it |
+|------:|:---------------|:------------------------------------|
+| RI | intercept only | flat residual variance, variogram near 1 |
+| RS | intercept + slope | fanning vs time, variogram drifts off 1 under RI |
+
+::: {.callout-warning}
+**Boundary / mixture caveat.** Testing whether the random slope is needed is a **variance-component-on-the-boundary** test. Dropping a random slope from a random-intercept model removes **TWO** parameters (the slope variance and its covariance with the intercept), so the LRT null is the **Stram-Lee mixture** $\tfrac12\chi^2_1 + \tfrac12\chi^2_2$ - **NOT** a simple halving of a single $\chi^2$.
+:::
+
+::: {.notes}
+Audit low item: the comparison invites an LRT on a boundary variance component, so attach the Stram-Lee mixture caveat. The key teaching point: it is $\tfrac12\chi^2_1+\tfrac12\chi^2_2$, not $\tfrac12\chi^2_2$, because TWO parameters leave. We do not actually run the LRT here, but flag the correct reference.
+:::
+
+---
+
+## Common Mistakes to Avoid
+
+::: {.callout-important}
+| Mistake | Why It Is Wrong | Correct Approach |
+|:--------|:----------------|:-----------------|
+| QQ-plotting RAW residuals | correlated, unequal variance | use TRANSFORMED residuals $r_i^{*}$ |
+| `resid(fit)` assuming marginal | default is innermost = conditional | pass `level = 0` for marginal/raw |
+| Variogram reference of "0 at lag 0" | wrong scale | transformed-residual variogram centers at **1** |
+| BLUP QQ to test RE normality | shrinkage understates variance (FLW p.273) | use BLUP plots only to spot unusual individuals |
+| Auto-deleting high-$d_i$ subjects | a few are expected by chance | investigate, run sensitivity analysis |
+| Simple halving for RS LRT | drops TWO parameters | Stram-Lee $\tfrac12\chi^2_1+\tfrac12\chi^2_2$ |
+:::
+
+::: {.notes}
+Every row maps to a specific slide. These are the precision traps the review flagged; walk through the resid() level trap and the variogram-centers-at-1 trap especially, since both bit the old deck.
+:::
+
+---
+
+## Diagnostic Decision Tree
+
+::: {.callout-note}
+## What Pattern Leads to What Fix?
+
+| You Observe | Most Likely Cause | Try This |
+|-------------|-------------------|----------|
+| Fanning in residuals vs time | missing random slope | add a random slope `~ 1 + time` grouped by `id` (exact call in notes) |
+| Transformed-residual variogram drifts off 1 | wrong covariance structure | switch CS to AR(1), or add random slope |
+| ACF lag-1 outside bands | residual autocorrelation - but first rule out a short-series normalization artifact (let the transformed-residual variogram be the primary check) | add the Ch. 7 AR(1) residual structure (`corAR1`, grouped by `id`; exact call in notes) **only if the variogram also signals misfit** |
+| Bow / stragglers in transformed QQ | skew / outliers | inspect via Mahalanobis $d_i$ |
+| Curvature in residuals vs fitted | misspecified mean | add polynomial / spline |
+| High $d_i$ for a subject | outlying individual | investigate; sensitivity analysis |
+:::
+
+::: {.notes}
+Exact calls (kept out of the table cells because a literal `|` inside a code span in a pipe table renders with a stray backslash): random slope is `random = ~ 1 + age_c | id` (matching the dental fit); the AR(1) residual structure is `correlation = corAR1(form = ~ age | id)`. AR(1)/`corAR1` is the **Ch. 7** covariance structure (recalled from L07), not a Ch. 13 topic; add it only if the transformed-residual variogram (not the short-series ACF) signals misfit.
+:::
+
+---
+
+## Diagnostic Principles Across Models
+
+| Model | Residual to use | What to Check | Note |
+|-------|-----------------|---------------|------|
+| LMM (Ch. 8) | transformed $r_i^{*}$ | mean, variance, covariance | empirical-BLUP plots: spot individuals, not RE normality |
+| Covariance pattern (Ch. 7) | transformed | covariance adequacy via variogram | assumes correct mean |
+| GEE (Ch. 13, **preview**) | Pearson / deviance | mean, link, dispersion | working correlation is heuristic; valid SEs need MCAR (IPW-GEE for MAR) |
+| Fixed effects (Ch. 9) | OLS residuals | standard OLS diagnostics | overfitting can mask issues |
+
+::: {.notes}
+The GEE row is explicitly marked "preview, Ch. 13" so students are not expected to know it. Added the MCAR-vs-IPW-GEE precision point since the cross-model table invites it. The LMM row carries the corrected BLUP wording.
+:::
+
+---
+
+## Check Your Understanding
+
+::: {.callout-tip}
+## Pause and Reflect
+
+1. Why must we use TRANSFORMED residuals (not raw) for a QQ plot or variogram in a longitudinal model?
+2. The transformed-residual variogram drifts upward away from 1. What does that signal?
+3. A colleague QQ-plots the empirical BLUPs, sees curvature, and concludes the random effects are non-normal. Why is that conclusion unsafe?
+
+**Answers:** (1) Raw residuals are correlated with unequal variances ($\Sigma_i$); only the Cholesky transform $r_i^{*}=L_i^{-1}r_i$ makes them approximately iid N(0,1), so the standard reference lines apply. (2) The covariance model is misspecified (the "good" reference for transformed residuals is a flat line at 1); consider AR(1) or a richer random-effects structure. (3) BLUPs are shrunk toward the population mean, so their distribution understates the true RE variance (FLW p.273); BLUP plots can only flag unusual individuals, not test RE normality.
+:::
+
+::: {.notes}
+Q1 hits the chapter's core idea, Q2 the variogram reference (1, transformed scale), Q3 the p.273 caution. All three map to HIGH-severity fixes.
+:::
+
+---
+
+## Summary
+
+- **Raw residual** (eq 10.1) $r_i=\mathbf Y_i-\mathbf X_i\hat{\boldsymbol\beta}$ - correlated, unequal variance.
+- **Transformed residual** (eq 10.2) $r_i^{*}=L_i^{-1}r_i$ - uncorrelated, unit variance; the chapter's defining tool.
+- **Mahalanobis** (eq 10.3) $d_i=r_i^{*\top}r_i^{*}\sim\chi^2_{n_i}$ flags outlying individuals.
+- **Semi-variogram** (eq 10.4) of transformed residuals centers at **1** under a correct covariance model.
+- Empirical-BLUP plots spot unusual individuals; they do NOT test RE normality (FLW p.273).
+- ACF, cluster-influence, CUSUM are useful but **beyond FLW Ch. 10** (flagged).
+
+---
+
+## Further Reading
+
+- **Fitzmaurice, Laird & Ware (2011),** *Applied Longitudinal Analysis*, 2nd ed., **Chapter 10** (Residual Analyses and Diagnostics).
+- **Lin, Wei & Ying (2002),** "Model-checking techniques based on cumulative residuals," *Biometrics* 58, 1-12 (FLW's aggregated-residuals method).
+- **Pinheiro & Bates (2000),** *Mixed-Effects Models in S and S-PLUS* (`nlme` residual / `Variogram` / `ACF` tooling).
+- **Verbeke & Molenberghs (2000)** and **Diggle et al. (2002)** for the geostatistics variogram (nugget / sill).
+
+::: {.callout-note}
+**Assessment:** this material is examined in **HW4** (residual diagnostics; covariance-structure adequacy via transformed-residual variograms; outlier scans).
+:::
+
+::: {.notes}
+Close by pointing at HW4 and the Lin-Wei-Ying citation (their method, not the recursive-CUSUM demo). FLW Ch. 10 is the primary reading.
+:::

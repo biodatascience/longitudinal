@@ -1,0 +1,659 @@
+---
+title: "MCAR, MAR, and MNAR: A Decision Framework"
+subtitle: "Classifying Missing Data Mechanisms in Longitudinal Studies"
+format:
+  html:
+    theme: cosmo
+    toc: true
+    embed-resources: true
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+```{r}
+#| label: setup
+#| include: false
+
+library(nlme)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+
+set.seed(667)
+```
+
+## 1. The Three Mechanisms
+
+Understanding the mechanism behind missing data is crucial for selecting appropriate analysis methods. The three mechanisms differ in what the probability of missingness depends on.
+
+### Formal Definitions
+
+Let $R$ be the missingness indicator (1 = observed, 0 = missing), $Y_{obs}$ be the observed data, and $Y_{mis}$ be the missing data.
+
+| Mechanism | Formal Definition | Plain English | Example |
+|-----------|-------------------|---------------|---------|
+| **MCAR** | $P(R \mid Y_{obs}, Y_{mis}) = P(R)$ | Missingness is completely random; unrelated to any data | Lab machine randomly malfunctions |
+| **MAR** | $P(R \mid Y_{obs}, Y_{mis}) = P(R \mid Y_{obs})$ | Missingness depends only on **observed** data | Sicker patients drop out, but severity was recorded |
+| **MNAR** | $P(R \mid Y_{obs}, Y_{mis})$ depends on $Y_{mis}$ | Missingness depends on the **unobserved** values themselves | Patients skip visits because of unmeasured weight gain |
+
+### Key Distinctions
+
+- **MCAR**: The "gold standard" that rarely holds in practice
+- **MAR**: The most common assumption; requires careful covariate collection
+- **MNAR**: The most problematic; requires strong assumptions or sensitivity analysis
+
+::: {.callout-warning}
+## Common Misconception
+The word "random" in MAR does NOT mean the same as "completely random." MAR means missingness can be predicted by observed variables, making it systematically (not randomly!) related to the data.
+:::
+
+## 2. Visual Intuition
+
+### Dependency Structure Diagram
+
+```{r}
+#| label: fig-dependency
+#| fig-cap: "Dependency structure for the three missing data mechanisms"
+#| fig-width: 9
+#| fig-height: 6
+#| echo: false
+
+# Create a visual representation of the three mechanisms
+library(ggplot2)
+
+# Define positions for diagram elements
+diagram_data <- data.frame(
+  mechanism = rep(c("MCAR", "MAR", "MNAR"), each = 4),
+  element = rep(c("R (Missingness)", "Y_obs (Observed)", "Y_mis (Missing)", "X (Covariates)"), 3),
+  x = rep(c(2, 1, 3, 2), 3),
+  y = rep(c(1, 2.5, 2.5, 4), 3)
+)
+
+# Create separate plots for each mechanism
+create_mechanism_plot <- function(mech, arrows_from, arrows_to, arrow_colors) {
+  df <- diagram_data[diagram_data$mechanism == mech, ]
+
+  p <- ggplot(df, aes(x = x, y = y)) +
+    # Add nodes
+    geom_point(size = 20, color = "steelblue", alpha = 0.3) +
+    geom_text(aes(label = element), size = 3, fontface = "bold") +
+    # Add title
+    ggtitle(mech) +
+    theme_void() +
+    theme(plot.title = element_text(hjust = 0.5, face = "bold", size = 14)) +
+    xlim(0, 4) + ylim(0, 5)
+
+  # Add arrows based on mechanism
+  for (i in seq_along(arrows_from)) {
+    from_idx <- which(df$element == arrows_from[i])
+    to_idx <- which(df$element == arrows_to[i])
+
+    p <- p + annotate("segment",
+                      x = df$x[from_idx], y = df$y[from_idx] - 0.5,
+                      xend = df$x[to_idx], yend = df$y[to_idx] + 0.5,
+                      arrow = arrow(length = unit(0.3, "cm")),
+                      color = arrow_colors[i], linewidth = 1.5)
+  }
+
+  return(p)
+}
+
+# MCAR: No arrows to R
+p1 <- create_mechanism_plot("MCAR", c(), c(), c()) +
+  annotate("text", x = 2, y = 0.3, label = "R is independent of all data",
+           size = 3, fontface = "italic", color = "gray40")
+
+# MAR: Arrow from Y_obs to R
+p2 <- create_mechanism_plot("MAR",
+                            c("Y_obs (Observed)"),
+                            c("R (Missingness)"),
+                            c("darkgreen")) +
+  annotate("text", x = 2, y = 0.3, label = "R depends only on observed Y",
+           size = 3, fontface = "italic", color = "gray40")
+
+# MNAR: Arrow from Y_mis to R
+p3 <- create_mechanism_plot("MNAR",
+                            c("Y_mis (Missing)"),
+                            c("R (Missingness)"),
+                            c("darkred")) +
+  annotate("text", x = 2, y = 0.3, label = "R depends on the missing values",
+           size = 3, fontface = "italic", color = "gray40")
+
+library(patchwork)
+p1 + p2 + p3
+```
+
+### Decision Tree: Classifying Your Missing Data
+
+```{r}
+#| label: fig-decision-tree
+#| fig-cap: "Decision tree for classifying missing data mechanisms"
+#| fig-width: 10
+#| fig-height: 7
+#| echo: false
+
+# Create a decision tree visualization
+tree_nodes <- data.frame(
+  label = c(
+    "Does missingness\ndepend on anything?",
+    "MCAR",
+    "Does it depend on\nUNOBSERVED values?",
+    "MAR",
+    "MNAR"
+  ),
+  x = c(5, 2, 8, 6, 10),
+  y = c(5, 3, 3, 1, 1),
+  type = c("question", "answer", "question", "answer", "answer"),
+  color = c("lightblue", "lightgreen", "lightblue", "lightyellow", "lightcoral")
+)
+
+tree_edges <- data.frame(
+  x = c(5, 5, 8, 8),
+  y = c(5, 5, 3, 3),
+  xend = c(2, 8, 6, 10),
+  yend = c(3, 3, 1, 1),
+  label = c("No", "Yes", "No", "Yes")
+)
+
+ggplot() +
+  # Draw edges
+ geom_segment(data = tree_edges,
+               aes(x = x, y = y - 0.6, xend = xend, yend = yend + 0.6),
+               linewidth = 1, color = "gray40") +
+  # Edge labels
+  geom_label(data = tree_edges,
+             aes(x = (x + xend)/2, y = (y + yend)/2, label = label),
+             size = 4, fill = "white", label.size = 0) +
+  # Draw nodes
+  geom_label(data = tree_nodes,
+             aes(x = x, y = y, label = label, fill = color),
+             size = 3.5, fontface = "bold",
+             label.padding = unit(0.5, "lines"),
+             label.size = 1) +
+  scale_fill_identity() +
+  theme_void() +
+  xlim(0, 12) + ylim(0, 6) +
+  labs(title = "Classification Decision Tree")
+```
+
+## 3. Classification Examples
+
+The following table provides practical scenarios to help you classify missing data mechanisms:
+
+| Scenario | Classification | Why |
+|----------|----------------|-----|
+| Lab machine randomly malfunctions | **MCAR** | Missingness unrelated to patient characteristics or outcomes |
+| Sicker patients drop out, but baseline severity was recorded | **MAR** | Missingness depends on observed severity (can be modeled) |
+| Patients embarrassed by weight gain skip weight measurements | **MNAR** | Missingness depends on the actual (unobserved) weight |
+| Depressed patients miss visits; depression was measured at baseline | **MAR** | Missingness predictable from observed depression scores |
+| Depressed patients miss visits; depression was NOT measured | **MNAR** | The predictor of missingness is unobserved |
+| Survey respondents skip income questions based on education level | **MAR** | If education is observed, missingness can be modeled |
+| High earners refuse to report income | **MNAR** | Missingness depends on the actual (missing) income values |
+| Random sampling failure (data corruption) | **MCAR** | Technical failure unrelated to data values |
+| Patients with side effects stop treatment and drop out; side effects recorded | **MAR** | Side effect status is observed and can predict dropout |
+
+::: {.callout-tip}
+## The Key Question
+Ask yourself: "If I knew the missing values, would that help me predict who is missing?"
+
+- **No** $\rightarrow$ MCAR or MAR
+- **Yes** $\rightarrow$ MNAR
+:::
+
+## 4. Method Validity Table
+
+Different analysis methods have different validity under each mechanism:
+
+| Method | MCAR | MAR | MNAR | Notes |
+|--------|------|-----|------|-------|
+| Complete case analysis | $\checkmark$ | Biased | Biased | Valid only under MCAR; loses efficiency |
+| Available case (pairwise deletion) | $\checkmark$ | Sometimes | Biased | May produce non-positive-definite covariance matrices |
+| GEE (standard) | $\checkmark$ | Biased | Biased | Requires MCAR for valid inference |
+| Mixed models (ML/REML) | $\checkmark$ | $\checkmark$ | Biased | Valid under MAR if model correctly specified |
+| Multiple imputation | $\checkmark$ | $\checkmark$ | Biased | Requires proper imputation model |
+| Inverse probability weighted GEE | $\checkmark$ | $\checkmark$ | Biased | Requires correct weight model |
+| Pattern-mixture models | $\checkmark$ | $\checkmark$ | $\checkmark$* | *If pattern correctly specified |
+| Selection models | $\checkmark$ | $\checkmark$ | $\checkmark$* | *If selection mechanism correctly specified |
+
+::: {.callout-important}
+## Critical Point
+No method can "fix" MNAR without additional assumptions. Pattern-mixture and selection models require specifying the relationship between missingness and the missing values, which cannot be verified from the observed data alone.
+:::
+
+### Visual Summary
+
+```{r}
+#| label: fig-method-validity
+#| fig-cap: "Method validity under different missing data mechanisms"
+#| fig-width: 9
+#| fig-height: 6
+#| echo: false
+
+methods <- c("Complete Case", "Pairwise Deletion", "Standard GEE",
+             "Mixed Models (ML)", "Multiple Imputation", "IPW-GEE",
+             "Pattern-Mixture", "Selection Models")
+
+validity_data <- data.frame(
+  Method = rep(factor(methods, levels = rev(methods)), 3),
+  Mechanism = rep(c("MCAR", "MAR", "MNAR"), each = 8),
+  Status = c(
+    # MCAR
+    "Valid", "Valid", "Valid", "Valid", "Valid", "Valid", "Valid", "Valid",
+    # MAR
+    "Biased", "Caution", "Biased", "Valid", "Valid", "Valid", "Valid", "Valid",
+    # MNAR
+    "Biased", "Biased", "Biased", "Biased", "Biased", "Biased", "Valid*", "Valid*"
+  )
+)
+
+validity_data$Mechanism <- factor(validity_data$Mechanism, levels = c("MCAR", "MAR", "MNAR"))
+
+ggplot(validity_data, aes(x = Mechanism, y = Method, fill = Status)) +
+  geom_tile(color = "white", linewidth = 1) +
+  geom_text(aes(label = ifelse(Status == "Valid*", "Valid*",
+                               ifelse(Status == "Valid", "\u2713",
+                                      ifelse(Status == "Biased", "\u2717", "?")))),
+            size = 5, fontface = "bold") +
+  scale_fill_manual(values = c("Valid" = "#90EE90", "Valid*" = "#FFD700",
+                               "Biased" = "#FFB6C1", "Caution" = "#FFECD2")) +
+  labs(title = "Method Validity by Missing Data Mechanism",
+       subtitle = "* Requires correct specification of the missingness mechanism",
+       x = "Missing Data Mechanism",
+       y = "Analysis Method") +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "bottom",
+        panel.grid = element_blank(),
+        axis.text.y = element_text(face = "bold"))
+```
+
+## 5. The Golden Rule
+
+::: {.callout-note}
+## The MAR Definition
+**MAR means missingness depends on OBSERVED data only.**
+
+Given the observed data, the probability of being missing does not depend on the actual missing values.
+:::
+
+### Common Mistakes
+
+::: {.callout-warning}
+## Mistake 1: "Random" = MCAR
+Many researchers assume MAR means data is "randomly missing." This is incorrect! Under MAR, missingness can be highly systematic and predictable, as long as the predictors are observed.
+
+**Example**: If older patients always drop out earlier, this is MAR (not MCAR) as long as age is recorded.
+:::
+
+::: {.callout-warning}
+## Mistake 2: Not Including Predictors of Missingness
+If a variable predicts missingness and you do not include it in your model, you effectively convert MAR to MNAR.
+
+**Solution**: Always include variables that predict dropout in your analysis model.
+:::
+
+::: {.callout-warning}
+## Mistake 3: Assuming You Can Test for MNAR
+MNAR cannot be tested directly because it involves unobserved data. You can test MCAR vs. not-MCAR, but you cannot distinguish MAR from MNAR using observed data alone.
+
+**Solution**: Use sensitivity analyses to assess robustness to MNAR assumptions.
+:::
+
+## 6. Simulation Demonstration
+
+Let us demonstrate that complete-case analysis is biased under MAR, while mixed models remain approximately unbiased.
+
+### Setup: MAR Dropout Based on Previous Value
+
+```{r}
+#| label: simulation-setup
+
+set.seed(667)
+
+# Simulation parameters
+n_subjects <- 200     # Number of subjects
+n_times <- 5          # Number of time points
+n_sims <- 500         # Number of simulations
+beta_true <- 2        # True time effect
+
+# Function to generate data with MAR dropout
+generate_mar_data <- function(n_subjects, n_times, beta_true) {
+
+  # Generate complete data
+  data <- expand.grid(
+    time = 1:n_times,
+    subject = 1:n_subjects
+  ) |>
+    arrange(subject, time) |>
+    group_by(subject) |>
+    mutate(
+      # Random intercept
+      b0 = rnorm(1, 0, sd = 3)[1],
+      # Outcome: Y = 10 + 2*time + b0 + error
+      y_complete = 10 + beta_true * time + b0 + rnorm(n(), 0, 2)
+    ) |>
+    ungroup()
+
+  # Create MAR dropout based on PREVIOUS observed value
+  # Higher values at time t-1 -> more likely to drop at time t
+  data <- data |>
+    group_by(subject) |>
+    mutate(
+      y_lag = lag(y_complete),
+      # Probability of dropout increases with previous Y
+      # Using logistic model: logit(P(dropout)) = -5 + 0.3 * y_lag
+      p_dropout = ifelse(is.na(y_lag), 0, plogis(-5 + 0.3 * y_lag)),
+      # Once dropped, stay dropped (monotone missingness)
+      dropout = cumsum(runif(n()) < p_dropout) > 0,
+      # First observation always observed
+      dropout = ifelse(time == 1, FALSE, dropout),
+      # Create observed Y
+      y_obs = ifelse(dropout, NA, y_complete)
+    ) |>
+    ungroup()
+
+  return(data)
+}
+
+# Generate one dataset to show
+example_data <- generate_mar_data(n_subjects, n_times, beta_true)
+
+# Show missingness pattern
+cat("Example Missingness Summary:\n")
+example_data |>
+  group_by(time) |>
+  summarize(
+    n_observed = sum(!is.na(y_obs)),
+    pct_observed = round(100 * mean(!is.na(y_obs)), 1)
+  ) |>
+  print()
+```
+
+### Visualize the MAR Mechanism
+
+```{r}
+#| label: fig-mar-visualization
+#| fig-cap: "MAR dropout: higher previous values lead to more dropout"
+#| fig-width: 9
+#| fig-height: 5
+
+# Show relationship between previous Y and dropout
+dropout_viz <- example_data |>
+  filter(time > 1, !is.na(y_lag)) |>
+  mutate(
+    status = ifelse(dropout & lag(dropout) == FALSE, "Dropped at this visit",
+                    ifelse(dropout, "Already dropped", "Remained"))
+  ) |>
+  filter(status != "Already dropped")
+
+ggplot(dropout_viz, aes(x = y_lag, fill = status)) +
+  geom_histogram(position = "identity", alpha = 0.6, bins = 30, color = "white") +
+  facet_wrap(~paste("Time", time)) +
+  scale_fill_manual(values = c("Dropped at this visit" = "coral",
+                               "Remained" = "steelblue")) +
+  labs(x = "Previous Y value (Y at t-1)",
+       y = "Count",
+       fill = "Status",
+       title = "MAR Dropout Mechanism",
+       subtitle = "Subjects with higher previous Y values are more likely to drop out") +
+  theme_minimal(base_size = 11) +
+  theme(legend.position = "bottom")
+```
+
+### Run Simulation: Compare Methods
+
+```{r}
+#| label: run-simulation
+
+# Storage for results
+results <- data.frame(
+  sim = integer(),
+  method = character(),
+  estimate = numeric(),
+  se = numeric()
+)
+
+# Run simulations
+for (s in 1:n_sims) {
+
+  # Generate data
+  sim_data <- generate_mar_data(n_subjects, n_times, beta_true)
+  sim_data$subject <- factor(sim_data$subject)
+
+  # Method 1: Complete case analysis (only subjects with all observations)
+  complete_subjects <- sim_data |>
+    group_by(subject) |>
+    summarize(complete = all(!is.na(y_obs))) |>
+    filter(complete) |>
+    pull(subject)
+
+  cc_data <- sim_data |>
+    filter(subject %in% complete_subjects)
+
+  if (nrow(cc_data) > 10) {
+    fit_cc <- tryCatch({
+      lme(y_obs ~ time, random = ~ 1 | subject, data = cc_data, method = "REML")
+    }, error = function(e) NULL)
+
+    if (!is.null(fit_cc)) {
+      results <- rbind(results, data.frame(
+        sim = s,
+        method = "Complete Case",
+        estimate = fixef(fit_cc)["time"],
+        se = sqrt(vcov(fit_cc)["time", "time"])
+      ))
+    }
+  }
+
+  # Method 2: Mixed model using all available data
+  fit_mm <- tryCatch({
+    lme(y_obs ~ time, random = ~ 1 | subject,
+        data = sim_data, na.action = na.omit, method = "REML")
+  }, error = function(e) NULL)
+
+  if (!is.null(fit_mm)) {
+    results <- rbind(results, data.frame(
+      sim = s,
+      method = "Mixed Model",
+      estimate = fixef(fit_mm)["time"],
+      se = sqrt(vcov(fit_mm)["time", "time"])
+    ))
+  }
+}
+
+# Summarize results
+summary_results <- results |>
+  group_by(method) |>
+  summarize(
+    n_sims = n(),
+    mean_estimate = mean(estimate),
+    sd_estimate = sd(estimate),
+    bias = mean(estimate) - beta_true,
+    pct_bias = 100 * (mean(estimate) - beta_true) / beta_true,
+    mean_se = mean(se),
+    coverage = mean(abs(estimate - beta_true) < 1.96 * se)
+  )
+
+cat("True time effect (beta):", beta_true, "\n\n")
+print(summary_results)
+```
+
+### Visualize Results
+
+```{r}
+#| label: fig-simulation-results
+#| fig-cap: "Simulation results: Complete case vs. Mixed model under MAR"
+#| fig-width: 10
+#| fig-height: 5
+
+# Density plot of estimates
+p1 <- ggplot(results, aes(x = estimate, fill = method)) +
+  geom_density(alpha = 0.5, color = "white") +
+  geom_vline(xintercept = beta_true, linetype = "dashed", linewidth = 1, color = "black") +
+  annotate("text", x = beta_true + 0.05, y = 0.1, label = paste("True =", beta_true),
+           hjust = 0, size = 4, fontface = "bold") +
+  scale_fill_manual(values = c("Complete Case" = "coral", "Mixed Model" = "steelblue")) +
+  labs(x = "Estimated Time Effect",
+       y = "Density",
+       fill = "Method",
+       title = "Distribution of Estimates Across Simulations") +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "top")
+
+# Bias comparison
+bias_data <- summary_results |>
+  select(method, bias, pct_bias) |>
+  pivot_longer(cols = c(bias, pct_bias), names_to = "metric", values_to = "value") |>
+  mutate(metric = ifelse(metric == "bias", "Absolute Bias", "Percent Bias (%)"))
+
+p2 <- ggplot(bias_data, aes(x = method, y = value, fill = method)) +
+  geom_col(width = 0.6, color = "black") +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  facet_wrap(~metric, scales = "free_y") +
+  scale_fill_manual(values = c("Complete Case" = "coral", "Mixed Model" = "steelblue")) +
+  labs(x = "", y = "Value", title = "Bias Comparison") +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "none")
+
+p1 + p2
+```
+
+### Interpretation
+
+```{r}
+#| label: interpretation
+
+cat("=== SIMULATION SUMMARY ===\n\n")
+
+cat("Under MAR dropout (based on previous observed values):\n\n")
+
+cc_bias <- summary_results$pct_bias[summary_results$method == "Complete Case"]
+mm_bias <- summary_results$pct_bias[summary_results$method == "Mixed Model"]
+
+cat("1. COMPLETE CASE ANALYSIS:\n")
+cat("   - Percent bias:", round(cc_bias, 1), "%\n")
+cat("   - Status: BIASED under MAR\n")
+cat("   - Why: Excludes subjects who dropped out, and dropout was related to Y\n\n")
+
+cat("2. MIXED MODEL (ML/REML):\n")
+cat("   - Percent bias:", round(mm_bias, 1), "%\n")
+cat("   - Status: APPROXIMATELY UNBIASED under MAR\n")
+cat("   - Why: Uses all available data and correctly models the correlation structure\n\n")
+
+cat("CONCLUSION: Under MAR, mixed models provide valid inference,\n")
+cat("while complete case analysis can be substantially biased.\n")
+```
+
+::: {.callout-important}
+## Key Takeaway from Simulation
+The simulation demonstrates that under MAR:
+
+1. **Complete case analysis** is biased because it systematically excludes subjects whose missingness is related to their outcome trajectory
+2. **Mixed models** remain approximately unbiased because they use all available data and properly account for the correlation structure
+
+This is why choosing the appropriate method for your missing data mechanism is critical!
+:::
+
+## 7. Practical Checklist
+
+When analyzing longitudinal data with missing values, follow this checklist:
+
+### Step 1: Identify Potential Predictors of Missingness
+
+Make a comprehensive list of all variables that might predict why data is missing:
+
+- Baseline characteristics (age, sex, disease severity)
+- Time-varying covariates (treatment response, side effects)
+- Study design factors (site, randomization group)
+- Previous outcome values
+
+### Step 2: Determine Observation Status
+
+For each potential predictor, ask: **Is this variable observed?**
+
+| If Predictor Is... | Then Mechanism Could Be... |
+|--------------------|---------------------------|
+| Fully observed for all subjects | MAR (if it predicts missingness) |
+| Partially observed | Unclear; may need imputation |
+| Not measured at all | Potential MNAR concern |
+
+### Step 3: Include Predictors in Your Model
+
+::: {.callout-tip}
+## Critical Modeling Decision
+Include all variables that predict missingness in your analysis model, even if they are not of direct scientific interest. This helps ensure the MAR assumption is plausible.
+:::
+
+```r
+# Example: If baseline severity and treatment group predict dropout
+# Include them even if your primary interest is time effect
+
+# Good: Includes predictors of missingness
+fit <- lme(outcome ~ time + baseline_severity + treatment,
+           random = ~ 1 | subject, data = mydata)
+
+# Bad: Omits predictors of missingness
+fit <- lme(outcome ~ time, random = ~ 1 | subject, data = mydata)
+```
+
+### Step 4: Consider Sensitivity Analysis for MNAR
+
+Since MNAR cannot be ruled out, conduct sensitivity analyses:
+
+1. **Pattern-mixture models**: Fit separate models for different dropout patterns
+2. **Tipping point analysis**: How extreme would MNAR have to be to change conclusions?
+3. **Selection models**: Model the missingness process jointly with the outcome
+
+```{r}
+#| label: sensitivity-example
+#| eval: false
+
+# Example: Simple sensitivity analysis
+# Assume those who dropped out had outcomes X units worse
+
+sensitivity_deltas <- c(0, -1, -2, -3)  # MNAR shift assumptions
+
+for (delta in sensitivity_deltas) {
+  # Adjust imputed values by delta
+  imputed_data <- my_imputation_function(data, mnar_shift = delta)
+
+  # Fit model
+  fit <- lme(outcome ~ time + treatment,
+             random = ~ 1 | subject,
+             data = imputed_data)
+
+  cat("MNAR shift =", delta, ": Treatment effect =",
+      round(fixef(fit)["treatment"], 2), "\n")
+}
+```
+
+### Summary Checklist
+
+- [ ] List all variables that might predict missingness
+- [ ] Verify which predictors are observed vs. unobserved
+- [ ] Include all observed predictors of missingness in your model
+- [ ] Use likelihood-based methods (mixed models) or multiple imputation for MAR
+- [ ] Conduct sensitivity analyses for potential MNAR
+- [ ] Report your assumptions about the missing data mechanism
+- [ ] Document the proportion and pattern of missing data
+
+## Summary
+
+| Concept | Key Point |
+|---------|-----------|
+| **MCAR** | Missingness is completely random; rare in practice |
+| **MAR** | Missingness depends on observed data; most common working assumption |
+| **MNAR** | Missingness depends on unobserved values; requires strong assumptions |
+| **Method choice** | Mixed models and MI are valid under MAR; complete case is not |
+| **The Golden Rule** | MAR means missingness depends on OBSERVED data only |
+| **Best practice** | Include predictors of missingness in your model; conduct sensitivity analyses |
+
+::: {.callout-note}
+## Final Thought
+You cannot prove MAR from your data. The best you can do is:
+
+1. Make MAR more plausible by collecting and including relevant predictors
+2. Assess sensitivity of conclusions to MNAR assumptions
+3. Transparently report your assumptions
+:::

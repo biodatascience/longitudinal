@@ -1,0 +1,43 @@
+Package: bios667.2026.materials
+Title: BIOS 667 (2026) Reference Lectures, Homework, and Quizzes
+Version: 1.0.0
+Description: Dependency manifest for rendering the BIOS 667 2026 course materials
+    (Fitzmaurice, Laird & Ware 2011). Every R package used by any lecture deck,
+    homework, or quiz is listed under Imports. Render targets: R 4.5.1, Quarto >= 1.5.
+    Install everything with: Rscript 2026/setup.R  (or see that script).
+Encoding: UTF-8
+Imports:
+    broom,
+    broom.mixed,
+    clubSandwich,
+    dplyr,
+    emmeans,
+    geepack,
+    ggplot2,
+    glmmTMB,
+    kableExtra,
+    knitr,
+    lme4,
+    lmerTest,
+    lmtest,
+    MASS,
+    mice,
+    multgee,
+    nlme,
+    nnet,
+    patchwork,
+    pbkrtest,
+    plm,
+    pROC,
+    pscl,
+    purrr,
+    reshape2,
+    ResourceSelection,
+    RLRsim,
+    rmarkdown,
+    sandwich,
+    scales,
+    strucchange,
+    survival,
+    tibble,
+    tidyr

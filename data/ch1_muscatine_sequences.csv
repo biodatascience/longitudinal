@@ -1,0 +1,15 @@
+seq,count
+Y Y Y,132
+Y Y N,64
+Y N Y,51
+N Y Y,59
+Y N N,48
+N Y N,42
+N N Y,55
+N N N,210
+Y NA Y,37
+Y Y NA,41
+NA Y Y,33
+Y NA NA,22
+NA Y NA,24
+NA NA Y,27

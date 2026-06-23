@@ -1,0 +1,259 @@
+---
+title: "BIOS 667 — Estimation & Inference Quick Reference"
+subtitle: "ML, REML, GLS, and Hypothesis Testing (Ch. 4)"
+format:
+  html:
+    theme: cosmo
+    toc: true
+    embed-resources: true
+  pdf:
+    number-sections: false
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+```{r}
+#| label: setup
+#| include: false
+library(nlme)
+library(lme4)
+```
+
+## 1. Estimation Methods Comparison
+
+| Method | When to Use | Pros | Cons | R Code |
+|--------|-------------|------|------|--------|
+| **OLS** | Baseline comparison; independent errors | Simple, familiar | Ignores correlation; SEs wrong | `lm(y ~ x)` |
+| **GLS** | Known or estimated $\Sigma$ | Correct SEs; efficient | Requires specifying structure | `gls(y ~ x, correlation = ...)` |
+| **ML** | Comparing models with different **fixed effects** | LRT valid for fixed effects | Variance estimates biased downward | `gls(..., method = "ML")` |
+| **REML** | Estimating **variance components** | Less biased variance estimates | Cannot compare models with different fixed effects | `gls(..., method = "REML")` |
+
+**Key insight**: OLS point estimates for $\beta$ are unbiased even with correlated errors, but the standard errors are wrong. GLS gives both correct estimates AND correct SEs.
+
+
+## 2. ML vs REML Decision Guide
+
+### When to Use Each
+
+| Goal | Method | Reason |
+|------|--------|--------|
+| Estimate variance components | **REML** | Less biased (accounts for estimating fixed effects) |
+| Compare models with same fixed effects, different covariance | Either (REML preferred) | Variance comparison only |
+| Compare models with **different fixed effects** | **ML required** | REML likelihoods not comparable |
+| Final model reporting | **REML** | Better variance estimates |
+
+### The REML Gotcha
+
+::: {.callout-warning}
+## Critical: Use ML for LRT on Fixed Effects
+
+REML likelihoods are **not comparable** across models with different fixed effects because REML integrates out the fixed effects. If you use REML for an LRT comparing fixed effects, your test is invalid!
+:::
+
+### Code Pattern
+
+```{r}
+#| eval: false
+
+# Step 1: Fit models with ML for comparison
+fit_full <- gls(y ~ x1 + x2, data = dat,
+                correlation = corAR1(form = ~ time | id),
+                method = "ML")
+
+fit_reduced <- gls(y ~ x1, data = dat,
+                   correlation = corAR1(form = ~ time | id),
+                   method = "ML")
+
+# Step 2: LRT for fixed effects (valid with ML)
+anova(fit_reduced, fit_full)
+
+# Step 3: Refit final model with REML for inference
+fit_final <- gls(y ~ x1 + x2, data = dat,
+                 correlation = corAR1(form = ~ time | id),
+                 method = "REML")
+```
+
+
+## 3. Hypothesis Testing Reference
+
+| Test | Formula | When to Use | R Function |
+|------|---------|-------------|------------|
+| **Wald** | $W = \frac{(\hat{\beta} - \beta_0)^2}{\widehat{\text{Var}}(\hat{\beta})} \sim \chi^2_1$ | Quick tests; large samples | `summary()` t-values |
+| **LRT** | $\Lambda = -2[\ell(\theta_0) - \ell(\hat{\theta})] \sim \chi^2_{df}$ | Nested models; use **ML** for fixed effects | `anova(fit1, fit2)` |
+| **Score** | Based on gradient at $\theta_0$ | Rarely used directly | Not standard in R |
+
+### Wald vs LRT
+
+- **Wald**: Uses only the full model fit; can be unreliable far from null
+- **LRT**: Requires fitting both models; generally more reliable
+- **For variance components**: LRT at boundary (testing $\sigma^2 = 0$) has non-standard distribution; consider mixture of $\chi^2$
+
+### LRT Example
+
+```{r}
+#| eval: false
+
+# Testing fixed effects (MUST use ML)
+fit1_ml <- gls(y ~ x1, data = dat, correlation = corCS(form = ~ 1 | id),
+               method = "ML")
+fit2_ml <- gls(y ~ x1 + x2, data = dat, correlation = corCS(form = ~ 1 | id),
+               method = "ML")
+
+anova(fit1_ml, fit2_ml)  # Valid LRT
+
+# Testing covariance structures (can use REML, same fixed effects)
+fit_cs <- gls(y ~ x1 + x2, data = dat, correlation = corCS(form = ~ 1 | id),
+              method = "REML")
+fit_ar1 <- gls(y ~ x1 + x2, data = dat, correlation = corAR1(form = ~ time | id),
+               method = "REML")
+
+# Compare via AIC/BIC (not nested, so LRT inappropriate)
+AIC(fit_cs, fit_ar1)
+```
+
+
+## 4. Covariance Structure Selection
+
+| Structure | Parameters | Correlation Pattern | When to Use |
+|-----------|------------|---------------------|-------------|
+| **Independence** | 1 ($\sigma^2$) | $\text{Corr}(Y_i, Y_j) = 0$ | Baseline; rarely appropriate for longitudinal |
+| **Compound Symmetry (CS)** | 2 ($\sigma^2, \rho$) | $\text{Corr}(Y_i, Y_j) = \rho$ for all $i \neq j$ | Equal spacing; exchangeable observations |
+| **AR(1)** | 2 ($\sigma^2, \rho$) | $\text{Corr}(Y_i, Y_j) = \rho^{|i-j|}$ | Equally spaced; correlation decays with lag |
+| **Unstructured (UN)** | $n_i(n_i+1)/2$ | All correlations estimated freely | Small $n_i$; exploratory; gold standard |
+
+### Parameter Count for Unstructured
+
+With $n_i$ observations per subject:
+
+- Variances: $n_i$
+- Covariances: $\binom{n_i}{2} = \frac{n_i(n_i-1)}{2}$
+- **Total**: $\frac{n_i(n_i+1)}{2}$
+
+Example: 5 time points $\rightarrow$ $\frac{5 \times 6}{2} = 15$ parameters
+
+### Selection Strategy
+
+1. Start with unstructured (if feasible) as reference
+2. Compare simpler structures via AIC/BIC
+3. Consider scientific plausibility (does correlation decay with time?)
+4. Parsimony matters: fewer parameters = more stable estimates
+
+
+## 5. R Code Examples
+
+### Setup: Simulated Longitudinal Data
+
+```{r}
+# Simulate data
+set.seed(667)
+n_subj <- 50
+n_time <- 4
+
+dat <- data.frame(
+  id = rep(1:n_subj, each = n_time),
+  time = rep(1:n_time, n_subj),
+  x = rnorm(n_subj * n_time)
+)
+
+# Add correlated errors (AR1 structure)
+library(MASS)
+ar1_cor <- function(n, rho) {
+  mat <- rho^abs(outer(1:n, 1:n, "-"))
+  return(mat)
+}
+
+errors <- do.call(rbind, lapply(1:n_subj, function(i) {
+  mvrnorm(1, mu = rep(0, n_time), Sigma = 4 * ar1_cor(n_time, 0.6))
+}))
+
+dat$y <- 2 + 0.5 * dat$x + as.vector(t(errors))
+dat$id <- factor(dat$id)
+```
+
+### Fitting GLS with Different Structures
+
+```{r}
+# Independence (equivalent to OLS)
+fit_ind <- gls(y ~ x, data = dat, method = "REML")
+
+# Compound Symmetry
+fit_cs <- gls(y ~ x, data = dat,
+              correlation = corCompSymm(form = ~ 1 | id),
+              method = "REML")
+
+# AR(1)
+fit_ar1 <- gls(y ~ x, data = dat,
+               correlation = corAR1(form = ~ time | id),
+               method = "REML")
+
+# Compare fits
+AIC(fit_ind, fit_cs, fit_ar1)
+```
+
+### Extracting and Comparing Standard Errors
+
+```{r}
+# Extract coefficients and SEs
+extract_results <- function(fit, name) {
+  data.frame(
+    Model = name,
+    Estimate = coef(fit)["x"],
+    SE = sqrt(vcov(fit)["x", "x"])
+  )
+}
+
+results <- rbind(
+  extract_results(fit_ind, "Independence"),
+  extract_results(fit_cs, "Compound Symmetry"),
+  extract_results(fit_ar1, "AR(1)")
+)
+print(results, row.names = FALSE)
+```
+
+### LRT for Nested Models (Fixed Effects)
+
+```{r}
+# Fit with ML for valid LRT
+fit_reduced_ml <- gls(y ~ 1, data = dat,
+                      correlation = corAR1(form = ~ time | id),
+                      method = "ML")
+
+fit_full_ml <- gls(y ~ x, data = dat,
+                   correlation = corAR1(form = ~ time | id),
+                   method = "ML")
+
+# LRT
+anova(fit_reduced_ml, fit_full_ml)
+```
+
+### Examining Estimated Correlation
+
+```{r}
+# Extract correlation parameter from AR(1) fit
+fit_ar1$modelStruct$corStruct
+
+# Get the estimated correlation matrix for first subject
+getVarCov(fit_ar1, individual = 1, type = "marginal")
+```
+
+
+## Quick Reference Card
+
+::: {.callout-tip}
+## Estimation & Testing Checklist
+
+1. **Comparing fixed effects?** $\rightarrow$ Use `method = "ML"`
+2. **Final inference on variances?** $\rightarrow$ Use `method = "REML"`
+3. **Nested models?** $\rightarrow$ LRT via `anova()`
+4. **Non-nested covariance structures?** $\rightarrow$ AIC/BIC
+5. **Choosing structure?** $\rightarrow$ Start UN, simplify with AIC
+:::
+
+| I want to... | Use... |
+|--------------|--------|
+| Test if a covariate is significant | Wald (quick) or LRT with ML (rigorous) |
+| Compare AR(1) vs CS (same fixed effects) | AIC/BIC or LRT with REML |
+| Get best variance estimates | REML |
+| Test $H_0: \beta_1 = 0$ via LRT | ML for both models, then `anova()` |

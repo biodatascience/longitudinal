@@ -1,0 +1,164 @@
+---
+title: "BIOS 667 Master Notation Reference"
+subtitle: "Symbols and Formulas Across All Lectures"
+format:
+  html:
+    theme: cosmo
+    toc: true
+    embed-resources: true
+  pdf:
+    number-sections: false
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+## 1. Indices and Dimensions
+
+| Symbol | Meaning |
+|:------:|:--------|
+| $i = 1, \ldots, m$ | Subjects (clusters) |
+| $j = 1, \ldots, n_i$ | Observations within subject $i$ |
+| $n_i$ | Number of observations for subject $i$ |
+| $N = \sum_{i=1}^{m} n_i$ | Total number of observations |
+| $p$ | Number of fixed effect parameters |
+| $q$ | Number of random effect parameters per subject |
+
+## 2. Outcomes and Predictors
+
+| Symbol | Meaning |
+|:------:|:--------|
+| $Y_{ij}$ | Outcome for subject $i$ at observation $j$ |
+| $\mathbf{Y}_i$ | Response vector for subject $i$ $(n_i \times 1)$ |
+| $\mathbf{Y}$ | Stacked response vector $(N \times 1)$ |
+| $X_{ij}$ | Covariate vector at observation $ij$ |
+| $\mathbf{X}_i$ | Design matrix for subject $i$ $(n_i \times p)$ |
+| $\boldsymbol{\beta}$ | Fixed effects parameter vector $(p \times 1)$ |
+
+## 3. Random Effects
+
+| Symbol | Meaning |
+|:------:|:--------|
+| $\mathbf{b}_i$ | Random effects vector for subject $i$ $(q \times 1)$ |
+| $b_{0i}$ | Random intercept for subject $i$ |
+| $b_{1i}$ | Random slope for subject $i$ |
+| $\mathbf{D}$ | Covariance matrix of random effects $(q \times q)$ |
+| $\mathbf{Z}_i$ | Random effects design matrix $(n_i \times q)$ |
+| $\boldsymbol{\varepsilon}_i$ | Residual error vector for subject $i$ |
+
+**Mixed Model**: $\mathbf{Y}_i = \mathbf{X}_i \boldsymbol{\beta} + \mathbf{Z}_i \mathbf{b}_i + \boldsymbol{\varepsilon}_i$, where $\mathbf{b}_i \sim N(\mathbf{0}, \mathbf{D})$ and $\boldsymbol{\varepsilon}_i \sim N(\mathbf{0}, \mathbf{R}_i)$
+
+## 4. Covariance Structures
+
+| Symbol | Meaning |
+|:------:|:--------|
+| $\boldsymbol{\Sigma}_i$ | Marginal covariance matrix for subject $i$ $(n_i \times n_i)$ |
+| $\sigma^2$ | Residual (within-subject) variance |
+| $\rho$ | Correlation parameter |
+| $\tau^2$ | Between-subject variance (random intercept variance) |
+| $\mathbf{R}_i$ | Residual covariance matrix |
+
+| Structure | Formula for $\boldsymbol{\Sigma}_{jk}$ |
+|:----------|:---------------------------------------|
+| Independence | $\sigma^2 \mathbf{I}$ |
+| Compound Symmetry (CS) | $\sigma^2[(1-\rho)\mathbf{I} + \rho \mathbf{J}]$ or $\tau^2 + \sigma^2 \mathbf{I}_{j=k}$ |
+| AR(1) | $\sigma^2 \rho^{|j-k|}$ |
+| Unstructured (UN) | $\sigma_{jk}$ (each element estimated) |
+| Toeplitz | $\sigma_{|j-k|}$ (depends only on lag) |
+
+**Marginal Covariance**: $\boldsymbol{\Sigma}_i = \mathbf{Z}_i \mathbf{D} \mathbf{Z}_i' + \mathbf{R}_i$
+
+## 5. Estimation
+
+| Symbol | Meaning |
+|:------:|:--------|
+| $\hat{\boldsymbol{\beta}}$ | Estimated fixed effects |
+| $\hat{\mathbf{b}}_i$ | Predicted random effects (BLUPs) |
+| $\ell(\boldsymbol{\theta})$ | Log-likelihood |
+| $\boldsymbol{\theta}$ | Variance-covariance parameters |
+| ML | Maximum Likelihood estimation |
+| REML | Restricted Maximum Likelihood estimation |
+
+**Key Formulas**:
+
+- **GLS Estimator**: $\hat{\boldsymbol{\beta}} = \left( \sum_i \mathbf{X}_i' \boldsymbol{\Sigma}_i^{-1} \mathbf{X}_i \right)^{-1} \sum_i \mathbf{X}_i' \boldsymbol{\Sigma}_i^{-1} \mathbf{Y}_i$
+- **Variance of** $\hat{\boldsymbol{\beta}}$: $\text{Var}(\hat{\boldsymbol{\beta}}) = \left( \sum_i \mathbf{X}_i' \boldsymbol{\Sigma}_i^{-1} \mathbf{X}_i \right)^{-1}$
+- **BLUP**: $\hat{\mathbf{b}}_i = \mathbf{D} \mathbf{Z}_i' \boldsymbol{\Sigma}_i^{-1} (\mathbf{Y}_i - \mathbf{X}_i \hat{\boldsymbol{\beta}})$
+
+## 6. Key Formulas Summary
+
+| Formula | Expression |
+|:--------|:-----------|
+| **Rubin's Rules** (MI) | $\bar{Q} = \frac{1}{M}\sum_{m=1}^M \hat{Q}^{(m)}$; $T = \bar{U} + (1 + \frac{1}{M})B$ |
+| **Zeger Attenuation** | $\beta_{\text{marg}} \approx \beta_{\text{cond}} / \sqrt{1 + 0.346 \cdot \sigma^2_b}$ |
+| **Relative Efficiency** | $\text{RE} \approx 1/(1 + (1-\rho)/n)$ for CS |
+| **ICC** | $\rho = \tau^2 / (\tau^2 + \sigma^2)$ |
+
+## 7. Link Functions (GLMMs)
+
+| Family | Link | $g(\mu)$ | $g^{-1}(\eta)$ |
+|:-------|:-----|:---------|:---------------|
+| Gaussian | Identity | $\mu$ | $\eta$ |
+| Binomial | Logit | $\log\left(\frac{\mu}{1-\mu}\right)$ | $\frac{e^\eta}{1+e^\eta}$ |
+| Binomial | Probit | $\Phi^{-1}(\mu)$ | $\Phi(\eta)$ |
+| Poisson | Log | $\log(\mu)$ | $e^\eta$ |
+
+**GLMM**: $g(E[Y_{ij} | \mathbf{b}_i]) = \mathbf{X}_{ij}' \boldsymbol{\beta} + \mathbf{Z}_{ij}' \mathbf{b}_i$
+
+## 8. Missing Data
+
+| Symbol | Meaning |
+|:------:|:--------|
+| $R_{ij}$ | Missingness indicator (1 = observed, 0 = missing) |
+| $\mathbf{Y}_{\text{obs}}$ | Observed outcomes |
+| $\mathbf{Y}_{\text{mis}}$ | Missing outcomes |
+| $M$ | Number of imputations |
+
+| Mechanism | Definition |
+|:----------|:-----------|
+| **MCAR** | $P(R | Y_{\text{obs}}, Y_{\text{mis}}) = P(R)$ |
+| **MAR** | $P(R | Y_{\text{obs}}, Y_{\text{mis}}) = P(R | Y_{\text{obs}})$ |
+| **MNAR** | $P(R | Y_{\text{obs}}, Y_{\text{mis}})$ depends on $Y_{\text{mis}}$ |
+
+## 9. GEE (Generalized Estimating Equations)
+
+| Symbol | Meaning |
+|:------:|:--------|
+| $\mathbf{V}_i$ | Working covariance matrix |
+| $\mathbf{R}(\boldsymbol{\alpha})$ | Working correlation matrix |
+| $\boldsymbol{\alpha}$ | Correlation parameters |
+| $\mathbf{A}_i$ | Diagonal matrix of variance functions |
+| $\phi$ | Scale (dispersion) parameter |
+
+**GEE Estimating Equation**:
+$$\sum_{i=1}^{m} \mathbf{D}_i' \mathbf{V}_i^{-1} (\mathbf{Y}_i - \boldsymbol{\mu}_i) = \mathbf{0}$$
+
+where $\mathbf{D}_i = \partial \boldsymbol{\mu}_i / \partial \boldsymbol{\beta}'$ and $\mathbf{V}_i = \phi \mathbf{A}_i^{1/2} \mathbf{R}(\boldsymbol{\alpha}) \mathbf{A}_i^{1/2}$
+
+**Sandwich Variance**: $\text{Var}(\hat{\boldsymbol{\beta}}) = \mathbf{B}^{-1} \mathbf{M} \mathbf{B}^{-1}$ (robust to misspecified correlation)
+
+## 10. Test Statistics
+
+| Statistic | Formula | Use |
+|:----------|:--------|:----|
+| **Wald** | $W = \hat{\beta} / \text{SE}(\hat{\beta})$ | Single parameter |
+| **Wald (multivariate)** | $W = \hat{\boldsymbol{\beta}}' [\text{Var}(\hat{\boldsymbol{\beta}})]^{-1} \hat{\boldsymbol{\beta}}$ | Multiple parameters |
+| **LRT** | $G = 2(\ell_{\text{full}} - \ell_{\text{reduced}})$ | Nested models (ML only) |
+| **Score** | $U(\boldsymbol{\beta}_0)' I(\boldsymbol{\beta}_0)^{-1} U(\boldsymbol{\beta}_0)$ | Under null |
+
+| Criterion | Formula | Use |
+|:----------|:--------|:----|
+| **AIC** | $-2\ell + 2k$ | Model selection |
+| **BIC** | $-2\ell + k \log(N)$ | Model selection |
+| **QIC** | Quasi-likelihood IC | GEE model selection |
+
+## Quick Reference: Model Comparison
+
+| Aspect | Mixed Model (LMM/GLMM) | GEE |
+|:-------|:-----------------------|:----|
+| Inference | Subject-specific (conditional) | Population-averaged (marginal) |
+| Likelihood | Full likelihood | Quasi-likelihood |
+| Correlation | Part of model | "Working" (nuisance) |
+| Missing data | Valid under MAR | Valid under MCAR |
+| Random effects | Estimated | Not estimated |

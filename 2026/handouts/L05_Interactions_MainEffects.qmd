@@ -1,0 +1,623 @@
+---
+title: "Why You Shouldn't Test Main Effects When an Interaction Is in the Model"
+subtitle: "BIOS 667 — Applied Longitudinal Data Analysis"
+format:
+  html:
+    theme: cosmo
+    toc: true
+    embed-resources: true
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+```{r}
+#| label: setup
+#| include: false
+
+library(tidyverse)
+library(emmeans)
+library(car)
+library(knitr)
+library(kableExtra)
+
+set.seed(667)
+```
+
+## 1. The Problem: An Interaction Changes the Question
+
+When you include an interaction term in your model, the interpretation of "main effects" fundamentally changes. This is one of the most common sources of confusion (and errors) in applied statistics.
+
+### The Basic Setup
+
+Consider a model with treatment group and a continuous covariate X:
+
+$$Y = \beta_0 + \beta_1 \cdot \text{treatment} + \beta_2 \cdot X + \beta_3 \cdot (\text{treatment} \times X) + \epsilon$$
+
+**The critical insight**: When $\beta_3 \neq 0$, the effect of treatment is NOT constant---it depends on X.
+
+### What Does the "Main Effect" Actually Mean?
+
+In a model with an interaction:
+
+- $\beta_1$ is **not** the overall effect of treatment
+- $\beta_1$ is the effect of treatment **when X = 0**
+- This is a **conditional effect**, not a marginal effect
+
+### The X = 0 Trap
+
+Ask yourself: **Is X = 0 a meaningful value?**
+
+| Variable X | Is X = 0 meaningful? |
+|------------|---------------------|
+| Age (years) | No! No one is 0 years old |
+| Temperature (Celsius) | Maybe, depends on context |
+| Centered age | Yes! It's the mean age |
+| Time since baseline | Yes! It's the start of the study |
+| BMI | No! Not a realistic value |
+
+If X = 0 is not meaningful, then **the "main effect" coefficient answers a question nobody asked**.
+
+## 2. Key Concepts
+
+### Conditional vs. Marginal Effects
+
+| Term | Definition | In our model |
+|------|------------|--------------|
+| **Conditional effect** | Effect at a specific value of the moderator | $\beta_1$ = treatment effect when X = 0 |
+| **Marginal effect** | Average effect across all values of the moderator | Requires averaging over X distribution |
+| **Simple effect** | Effect at a chosen, meaningful value of X | Treatment effect at X = mean, median, etc. |
+
+### The Centering Demonstration
+
+Here's the key insight: **recentering X changes the "main effect" coefficient and its p-value**, even though the model fit is identical!
+
+```{r}
+#| label: centering-demo
+
+# Generate data with a treatment x continuous interaction
+n <- 200
+dat <- tibble(
+  X_original = rnorm(n, mean = 50, sd = 10),
+  treatment = rep(c("Control", "Treatment"), each = n/2),
+  # True effect: treatment effect varies with X
+  # At X=50, treatment effect = 5
+  # Interaction: treatment effect increases by 0.3 per unit of X
+  Y = 10 +
+      5 * (treatment == "Treatment") +
+      0.4 * X_original +
+      0.3 * (treatment == "Treatment") * (X_original - 50) +
+      rnorm(n, sd = 5)
+)
+
+# Fit with original X (where X=0 is meaningless)
+fit_original <- lm(Y ~ treatment * X_original, data = dat)
+
+# Center X at the mean
+dat$X_centered <- dat$X_original - mean(dat$X_original)
+fit_centered <- lm(Y ~ treatment * X_centered, data = dat)
+
+# Center X at the median
+dat$X_median <- dat$X_original - median(dat$X_original)
+fit_median <- lm(Y ~ treatment * X_median, data = dat)
+
+# Center at a clinically meaningful value (say, X = 40)
+dat$X_at40 <- dat$X_original - 40
+fit_at40 <- lm(Y ~ treatment * X_at40, data = dat)
+```
+
+### How the Treatment Coefficient Changes with Centering
+
+```{r}
+#| label: centering-table
+
+# Extract treatment coefficients
+extract_trt <- function(fit, label) {
+  coef_summary <- summary(fit)$coefficients
+  tibble(
+    Centering = label,
+    `X = 0 means` = case_when(
+      label == "Original (X)" ~ "X = 0 (impossible)",
+      label == "Mean-centered" ~ paste0("X = ", round(mean(dat$X_original), 1)),
+      label == "Median-centered" ~ paste0("X = ", round(median(dat$X_original), 1)),
+      label == "Centered at 40" ~ "X = 40"
+    ),
+    Coefficient = coef_summary["treatmentTreatment", "Estimate"],
+    `Std. Error` = coef_summary["treatmentTreatment", "Std. Error"],
+    `t value` = coef_summary["treatmentTreatment", "t value"],
+    `p-value` = coef_summary["treatmentTreatment", "Pr(>|t|)"]
+  )
+}
+
+comparison_table <- bind_rows(
+  extract_trt(fit_original, "Original (X)"),
+  extract_trt(fit_centered, "Mean-centered"),
+  extract_trt(fit_median, "Median-centered"),
+  extract_trt(fit_at40, "Centered at 40")
+)
+
+comparison_table |>
+  kable(digits = 4, caption = "Treatment coefficient changes with centering") |>
+  kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+**Key observation**: The coefficient, standard error, t-value, and p-value all change with centering, even though:
+
+- The model R-squared is identical
+- The interaction coefficient is identical
+- The predictions are identical
+
+The "main effect" p-value is answering a different question in each case!
+
+## 3. Simulation Example
+
+Let's run a complete simulation to drive this point home.
+
+```{r}
+#| label: simulation
+
+set.seed(667)
+
+# Simulate: continuous moderator x binary treatment
+n <- 300
+sim_data <- tibble(
+  id = 1:n,
+  # Continuous moderator (e.g., baseline severity score)
+  severity = rnorm(n, mean = 5, sd = 2),
+  # Binary treatment
+  group = factor(rep(c("Placebo", "Drug"), each = n/2)),
+  # Outcome with interaction:
+  # - Drug has positive effect at low severity
+  # - Drug effect diminishes (or reverses) at high severity
+  Y = 20 +
+      3 * (group == "Drug") +           # "main effect" at severity = 0
+      2 * severity +                     # severity effect in placebo
+      -0.8 * (group == "Drug") * severity +  # interaction
+      rnorm(n, sd = 3)
+)
+
+# Visualize the interaction
+ggplot(sim_data, aes(x = severity, y = Y, color = group)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "lm", se = TRUE) +
+  labs(
+    title = "Treatment Effect Depends on Baseline Severity",
+    subtitle = "Drug works better for low-severity patients",
+    x = "Baseline Severity",
+    y = "Outcome (higher = better)"
+  ) +
+  theme_minimal() +
+  scale_color_brewer(palette = "Set1")
+```
+
+### Fit the Model and Examine "Main Effects"
+
+```{r}
+#| label: fit-model
+
+# Fit with uncentered severity
+fit_uncentered <- lm(Y ~ group * severity, data = sim_data)
+summary(fit_uncentered)
+```
+
+**The problem**: The p-value for `groupDrug` tests whether the drug effect is significant when `severity = 0`. But severity = 0 is 2.5 standard deviations below the mean---an extreme value that may not even exist in our sample!
+
+```{r}
+#| label: severity-distribution
+
+# What does severity = 0 mean?
+summary(sim_data$severity)
+cat("\nProportion with severity < 0:", mean(sim_data$severity < 0))
+```
+
+### The Solution: Center at a Meaningful Value
+
+```{r}
+#| label: centered-analysis
+
+# Center at the mean
+sim_data$severity_c <- sim_data$severity - mean(sim_data$severity)
+
+fit_centered <- lm(Y ~ group * severity_c, data = sim_data)
+summary(fit_centered)
+```
+
+Now the `groupDrug` coefficient estimates the treatment effect at the **average** severity level---a much more meaningful quantity!
+
+### Use emmeans for Proper Analysis
+
+```{r}
+#| label: emmeans-analysis
+
+# Estimate treatment effect at specific severity values
+severity_values <- quantile(sim_data$severity, probs = c(0.25, 0.5, 0.75))
+
+# Simple effects: treatment effect at each severity level
+emm <- emmeans(fit_uncentered, ~ group | severity,
+               at = list(severity = severity_values))
+emm
+
+# Contrasts: Drug vs Placebo at each severity level
+contrast(emm, method = "pairwise")
+```
+
+## 4. The Right Way: Simple Effects Analysis
+
+Instead of testing meaningless "main effects," use **simple effects**: test the effect of one factor at specific, meaningful levels of the other factor.
+
+### Using emmeans
+
+```{r}
+#| label: simple-effects
+
+# Define meaningful values of the moderator
+meaningful_values <- list(
+  severity = c(
+    "Low (25th %ile)" = quantile(sim_data$severity, 0.25),
+    "Medium (50th %ile)" = quantile(sim_data$severity, 0.50),
+    "High (75th %ile)" = quantile(sim_data$severity, 0.75)
+  )
+)
+
+# Get estimated marginal means
+emm_simple <- emmeans(fit_uncentered, ~ group | severity,
+                      at = list(severity = unname(meaningful_values$severity)))
+
+# Simple effects with confidence intervals
+simple_effects <- contrast(emm_simple, method = "pairwise")
+summary(simple_effects, infer = TRUE)
+```
+
+### Visualization with emmip
+
+```{r}
+#| label: emmip-plot
+
+# Create a nice visualization
+emmip(fit_uncentered, group ~ severity,
+      at = list(severity = seq(min(sim_data$severity),
+                               max(sim_data$severity),
+                               length.out = 50)),
+      CIs = TRUE) +
+  geom_vline(xintercept = meaningful_values$severity,
+             linetype = "dashed", alpha = 0.5) +
+  labs(
+    title = "Estimated Marginal Means Across Severity",
+    subtitle = "Dashed lines show 25th, 50th, and 75th percentiles",
+    x = "Baseline Severity",
+    y = "Predicted Outcome"
+  ) +
+  theme_minimal()
+```
+
+### Probing the Interaction: Johnson-Neyman Approach
+
+```{r}
+#| label: johnson-neyman
+
+# At what severity level does the treatment effect become non-significant?
+# Use emtrends to examine the slope
+
+# Trend of treatment effect across severity
+emtrends(fit_uncentered, ~ group, var = "severity")
+
+# The interaction coefficient tells us the rate of change
+coef(fit_uncentered)["groupDrug:severity"]
+```
+
+## 5. Two Factors Example: Categorical x Categorical
+
+The same principles apply when both factors are categorical.
+
+```{r}
+#| label: two-factor-setup
+
+set.seed(667)
+
+# Simulate a 2x3 design
+n_per_cell <- 50
+two_factor <- expand_grid(
+  A = factor(c("A1", "A2")),
+  B = factor(c("B1", "B2", "B3")),
+  rep = 1:n_per_cell
+) |>
+  mutate(
+    # True means with interaction
+    mu = case_when(
+      A == "A1" & B == "B1" ~ 10,
+      A == "A1" & B == "B2" ~ 12,
+      A == "A1" & B == "B3" ~ 14,
+      A == "A2" & B == "B1" ~ 15,  # Big effect of A at B1
+      A == "A2" & B == "B2" ~ 14,  # Small effect at B2
+      A == "A2" & B == "B3" ~ 13   # Negative effect at B3!
+    ),
+    Y = mu + rnorm(n(), sd = 3)
+  )
+
+# Visualize
+ggplot(two_factor, aes(x = B, y = Y, fill = A)) +
+  geom_boxplot() +
+  labs(title = "Interaction Between Factors A and B") +
+  theme_minimal() +
+  scale_fill_brewer(palette = "Set2")
+```
+
+### The "Main Effect" Trap with Two Factors
+
+```{r}
+#| label: two-factor-model
+
+# Fit the interaction model
+fit_two <- lm(Y ~ A * B, data = two_factor)
+summary(fit_two)
+```
+
+**What does `AA2` coefficient mean?**
+
+- It's the effect of A2 vs A1 **when B = B1** (the reference level)
+- It does NOT represent the "overall" effect of A
+
+### The Right Analysis: Simple Effects
+
+```{r}
+#| label: two-factor-emmeans
+
+# Estimated marginal means
+emm_two <- emmeans(fit_two, ~ A | B)
+emm_two
+
+# Simple effect of A at each level of B
+contrast(emm_two, method = "pairwise")
+```
+
+```{r}
+#| label: two-factor-plot
+
+# Interaction plot
+emmip(fit_two, A ~ B, CIs = TRUE) +
+  labs(
+    title = "Effect of A Depends on Level of B",
+    subtitle = "Error bars show 95% CIs"
+  ) +
+  theme_minimal()
+```
+
+### Average Effect Across Levels
+
+If you want an "overall" effect of A (averaging across B levels):
+
+```{r}
+#| label: marginal-effect
+
+# Marginal means for A (averaging over B)
+emmeans(fit_two, ~ A) |>
+  contrast(method = "pairwise")
+```
+
+## 6. Connection to Type III ANOVA
+
+Type III sums of squares test "main effects" at the reference levels of other factors---which means they suffer from the same centering problem!
+
+### Type III Tests Change with Centering
+
+```{r}
+#| label: type-iii
+
+# Using our continuous x binary example
+# Type III ANOVA with uncentered severity
+cat("Type III ANOVA with UNCENTERED severity:\n")
+Anova(fit_uncentered, type = "III")
+
+cat("\n\nType III ANOVA with CENTERED severity:\n")
+Anova(fit_centered, type = "III")
+```
+
+**Notice**:
+
+- The interaction p-value is identical (good!)
+- The "main effect" of group has a **different** F-statistic and p-value
+- The main effect of severity also changes
+
+### What Type III Actually Tests
+
+| Effect | Type III tests... |
+|--------|-------------------|
+| Group | Group effect when severity = 0 (or mean if centered) |
+| Severity | Severity effect in the reference group |
+| Interaction | Whether slopes differ between groups |
+
+**The interaction test is invariant to centering**, but the main effect tests are not!
+
+### Recommendation
+
+For models with interactions:
+
+1. **Do** use Type III for the interaction test
+2. **Don't** interpret the Type III main effect tests
+3. **Do** use emmeans for simple effects at meaningful values
+
+```{r}
+#| label: type-iii-recommendation
+
+# The interaction test is what matters
+Anova(fit_uncentered, type = "III")["group:severity", ]
+
+# Follow up with simple effects
+emmeans(fit_uncentered, pairwise ~ group | severity,
+        at = list(severity = c(3, 5, 7)))
+```
+
+## 7. Best Practices Checklist
+
+When you have an interaction in your model, follow these steps:
+
+### Step 1: STOP
+
+**Do not interpret main effect p-values from summary() or Anova().**
+
+These test conditional effects at reference/zero values that may be meaningless.
+
+### Step 2: VISUALIZE
+
+Plot the interaction to understand the pattern.
+
+```{r}
+#| label: checklist-visualize
+#| eval: false
+
+# For continuous x categorical
+ggplot(data, aes(x = continuous_var, y = outcome, color = group)) +
+  geom_point() +
+  geom_smooth(method = "lm")
+
+# Or use emmip
+emmip(fit, group ~ continuous_var, CIs = TRUE)
+```
+
+### Step 3: PROBE
+
+Test simple effects at meaningful values of the moderator.
+
+```{r}
+#| label: checklist-probe
+#| eval: false
+
+# Define meaningful values
+meaningful_X <- c(low = 2, medium = 5, high = 8)
+
+# Get simple effects
+emmeans(fit, pairwise ~ group | X, at = list(X = meaningful_X))
+```
+
+### Step 4: SUMMARIZE
+
+If you need an "overall" effect, compute the average marginal effect.
+
+```{r}
+#| label: checklist-summarize
+#| eval: false
+
+# Average effect across the distribution of the moderator
+emmeans(fit, pairwise ~ group)  # Averages over other variables
+```
+
+### Quick Reference Table
+
+| What you want | What to do |
+|---------------|------------|
+| Test if interaction exists | Type III ANOVA or summary() interaction term |
+| Effect of A at specific B | `emmeans(fit, ~ A | B, at = list(B = value))` |
+| Effect of A averaged over B | `emmeans(fit, ~ A)` with pairwise contrasts |
+| Visualize the interaction | `emmip()` or ggplot with `geom_smooth()` |
+| Find where effect becomes significant | Johnson-Neyman technique |
+
+## 8. Note on GLMs
+
+The same principles apply to generalized linear models (logistic, Poisson, etc.), with an additional consideration: the **scale of interpretation**.
+
+### Example: Logistic Regression
+
+```{r}
+#| label: glm-example
+
+set.seed(667)
+
+# Simulate binary outcome with interaction
+n <- 500
+glm_data <- tibble(
+  age = rnorm(n, mean = 50, sd = 10),
+  treatment = factor(rep(c("Control", "Active"), each = n/2)),
+  # Log-odds with interaction
+  log_odds = -2 +
+             0.5 * (treatment == "Active") +
+             0.03 * age +
+             -0.02 * (treatment == "Active") * age,
+  prob = plogis(log_odds),
+  Y = rbinom(n, 1, prob)
+)
+
+# Fit logistic regression
+fit_glm <- glm(Y ~ treatment * age, data = glm_data, family = binomial)
+summary(fit_glm)
+```
+
+### emmeans with GLMs: Use type = "response"
+
+```{r}
+#| label: glm-emmeans
+
+# Estimated probabilities at meaningful ages
+age_values <- c(40, 50, 60, 70)
+
+# On the probability scale (more interpretable)
+emm_glm <- emmeans(fit_glm, ~ treatment | age,
+                   at = list(age = age_values),
+                   type = "response")  # KEY: get probabilities
+emm_glm
+
+# Risk differences
+contrast(emm_glm, method = "pairwise")
+```
+
+### Visualization on Probability Scale
+
+```{r}
+#| label: glm-plot
+
+emmip(fit_glm, treatment ~ age,
+      at = list(age = seq(30, 70, by = 2)),
+      type = "response",
+      CIs = TRUE) +
+  labs(
+    title = "Predicted Probability by Age and Treatment",
+    y = "Probability of Y = 1"
+  ) +
+  theme_minimal()
+```
+
+### GLM-Specific Considerations
+
+| Scale | Use when... | emmeans argument |
+|-------|-------------|------------------|
+| Link (log-odds) | Comparing model coefficients | `type = "link"` (default) |
+| Response (probability) | Communicating to non-statisticians | `type = "response"` |
+
+**Odds ratios** can be obtained with:
+
+```{r}
+#| label: odds-ratios
+
+# Odds ratios at specific ages
+emmeans(fit_glm, ~ treatment | age,
+        at = list(age = c(40, 50, 60)),
+        type = "link") |>
+  contrast(method = "pairwise") |>
+  summary(type = "response")  # Exponentiates to get OR
+```
+
+## Summary
+
+**The bottom line**: When you include an interaction in your model, the "main effect" coefficients and their p-values test conditional effects that depend on arbitrary choices (reference levels, centering).
+
+**Instead of testing main effects**:
+
+1. Test the interaction to see if the effect varies
+2. If it does, use simple effects to characterize HOW it varies
+3. Report effects at meaningful, interpretable values
+4. Consider average marginal effects if an "overall" summary is needed
+
+**Key tools**:
+
+- `emmeans::emmeans()` for estimated marginal means
+- `emmeans::contrast()` for simple effects
+- `emmeans::emmip()` for visualization
+- `emmeans::emtrends()` for slopes
+
+## Session Information
+
+```{r}
+#| label: session-info
+
+sessionInfo()
+```
